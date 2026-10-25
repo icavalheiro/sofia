@@ -16,6 +16,7 @@ namespace Sofia.Server.Api;
 public sealed record CreateProviderRequest(string Name, string? Type, string BaseUrl, string? ApiKey, List<string>? Models, string? PresetId);
 public sealed record UpdateProviderRequest(bool? Enabled, string? ApiKey, string? BaseUrl, string? Name);
 public sealed record ProbeRequest(string? Type, string BaseUrl, string? ApiKey);
+public sealed record CopilotPollRequest(string DeviceCode);
 public sealed record SetModelEnabledRequest(string? Id, List<string>? Ids, bool Enabled);
 public sealed record CreateMcpRequest(string Name, string? Transport, string? Command, string? Url, string? Token, Dictionary<string, string>? Env);
 public sealed record CreateWorktreeRequest(string Directory, string Name);
@@ -51,7 +52,54 @@ public static class PlatformEndpoints
             return Results.NoContent();
         });
         api.MapGet("/providers", (ProviderService providers) => Results.Ok(providers.Providers()));
-        api.MapGet("/providers/presets", () => Results.Ok(ProviderService.Presets.Select(p => new { p.Id, p.Name, p.Type, p.BaseUrl, p.EnvKey })));
+        api.MapGet("/providers/presets", () => Results.Ok(ProviderService.Presets.Select(p => new { p.Id, p.Name, p.Type, p.BaseUrl, p.EnvKey, p.Auth, p.Note })));
+
+        // GitHub Copilot signs in with the OAuth device flow instead of a pasted key.
+        api.MapPost("/providers/github-copilot/login", async (ProviderService providers, CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Ok(await providers.Copilot.StartDeviceFlowAsync(ct));
+            }
+            catch (ProviderException ex)
+            {
+                throw new ArgumentException(ex.Message);
+            }
+        });
+
+        api.MapPost("/providers/github-copilot/login/poll", async (CopilotPollRequest body, SofiaDb db, ProviderService providers, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(body.DeviceCode)) throw new ArgumentException("deviceCode is required.");
+            DevicePoll poll;
+            try
+            {
+                poll = await providers.Copilot.PollDeviceFlowAsync(body.DeviceCode, ct);
+            }
+            catch (ProviderException ex)
+            {
+                throw new ArgumentException(ex.Message);
+            }
+            if (poll.Status != "success") return Results.Ok(new { status = poll.Status, interval = poll.Interval, provider = (ProviderView?)null });
+
+            var preset = ProviderService.Presets.First(p => p.Id == "github-copilot");
+            var config = db.Providers.FindById(preset.Id) ?? new ProviderConfig
+            {
+                Id = preset.Id,
+                Name = preset.Name,
+                Type = preset.Type,
+                Kind = "cloud",
+                BaseUrl = preset.BaseUrl,
+                ApiKeyEnv = preset.EnvKey,
+                PresetId = preset.Id,
+                Flavor = preset.Flavor,
+                Custom = true,
+            };
+            config.ApiKey = poll.Token;
+            config.Enabled = true;
+            db.Providers.Upsert(config);
+            await providers.RefreshAsync(discover: false, ct);
+            return Results.Ok(new { status = "success", interval = (int?)null, provider = providers.Provider(preset.Id) });
+        });
 
         api.MapPost("/providers", async (CreateProviderRequest body, SofiaDb db, ProviderService providers, CancellationToken ct) =>
         {

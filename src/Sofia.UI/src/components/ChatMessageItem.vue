@@ -8,9 +8,23 @@ import { useHarness } from '@/composables/useHarness'
 import { useQuestionDrafts } from '@/composables/useQuestionDrafts'
 import { useI18n } from '@/i18n'
 import { api, serverUrl } from '@/services/sofia'
-import type { Attachment, AttachmentKind, KnowledgeEntryDto, Message, ToolCall } from '@/types'
+import { cacheDiagnosisTemplate } from '@/services/cacheHealth'
+import type {
+  Attachment,
+  AttachmentKind,
+  CacheBreakInfo,
+  KnowledgeEntryDto,
+  Message,
+  ToolCall,
+} from '@/types'
 
-const props = defineProps<{ message: Message; streaming?: boolean; pending?: 'steer' | 'queue' }>()
+const props = defineProps<{
+  message: Message
+  streaming?: boolean
+  pending?: 'steer' | 'queue'
+  /** Set when this step's prompt was almost fully re-billed (see `services/cacheHealth`). */
+  cacheBreak?: CacheBreakInfo | null
+}>()
 const { t } = useI18n()
 const { resolvePermissionRequest, answerFormQuestion, confirmFormQuestions, revertMessage, retryMessage, openConversation } =
   useHarness()
@@ -215,6 +229,33 @@ async function deleteNote(note: KnowledgeEntryDto): Promise<void> {
     knowledgeError.value = t('knowledge.error')
   } finally {
     deletingNote.value = null
+  }
+}
+
+// --- low prompt cache warning ----------------------------------------------
+// The suspects come from `services/cacheHealth`; the copy button hands the user a
+// ready-made prompt asking the model why this step re-billed its own prefix.
+const diagnosisCopied = ref(false)
+let diagnosisCopiedTimer: number | undefined
+
+function diagnosisText(info: CacheBreakInfo): string {
+  return cacheDiagnosisTemplate()
+    .replace('{pct}', String(info.pct))
+    .replace('{cached}', info.cached.toLocaleString())
+    .replace('{input}', info.input.toLocaleString())
+    .replace('{reasons}', info.reasons.map((key) => `- ${t(key)}`).join('\n'))
+}
+
+async function copyDiagnosis(info: CacheBreakInfo): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(diagnosisText(info))
+    diagnosisCopied.value = true
+    if (diagnosisCopiedTimer !== undefined) window.clearTimeout(diagnosisCopiedTimer)
+    diagnosisCopiedTimer = window.setTimeout(() => {
+      diagnosisCopied.value = false
+    }, 2000)
+  } catch {
+    diagnosisCopied.value = false
   }
 }
 
@@ -441,7 +482,10 @@ function closeLightbox(): void {
             :class="{ 'knowledge-note--deleted': note.deleted }"
           >
             <span class="knowledge-scope">{{ t(`knowledge.scope.${note.scope}`) }}</span>
-            <span class="knowledge-text">{{ note.text }}</span>
+            <span class="knowledge-body">
+              <span class="knowledge-text">{{ note.text }}</span>
+              <span v-if="note.why && !note.deleted" class="knowledge-why">{{ note.why }}</span>
+            </span>
             <span v-if="note.deleted" class="knowledge-gone">{{ t('knowledge.deleted') }}</span>
             <button
               v-else
@@ -637,6 +681,22 @@ function closeLightbox(): void {
             </span>
           </li>
         </ul>
+      </div>
+
+      <!-- Prompt cache re-billed almost the whole context: warn under the reply and
+           offer a ready-made prompt that asks the model why. -->
+      <div v-if="cacheBreak && !pending" class="cache-warn" role="note">
+        <SofiaIcon name="alert" :size="'0.9rem'" />
+        <div class="cache-warn-body">
+          <p class="cache-warn-title">{{ t('cache.lowTitle', { pct: cacheBreak.pct }) }}</p>
+          <ul class="cache-warn-reasons">
+            <li v-for="key in cacheBreak.reasons" :key="key">{{ t(key) }}</li>
+          </ul>
+          <button class="cache-warn-copy" type="button" @click="copyDiagnosis(cacheBreak)">
+            <SofiaIcon :name="diagnosisCopied ? 'check' : 'copy'" :size="'0.75rem'" />
+            {{ diagnosisCopied ? t('pair.copied') : t('cache.copyPrompt') }}
+          </button>
+        </div>
       </div>
 
       <!-- Message actions, bottom-right: Retry for failed messages, Revert otherwise. -->
@@ -1224,9 +1284,23 @@ function closeLightbox(): void {
 }
 
 .knowledge-text {
-  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.knowledge-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The utility argument the reviewer gave for keeping the note. */
+.knowledge-why {
+  margin-top: 0.1rem;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--sofia-text-faint);
 }
 
 .knowledge-gone {
@@ -1343,6 +1417,68 @@ function closeLightbox(): void {
 .msg-error-text {
   font-size: 0.8125rem;
   line-height: 1.5;
+}
+
+/* --- low prompt cache warning --------------------------------------------- */
+.cache-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-width: 74ch;
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--sofia-warn);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--sofia-warn-soft);
+  color: var(--sofia-warn);
+}
+
+.cache-warn svg:first-child {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.cache-warn-body {
+  min-width: 0;
+}
+
+.cache-warn-title {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.cache-warn-reasons {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--sofia-text-muted);
+}
+
+.cache-warn-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.45rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--sofia-border-strong);
+  border-radius: 999px;
+  background: var(--sofia-surface);
+  color: var(--sofia-text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cache-warn-copy:hover {
+  border-color: var(--sofia-primary);
+  color: var(--sofia-primary);
 }
 
 /* --- image thumbnails ---------------------------------------------------- */

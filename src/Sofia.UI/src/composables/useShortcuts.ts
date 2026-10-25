@@ -23,6 +23,7 @@ export interface ShortcutDef {
 }
 
 export const SHORTCUTS: readonly ShortcutDef[] = [
+  { id: 'agent.pick', combo: 'Ctrl+Shift+A', group: 'composer', icon: 'bot' },
   { id: 'model.pick', combo: 'Ctrl+M', group: 'composer', icon: 'sparkles' },
   { id: 'reasoning.pick', combo: 'Ctrl+B', group: 'composer', icon: 'zap' },
   { id: 'permission.pick', combo: 'Ctrl+P', group: 'composer', icon: 'shield' },

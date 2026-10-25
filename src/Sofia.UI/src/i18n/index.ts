@@ -99,6 +99,7 @@ const en: Dict = {
   'img.close': 'Close',
 
   'composer.placeholder': 'Ask Sofia anything…   Enter to send · Shift+Enter for a new line',
+  'composer.agent': 'Agent',
   'composer.model': 'Model',
   'composer.perms': 'Perms',
   'composer.reasoning': 'Reasoning',
@@ -109,6 +110,18 @@ const en: Dict = {
   'composer.hintCost': 'Session cost (when the provider exposes a cost endpoint)',
   'composer.hintSpeed': 'Generation speed',
   'composer.hintCache': 'Prompt cache hit rate (last request / whole session)',
+  'composer.cacheHit': 'cache hit',
+  'composer.cacheLastStep': 'Last step:',
+  'composer.cacheSession': 'Session:',
+
+  'cache.lowTitle': 'Only {pct}% prompt cache — this reply re-billed almost its whole context.',
+  'cache.copyPrompt': 'Copy a prompt to understand why',
+  'cache.reasonModel': 'The model changed since the previous step, so the cache of the old one does not apply.',
+  'cache.reasonReasoning': 'The reasoning mode changed, which rebuilds the request prefix.',
+  'cache.reasonCompaction': 'A compaction summary rewrote the history after the cache was written.',
+  'cache.reasonToolOutput': 'A large tool result was appended to the prompt for this step.',
+  'cache.reasonAttachments': 'This turn carries attachments, which are billed as new prompt tokens.',
+  'cache.reasonPrefixChanged': 'The system prompt, tools or earlier history changed, invalidating the cached prefix.',
 
   'header.language': 'Interface language',
   'header.panel': 'Workspace panel (modified files, open folder)',
@@ -240,7 +253,8 @@ const en: Dict = {
   'shortcuts.group.session': 'Sessions',
   'shortcuts.group.navigation': 'Navigation',
   'shortcuts.group.app': 'App',
-  'shortcut.model.pick': 'Choose model / agent',
+  'shortcut.agent.pick': 'Choose agent',
+  'shortcut.model.pick': 'Choose model',
   'shortcut.reasoning.pick': 'Choose reasoning level',
   'shortcut.permission.pick': 'Choose permission mode',
   'shortcut.composer.focus': 'Focus the message box',
@@ -340,6 +354,7 @@ const pt: Dict = {
   'img.close': 'Fechar',
 
   'composer.placeholder': 'Pergunte qualquer coisa…   Enter para enviar · Shift+Enter quebra linha',
+  'composer.agent': 'Agente',
   'composer.model': 'Modelo',
   'composer.perms': 'Permissões',
   'composer.reasoning': 'Raciocínio',
@@ -350,6 +365,18 @@ const pt: Dict = {
   'composer.hintCost': 'Custo da sessão (se o provedor expuser)',
   'composer.hintSpeed': 'Velocidade de geração',
   'composer.hintCache': 'Taxa de acerto do cache de prompt (última requisição / sessão inteira)',
+  'composer.cacheHit': 'cache hit',
+  'composer.cacheLastStep': 'Última etapa:',
+  'composer.cacheSession': 'Sessão:',
+
+  'cache.lowTitle': 'Apenas {pct}% de cache de prompt — esta resposta cobrou quase todo o contexto de novo.',
+  'cache.copyPrompt': 'Copiar um prompt para entender o motivo',
+  'cache.reasonModel': 'O modelo mudou desde a etapa anterior, então o cache do modelo antigo não vale.',
+  'cache.reasonReasoning': 'O modo de raciocínio mudou, o que reconstrói o prefixo da requisição.',
+  'cache.reasonCompaction': 'Um resumo de compactação reescreveu o histórico depois que o cache foi gravado.',
+  'cache.reasonToolOutput': 'Um resultado de ferramenta grande foi anexado ao prompt desta etapa.',
+  'cache.reasonAttachments': 'Esta mensagem traz anexos, que são cobrados como tokens novos do prompt.',
+  'cache.reasonPrefixChanged': 'O prompt de sistema, as ferramentas ou o histórico anterior mudaram, invalidando o prefixo em cache.',
 
   'header.language': 'Idioma da interface',
   'header.panel': 'Painel do workspace (arquivos modificados, abrir pasta)',
@@ -479,7 +506,8 @@ const pt: Dict = {
   'shortcuts.group.session': 'Sessões',
   'shortcuts.group.navigation': 'Navegação',
   'shortcuts.group.app': 'App',
-  'shortcut.model.pick': 'Escolher modelo / agente',
+  'shortcut.agent.pick': 'Escolher agente',
+  'shortcut.model.pick': 'Escolher modelo',
   'shortcut.reasoning.pick': 'Escolher nível de reasoning',
   'shortcut.permission.pick': 'Escolher modo de permissão',
   'shortcut.composer.focus': 'Focar na caixa de mensagem',
@@ -581,6 +609,7 @@ const es: Dict = {
   'img.close': 'Cerrar',
 
   'composer.placeholder': 'Pregunta lo que sea…   Enter para enviar · Shift+Enter nueva línea',
+  'composer.agent': 'Agente',
   'composer.model': 'Modelo',
   'composer.perms': 'Permisos',
   'composer.reasoning': 'Razonamiento',
@@ -591,6 +620,18 @@ const es: Dict = {
   'composer.hintCost': 'Coste de la sesión (si el proveedor lo expone)',
   'composer.hintSpeed': 'Velocidad de generación',
   'composer.hintCache': 'Tasa de aciertos de la caché del prompt (última solicitud / sesión completa)',
+  'composer.cacheHit': 'cache hit',
+  'composer.cacheLastStep': 'Último paso:',
+  'composer.cacheSession': 'Sesión:',
+
+  'cache.lowTitle': 'Solo el {pct}% de caché de prompt: esta respuesta volvió a facturar casi todo su contexto.',
+  'cache.copyPrompt': 'Copiar un prompt para entender por qué',
+  'cache.reasonModel': 'El modelo cambió desde el paso anterior, así que la caché del anterior no aplica.',
+  'cache.reasonReasoning': 'Cambió el modo de razonamiento, lo que reconstruye el prefijo de la solicitud.',
+  'cache.reasonCompaction': 'Un resumen de compactación reescribió el historial después de escribir la caché.',
+  'cache.reasonToolOutput': 'Se añadió al prompt un resultado de herramienta grande en este paso.',
+  'cache.reasonAttachments': 'Este turno lleva adjuntos, que se facturan como tokens nuevos del prompt.',
+  'cache.reasonPrefixChanged': 'El prompt del sistema, las herramientas o el historial previo cambiaron e invalidaron el prefijo en caché.',
 
   'header.language': 'Idioma de la interfaz',
   'header.panel': 'Panel del espacio (archivos modificados, abrir carpeta)',
@@ -792,6 +833,7 @@ const fr: Dict = {
   'img.close': 'Fermer',
 
   'composer.placeholder': 'Demandez n’importe quoi…   Entrée pour envoyer · Maj+Entrée nouvelle ligne',
+  'composer.agent': 'Agent',
   'composer.model': 'Modèle',
   'composer.perms': 'Autorisations',
   'composer.reasoning': 'Raisonnement',
@@ -802,6 +844,18 @@ const fr: Dict = {
   'composer.hintCost': 'Coût de la session (si exposé)',
   'composer.hintSpeed': 'Vitesse de génération',
   'composer.hintCache': 'Taux de succès du cache de prompt (dernière requête / session entière)',
+  'composer.cacheHit': 'cache hit',
+  'composer.cacheLastStep': 'Dernière étape :',
+  'composer.cacheSession': 'Session :',
+
+  'cache.lowTitle': 'Seulement {pct}% de cache de prompt — cette réponse a refacturé presque tout son contexte.',
+  'cache.copyPrompt': 'Copier un prompt pour comprendre pourquoi',
+  'cache.reasonModel': 'Le modèle a changé depuis l’étape précédente, le cache de l’ancien ne s’applique plus.',
+  'cache.reasonReasoning': 'Le mode de raisonnement a changé, ce qui reconstruit le préfixe de la requête.',
+  'cache.reasonCompaction': 'Un résumé de compactage a réécrit l’historique après l’écriture du cache.',
+  'cache.reasonToolOutput': 'Un gros résultat d’outil a été ajouté au prompt de cette étape.',
+  'cache.reasonAttachments': 'Ce tour contient des pièces jointes, facturées comme nouveaux tokens du prompt.',
+  'cache.reasonPrefixChanged': 'Le prompt système, les outils ou l’historique ont changé, invalidant le préfixe en cache.',
 
   'header.language': 'Langue de l’interface',
   'header.panel': 'Panneau d’espace (fichiers modifiés, ouvrir dossier)',
@@ -1003,6 +1057,7 @@ const zh: Dict = {
   'img.close': '关闭',
 
   'composer.placeholder': '向 Sofia 提问…   Enter 发送 · Shift+Enter 换行',
+  'composer.agent': '智能体',
   'composer.model': '模型',
   'composer.perms': '权限',
   'composer.reasoning': '推理',
@@ -1013,6 +1068,18 @@ const zh: Dict = {
   'composer.hintCost': '会话费用（如提供）',
   'composer.hintSpeed': '生成速度',
   'composer.hintCache': '提示词缓存命中率（上一次请求 / 整个会话）',
+  'composer.cacheHit': '缓存命中',
+  'composer.cacheLastStep': '上一步：',
+  'composer.cacheSession': '会话：',
+
+  'cache.lowTitle': '提示词缓存仅命中 {pct}% — 这条回复几乎重新计费了整个上下文。',
+  'cache.copyPrompt': '复制一段提示词以了解原因',
+  'cache.reasonModel': '上一步之后模型已更换，旧模型的缓存不再适用。',
+  'cache.reasonReasoning': '推理模式改变，会重建请求前缀。',
+  'cache.reasonCompaction': '压缩摘要在缓存写入后重写了历史。',
+  'cache.reasonToolOutput': '这一步向提示词追加了较大的工具输出。',
+  'cache.reasonAttachments': '本轮带有附件，将作为新的提示词 token 计费。',
+  'cache.reasonPrefixChanged': '系统提示词、工具或更早的历史发生变化，使缓存前缀失效。',
 
   'header.language': '界面语言',
   'header.panel': '工作区面板（修改的文件、打开文件夹）',
@@ -1212,6 +1279,7 @@ const ja: Dict = {
   'img.close': '閉じる',
 
   'composer.placeholder': 'Sofia に質問…   Enter 送信 · Shift+Enter 改行',
+  'composer.agent': 'エージェント',
   'composer.model': 'モデル',
   'composer.perms': '権限',
   'composer.reasoning': '思考',
@@ -1222,6 +1290,18 @@ const ja: Dict = {
   'composer.hintCost': 'セッション費用（提供される場合）',
   'composer.hintSpeed': '生成速度',
   'composer.hintCache': 'プロンプトキャッシュのヒット率（直近のリクエスト / セッション全体）',
+  'composer.cacheHit': 'キャッシュヒット',
+  'composer.cacheLastStep': '直前のステップ:',
+  'composer.cacheSession': 'セッション:',
+
+  'cache.lowTitle': 'プロンプトキャッシュのヒットは {pct}% のみ — この返信はコンテキストほぼ全体を再課金しました。',
+  'cache.copyPrompt': '理由を理解するプロンプトをコピー',
+  'cache.reasonModel': '前のステップ以降でモデルが変わったため、旧モデルのキャッシュは適用されません。',
+  'cache.reasonReasoning': '推論モードが変わり、リクエスト前置部が再構築されます。',
+  'cache.reasonCompaction': '圧縮サマリーがキャッシュ書き込み後に履歴を書き換えました。',
+  'cache.reasonToolOutput': 'このステップで大きなツール出力がプロンプトに追加されました。',
+  'cache.reasonAttachments': 'このターンは添付を含み、新しいプロンプトトークンとして課金されます。',
+  'cache.reasonPrefixChanged': 'システムプロンプト・ツール・以前の履歴が変わり、キャッシュ前置部が無効になりました。',
 
   'header.language': 'インターフェース言語',
   'header.panel': 'ワークスペースパネル（変更ファイル、フォルダを開く）',
@@ -1350,8 +1430,13 @@ export function setLocale(locale: Locale): void {
 }
 
 export function useI18n() {
-  function t(key: string): string {
-    return MESSAGES[current.locale]?.[key] ?? MESSAGES[FALLBACK]?.[key] ?? key
+  /** Translates `key`, substituting `{name}` placeholders from `params`. */
+  function t(key: string, params?: Record<string, string | number>): string {
+    const text = MESSAGES[current.locale]?.[key] ?? MESSAGES[FALLBACK]?.[key] ?? key
+    if (!params) return text
+    return text.replace(/\{(\w+)\}/g, (whole, name: string) =>
+      name in params ? String(params[name]) : whole,
+    )
   }
   const locale = computed(() => current.locale)
   return { t, locale, setLocale }

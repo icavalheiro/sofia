@@ -68,14 +68,27 @@ One `SessionRun` per active session, owned by `AgentService`:
    chat templates / thinking-aware APIs re-render earlier steps and bust the
    prompt cache.
 2. Each step: resolve the model, auto-compact if the last request used more
-   than `compactThreshold` of the window, build the system prompt
-   (`SystemPromptBuilder`) and history (`HistoryBuilder`), stream the reply.
-   Text and reasoning go out as `message.delta`, tool calls as
-   `message.updated`; `session.metrics` is published about 4 times a second.
-3. Tool calls run in parallel when every call in the step is read-only,
+   than `compactThreshold` of the window, build the history (`HistoryBuilder`)
+   and stream the reply. Text and reasoning go out as `message.delta`, tool
+   calls as `message.updated`; `session.metrics` is published about 4 times a
+   second.
+3. The request prefix — system prompt (`SystemPromptBuilder`) and tool schemas
+   — is built once per **turn**, on its first step, and reused by every later
+   step of that turn (`SessionRun.TurnPromptAsync`). Providers cache on the
+   longest common prefix, so anything changing inside it mid-run (a note saved
+   through `notes`, a workspace note learned by a background review, a branch
+   switch, midnight, an MCP server connecting) would invalidate every cached
+   token of the conversation for that step and all later ones. Notes are still
+   current: the model saw the save in its tool result during the turn, and the
+   next turn's prompt includes it. A session whose **agent** changed mid-run is
+   the one exception — the prefix is rebuilt so the tool set can never stay
+   wider than the new agent allows. The permission gate is unaffected: it reads
+   `Session.PermissionMode` live at each call.
+4. Tool calls run in parallel when every call in the step is read-only,
    network or `task` (so several subagents run at once); otherwise they run in
-   order. Each call is authorized by the permission gate first.
-4. Loop until the model answers without tool calls, then drain the queue.
+   order. Each call is authorized by the permission gate first. The tool set
+   executed is exactly the one the model saw for that turn.
+5. Loop until the model answers without tool calls, then drain the queue.
 
 Abort cancels the run token: streaming stops, running tools are killed and
 marked, pending approvals are cancelled.
@@ -115,8 +128,12 @@ the folded messages are kept for the transcript but skipped in model history.
 `web_search` (`Tools/WebSearchTool.cs`, `ToolKind.Network`, so it needs no
 permission and runs in parallel with other reads) returns title, URL and snippet
 per result. Backends, chosen in Settings: DuckDuckGo's HTML endpoint (default, no
-key; ad links are dropped and redirect links resolved) or a SearXNG instance with
-its JSON format enabled. The agent follows up with `web_fetch` to read a page.
+key; ad links are dropped and redirect links resolved) or a SearXNG instance. The
+SearXNG path asks for `search?q=…&format=json` first and, when the instance has
+the json engine disabled (`403`, the default install) or answers with HTML, reads
+the `/search` result page instead (one `<article class="result …">` per hit: title
+from its `<h3>` link, snippet from `p.content`). A path prefix in the configured
+URL (`/searxng`) is kept. The agent follows up with `web_fetch` to read a page.
 Every built-in agent has it.
 
 ## Browser (`Browser/BrowserService.cs`, `Tools/BrowserTool.cs`)
@@ -153,15 +170,32 @@ Learning loop. When a top-level run ends without error or abort,
 most one per session): the session's model reads the transcript added since the
 last review (`Session.KnowledgeSeq`) and answers with up to 3 short notes, each
 scoped to the **workspace** (project facts) or the **agent** (user preferences,
-style). Tool results are left out of the transcript so web pages and file
+style).
+
+Utility gate: a note is only permanent when the reviewer argues for it. The review
+prompt asks the model to judge every candidate before writing it ("would a future
+session act better because of it?") and to answer, per item, `"useful": true` plus
+a one-sentence `why` naming the future situation where it helps. `Parse` drops any
+item without `"useful": true`, without a `why` of at least 12 characters, or whose
+`why` reads like markup or an injected command — unjustified notes are discarded
+entirely, never stored in another scope. The `why` is kept on the note and shown on
+the chat card (never injected into the system prompt), so the user can judge the
+same call. Notes the agent saves itself through the `notes` tool keep their current
+behaviour (`why` empty).
+
+Tool results are left out of the transcript so web pages and file
 contents cannot inject notes; notes that look like markup, injected instructions
 or secrets are refused, and duplicates of existing notes are dropped.
 
 Notes live in the `knowledge` LiteDB collection. `SystemPromptBuilder` injects
 them in a `<knowledge>` block: the running agent's notes plus the workspace's, the
-newest that fit a 3000-character budget per scope. The chat gets a card-only
-message (`Message.Knowledge`) listing the new notes; the user can expand it and
-delete a note (`DELETE /api/knowledge/{id}`), which strikes it on the card.
+newest that fit a 3000-character budget per scope. That block is part of the
+request prefix frozen for a turn (see the agent loop above), so a note saved
+during a run reaches the prompt at the start of the next one; inside the run the
+model already saw it in the tool result, and `notes` `list` reads live. The chat
+gets a card-only message (`Message.Knowledge`) listing the new notes; the user can
+expand it and delete a note (`DELETE /api/knowledge/{id}`), which strikes it on the
+card.
 Settings → General → "Learn from conversations" turns generation off; stored
 notes keep being injected. Deleting a workspace deletes its workspace notes.
 
@@ -198,10 +232,17 @@ finishes, the setting is turned off or the server stops.
   built-in table, then 32K.
 - Cloud presets are enabled from environment keys (`OPENAI_API_KEY`,
   `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`,
-  `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`) or added
+  `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`,
+  `OPENCODE_API_KEY` (OpenCode Go), `QWENCLOUD_API_KEY` (QwenCloud Token Plan),
+  `COPILOT_GITHUB_TOKEN` (GitHub Copilot, also available through the Settings
+  device-flow sign-in)) or added
   in Settings → Models, alongside custom OpenAI/Anthropic-compatible endpoints.
+  `Providers/CopilotAuth.cs` handles the Copilot sign-in and token exchange;
+  `Providers/OpenCodeGo.cs` routes OpenCode Go models to the right wire protocol.
 - Reasoning modes map to `reasoning_effort` (OpenAI-style),
-  `reasoning.effort` (OpenRouter), thinking budgets (Anthropic) or
+  `reasoning.effort` (OpenRouter), `thinking` + `reasoning_effort` (DeepSeek,
+  which also needs `reasoning_content` echoed back), `enable_thinking`
+  (QwenCloud), thinking budgets (Anthropic) or
   `chat_template_kwargs.enable_thinking` (local runtimes).
 
 ## Context engineering

@@ -318,11 +318,20 @@ useShortcut('session.next', () => stepSession(1))
             @keydown.enter="toggleWorkspace(ws.id)"
           >
             <SofiaIcon class="ws-caret" :name="ws.expanded ? 'chevronDown' : 'chevronRight'" />
-            <SofiaIcon class="ws-icon" :name="ws.icon ?? 'folder'" />
-            <span class="ws-name sofia-truncate">{{ ws.name }}</span>
-            <span v-if="wsStatus(ws) !== 'idle' && !ws.expanded" class="ws-status" :class="`ws-status--${wsStatus(ws)}`" :title="statusTitle(wsStatus(ws))">
-              <SofiaIcon :name="statusIcon(wsStatus(ws))" :size="'0.8rem'" />
+            <!-- The workspace's state replaces the folder icon; hovering shows the row actions instead. -->
+            <span class="ws-slot">
+              <span
+                v-if="wsStatus(ws) !== 'idle'"
+                class="ws-status"
+                :class="`ws-status--${wsStatus(ws)}`"
+                :title="statusTitle(wsStatus(ws))"
+              >
+                <SofiaIcon v-if="wsStatus(ws) === 'working'" name="loader" spin :size="'0.8rem'" />
+                <SofiaIcon v-else :name="statusIcon(wsStatus(ws))" :size="'0.8rem'" />
+              </span>
+              <SofiaIcon v-else class="ws-icon" :name="ws.icon ?? 'folder'" />
             </span>
+            <span class="ws-name sofia-truncate">{{ ws.name }}</span>
             <span class="ws-trail">
               <span class="ws-count">{{ visibleConvs(ws).length }}</span>
               <span class="ws-actions">
@@ -359,9 +368,8 @@ useShortcut('session.next', () => stepSession(1))
               @click="selectConversation(ws.id, c.id)"
               @keydown.enter="openRow(ws, c, $event)"
             >
-              <SofiaIcon class="conv-icon" :name="depth > 0 ? 'bot' : 'chat'" :size="'0.875rem'" />
-              <span class="conv-title sofia-truncate">{{ c.title }}</span>
-              <span class="conv-trail">
+              <!-- The conversation's state replaces the chat icon; hovering shows the row actions instead. -->
+              <span class="conv-slot">
                 <span
                   v-if="convStatus(c) !== 'idle'"
                   class="conv-status"
@@ -371,6 +379,10 @@ useShortcut('session.next', () => stepSession(1))
                   <SofiaIcon v-if="convStatus(c) === 'working'" name="loader" spin :size="'0.75rem'" />
                   <SofiaIcon v-else :name="statusIcon(convStatus(c))" :size="'0.75rem'" />
                 </span>
+                <SofiaIcon v-else class="conv-icon" :name="depth > 0 ? 'bot' : 'chat'" :size="'0.875rem'" />
+              </span>
+              <span class="conv-title sofia-truncate">{{ c.title }}</span>
+              <span class="conv-trail">
                 <span class="conv-actions">
                   <button
                     class="conv-action"
@@ -725,6 +737,16 @@ useShortcut('session.next', () => stepSession(1))
   flex-shrink: 0;
 }
 
+/* Left slot of a row: the status badge replaces the workspace / conversation
+   icon, so it keeps the icon's place instead of trailing the title. */
+.ws-slot,
+.conv-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .ws-icon {
   color: var(--sofia-primary);
   flex-shrink: 0;
@@ -958,19 +980,14 @@ useShortcut('session.next', () => stepSession(1))
 }
 
 /* --- hover action pill on conversation rows ------------------------------- */
-/* Status badge sits at the far right; on hover (or keyboard focus inside) the
-   pill takes the same grid cell, so the row never shifts. */
+/* The actions pill sits at the far right; it appears on hover (or keyboard
+   focus inside) over the empty trail, so the row never shifts. */
 .conv-trail {
   display: inline-grid;
   align-items: center;
   justify-items: end;
   flex-shrink: 0;
   margin-left: auto;
-}
-
-.conv-status,
-.conv-actions {
-  grid-area: 1 / 1;
 }
 
 .conv-actions {

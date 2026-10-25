@@ -116,6 +116,8 @@ export interface KnowledgeEntryDto {
   id: string
   scope: 'workspace' | 'agent'
   text: string
+  /** Why the reviewer judged the note worth keeping permanently (the utility argument). */
+  why?: string
   /** The user removed the note after it was announced. */
   deleted?: boolean
 }
@@ -179,13 +181,30 @@ export interface ProviderPresetDto {
   type: 'openai' | 'anthropic'
   baseUrl: string
   envKey?: string
+  /** 'github-device' = sign in through the GitHub device flow instead of pasting a key. */
+  auth?: 'github-device'
+  note?: string
+}
+
+export interface CopilotDeviceFlow {
+  deviceCode: string
+  userCode: string
+  verificationUri: string
+  interval: number
+  expiresIn: number
+}
+
+export interface CopilotLoginPoll {
+  status: 'pending' | 'success' | 'expired' | 'denied'
+  interval?: number | null
+  provider?: Provider | null
 }
 
 export interface AgentDto {
   id: string
   name: string
   description: string
-  /** 'primary' agents are picked in the chip, 'subagent' ones are called with @name, 'all' are both. */
+  /** 'primary' agents are picked in the agent dropdown, 'subagent' ones are called with @name, 'all' are both. */
   mode: 'primary' | 'subagent' | 'all'
   source?: 'builtin' | 'global' | 'project'
   path?: string | null
@@ -309,6 +328,20 @@ export interface Message {
   report?: ReportBlock
   /** Client-side card (e.g. a failed request) that the server never saw. */
   local?: boolean
+}
+
+/**
+ * An assistant step whose prompt was almost fully re-billed: under the low-cache
+ * threshold of its tokens came from the provider's prompt cache. `reasons` are
+ * i18n keys of suspects read off the transcript (never a provider claim).
+ */
+export interface CacheBreakInfo {
+  /** Cache hit percentage of that step's prompt. */
+  pct: number
+  cached: number
+  input: number
+  /** `cache.reason*` keys, most likely first. */
+  reasons: string[]
 }
 
 /** A structured report produced by a deep-search run. */

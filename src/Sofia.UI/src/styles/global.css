@@ -28,6 +28,10 @@
   --sofia-primary-soft: rgba(169, 116, 79, 0.16);
   --sofia-primary-soft-strong: rgba(169, 116, 79, 0.26);
 
+  /* Height of the overlay composer, published by ChatComposer's ResizeObserver so
+     the transcript's bottom padding always matches the real input box height. */
+  --sofia-composer-height: 130px;
+
   /* Beige — a detail only, never a UI-wide tint. */
   --sofia-detail: #e4d3ac;
   --sofia-detail-soft: rgba(228, 211, 172, 0.1);

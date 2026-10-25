@@ -24,10 +24,15 @@ internal sealed class FakeLlmHandler : HttpMessageHandler
 
         var body = await request.Content!.ReadAsStringAsync(ct);
         Bodies.Add(body);
+        // Prompt-cache turn: every turn of that test gets two steps — the model saves a workspace note, then answers.
+        // The markers live in that test's user messages, and a save already in the history means this turn's save is
+        // done, so the script stays deterministic however many turns the test runs.
+        if (body.Contains("PREFIXALPHA", StringComparison.Ordinal) || body.Contains("PREFIXBETA", StringComparison.Ordinal))
+            return Sse(CountOf(body, "Saved workspace note") < CountOf(body, "\"role\":\"user\"") ? NotesSaveScript : NotesSaveAnswer);
         if (body.Contains("future sessions should know", StringComparison.Ordinal))
         {
-            // Knowledge review: answer with one workspace note.
-            const string note = """{"choices":[{"index":0,"delta":{"content":"[{\"scope\":\"workspace\",\"text\":\"Greetings live in hello.txt at the project root.\"}]"}}]}""";
+            // Knowledge review: answer with one justified workspace note and one the reviewer rejects as useless.
+            const string note = """{"choices":[{"index":0,"delta":{"content":"[{\"scope\":\"workspace\",\"text\":\"Greetings live in hello.txt at the project root.\",\"useful\":true,\"why\":\"The next session would otherwise search for where greetings go.\"},{\"scope\":\"workspace\",\"text\":\"We created one file called hello.txt in this chat.\",\"useful\":false,\"why\":\"It only describes what happened here.\"}]"}}]}""";
             const string stop = """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""";
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
@@ -51,6 +56,33 @@ internal sealed class FakeLlmHandler : HttpMessageHandler
             ];
         var sse = string.Concat(chunks.Select(c => $"data: {c}\n\n")) + "data: [DONE]\n\n";
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8, "text/event-stream") };
+    }
+
+    /// <summary>First step of the turn saves a workspace note through the `notes` tool, the next one answers.</summary>
+    private static string[] NotesSaveScript =>
+    [
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_n1","function":{"name":"notes","arguments":""}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"action\":\"save\",\"scope\":\"workspace\",\"text\":\"Tests run with dotnet test Sofia.slnx here.\"}"}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}""",
+    ];
+
+    private static string[] NotesSaveAnswer =>
+    [
+        """{"choices":[{"index":0,"delta":{"content":"Noted"}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+    ];
+
+    private static HttpResponseMessage Sse(string[] chunks) =>
+        new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(string.Concat(chunks.Select(c => $"data: {c}\n\n")) + "data: [DONE]\n\n", Encoding.UTF8, "text/event-stream"),
+        };
+
+    private static int CountOf(string text, string needle)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = text.IndexOf(needle, i + 1, StringComparison.Ordinal)) count++;
+        return count;
     }
 
     private static HttpResponseMessage Json(string json) =>
@@ -147,10 +179,15 @@ public sealed class AgentLoopTests : IDisposable
         var card = session.GetProperty("messages").EnumerateArray().Last(m => m.TryGetProperty("knowledge", out _));
         var entry = card.GetProperty("knowledge")[0];
         Assert.Equal("workspace", entry.GetProperty("scope").GetString());
+        // The utility gate kept only the justified note, and its argument rides along on the card.
+        Assert.Equal(1, card.GetProperty("knowledge").GetArrayLength());
+        Assert.Equal("The next session would otherwise search for where greetings go.", entry.GetProperty("why").GetString());
         var noteId = entry.GetProperty("id").GetString()!;
 
         var notes = await http.GetFromJsonAsync<JsonElement>($"/api/knowledge?workspaceId={wsId}");
-        Assert.Equal(noteId, notes.EnumerateArray().Single().GetProperty("id").GetString());
+        var stored = notes.EnumerateArray().Single();
+        Assert.Equal(noteId, stored.GetProperty("id").GetString());
+        Assert.DoesNotContain("We created one file called hello.txt", stored.ToString());
 
         // The note rides along in the next system prompt, but the card itself never reaches the model.
         await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "thanks", modelId, permissionMode = "full" });
@@ -164,6 +201,60 @@ public sealed class AgentLoopTests : IDisposable
         var struck = session.GetProperty("messages").EnumerateArray().First(m => m.TryGetProperty("knowledge", out _));
         Assert.True(struck.GetProperty("knowledge")[0].GetProperty("deleted").GetBoolean());
         Assert.Equal(HttpStatusCode.NotFound, (await http.DeleteAsync($"/api/knowledge/{noteId}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task SystemPromptAndToolsStayIdenticalAcrossTheStepsOfATurn()
+    {
+        var http = _factory.CreateClient();
+        var provider = await Post(http, "/api/providers", new { name = "Fake", type = "openai", baseUrl = "http://fake.llm/v1", apiKey = "test" });
+        var modelId = $"{provider.GetProperty("id").GetString()}/fake-model";
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        // Step 1 saves a workspace note (it rewrites the <knowledge> block when the prompt is rebuilt), step 2 answers.
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "PREFIXALPHA save the test command", modelId, permissionMode = "full" });
+        await WaitFor(http, sessionId, s => s.GetProperty("messages").EnumerateArray().Any(m => m.GetProperty("role").GetString() == "assistant" && m.TryGetProperty("text", out var t) && t.GetString() == "Noted"));
+
+        var prompts = ConversationSystems("PREFIXALPHA", "PREFIXBETA");
+        Assert.Equal(2, prompts.Count);
+        // Saving a note must not invalidate the prefix of the turn that is running.
+        Assert.Equal(prompts[0], prompts[1]);
+        Assert.DoesNotContain(NoteText, prompts[1]);
+
+        // The next turn picks the note up, so nothing is lost by freezing the prompt for a turn.
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "PREFIXBETA and again", modelId, permissionMode = "full" });
+        await WaitFor(http, sessionId, s => Count(s, m => m.GetProperty("role").GetString() == "user") >= 2
+            && Count(s, m => m.GetProperty("role").GetString() == "assistant" && m.TryGetProperty("text", out var t) && t.GetString() == "Noted") >= 2);
+
+        var secondTurn = ConversationSystems("PREFIXBETA");
+        Assert.Equal(2, secondTurn.Count);
+        Assert.All(secondTurn, p => Assert.Contains(NoteText, p, StringComparison.Ordinal));
+        Assert.Equal(secondTurn[0], secondTurn[1]);
+    }
+
+    private const string NoteText = "Tests run with dotnet test Sofia.slnx here.";
+
+    private static int Count(JsonElement session, Func<JsonElement, bool> predicate) =>
+        session.GetProperty("messages").EnumerateArray().Count(predicate);
+
+    /// <summary>
+    /// The system prompt of every agent request whose body contains the marker and none of the exclusions. The knowledge
+    /// review replays the transcript, so its own request is filtered out too.
+    /// </summary>
+    private static List<string> ConversationSystems(string marker, params string[] exclude)
+    {
+        var prompts = new List<string>();
+        foreach (var body in FakeLlmHandler.Bodies.Where(b => b.Contains(marker, StringComparison.Ordinal)
+                     && !b.Contains("curate a small knowledge base", StringComparison.Ordinal)
+                     && !exclude.Any(e => b.Contains(e, StringComparison.Ordinal))))
+        {
+            var system = JsonDocument.Parse(body).RootElement.GetProperty("messages").EnumerateArray()
+                .First(m => m.GetProperty("role").GetString() == "system")
+                .GetProperty("content").GetString()!;
+            prompts.Add(system);
+        }
+        return prompts;
     }
 
     [Fact]

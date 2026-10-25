@@ -47,7 +47,7 @@ public sealed class ProviderView
     public int Models { get; set; }
 }
 
-public sealed record ProviderPreset(string Id, string Name, string Type, string BaseUrl, string? EnvKey, string Flavor);
+public sealed record ProviderPreset(string Id, string Name, string Type, string BaseUrl, string? EnvKey, string Flavor, string? Auth = null, string? Note = null);
 
 public sealed record LocalRuntime(string Id, string Name, string BaseUrl, string Flavor);
 
@@ -60,11 +60,22 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         new("anthropic", "Anthropic", "anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY", "anthropic"),
         new("openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openrouter"),
         new("google", "Google Gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY", "gemini"),
-        new("deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY", "deepseek"),
+        new("deepseek", "DeepSeek Platform", "openai", "https://api.deepseek.com", "DEEPSEEK_API_KEY", "deepseek", Note: "Pay-as-you-go API key from platform.deepseek.com."),
         new("groq", "Groq", "openai", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "groq"),
         new("mistral", "Mistral", "openai", "https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral"),
         new("xai", "xAI", "openai", "https://api.x.ai/v1", "XAI_API_KEY", "xai"),
+        new("opencode-go", "OpenCode Go", "openai", "https://opencode.ai/inference/go/openai/v1", "OPENCODE_API_KEY", "opencode-go",
+            Note: "Subscription (Go / Go Plus). API key from the OpenCode Console."),
+        new("qwencloud", "QwenCloud Token Plan", "openai", "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", "QWENCLOUD_API_KEY", "qwencloud",
+            Note: "Subscription (Token Plan, Singapore region). Use the Token Plan API key, not a pay-as-you-go key."),
+        new("github-copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "COPILOT_GITHUB_TOKEN", "copilot", Auth: "github-device",
+            Note: "Subscription. Sign in with GitHub, or paste a GitHub token."),
     ];
+
+    // Flavors billed through a flat subscription: per-token prices would be misleading.
+    private static readonly HashSet<string> SubscriptionFlavors = ["copilot", "opencode-go", "qwencloud"];
+
+    private readonly CopilotAuth _copilot = new(httpFactory);
 
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly Dictionary<string, ProviderState> _states = new();
@@ -268,17 +279,24 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             Reasoning = m.Reasoning,
             Vision = m.Vision,
             Loaded = m.Loaded,
-            InputPrice = provider.Kind == "local" ? 0 : known?.InputPrice ?? 0,
-            OutputPrice = provider.Kind == "local" ? 0 : known?.OutputPrice ?? 0,
+            InputPrice = provider.Kind == "local" || SubscriptionFlavors.Contains(provider.Flavor) ? 0 : known?.InputPrice ?? 0,
+            OutputPrice = provider.Kind == "local" || SubscriptionFlavors.Contains(provider.Flavor) ? 0 : known?.OutputPrice ?? 0,
         };
     }
+
+    public CopilotAuth Copilot => _copilot;
+
+    /// <summary>Key, base URL and headers for a provider; GitHub Copilot needs a token exchange first.</summary>
+    private Task<RequestAuth> AuthAsync(ProviderConfig provider, CancellationToken ct) =>
+        provider.Flavor == "copilot" ? _copilot.ResolveAsync(provider, ct) : Task.FromResult(RequestAuth.From(provider));
 
     /// <summary>Lists models from the endpoint, enriched with runtime-specific context metadata.</summary>
     public async Task<List<DiscoveredModel>> ListModelsAsync(ProviderConfig provider, CancellationToken ct)
     {
         var http = httpFactory.CreateClient("probe");
-        var baseUrl = provider.BaseUrl.TrimEnd('/');
-        var key = provider.ResolveKey();
+        var auth = await AuthAsync(provider, ct);
+        var baseUrl = (auth.BaseUrl ?? provider.BaseUrl).TrimEnd('/');
+        var key = auth.Key;
         var result = new List<DiscoveredModel>();
 
         if (provider.Type == "anthropic")
@@ -299,15 +317,19 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             return MergeDeclared(provider, result);
         }
 
-        using (var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/models"))
+        var modelsUrl = provider.Flavor == "opencode-go" ? OpenCodeGo.ModelsUrl(baseUrl) : $"{baseUrl}/models";
+        using (var req = new HttpRequestMessage(HttpMethod.Get, modelsUrl))
         {
             if (!string.IsNullOrEmpty(key)) req.Headers.Authorization = new("Bearer", key);
+            foreach (var (name, value) in auth.Headers ?? new Dictionary<string, string>()) req.Headers.TryAddWithoutValidation(name, value);
             var json = await SendJsonAsync(http, req, ct);
+            if (provider.Flavor == "copilot") return MergeDeclared(provider, ParseCopilotModels(json));
             foreach (var item in json?["data"]?.AsArray() ?? [])
             {
                 if (item is null) continue;
                 var id = item["id"]?.GetValue<string>();
                 if (string.IsNullOrEmpty(id)) continue;
+                if (provider.Flavor == "opencode-go" && OpenCodeGo.WireFor(id) == OpenCodeGo.Wire.Unsupported) continue;
                 var task = item["task"]?.GetValue<string>();
                 if (task is not null && !task.Contains("text-generation", StringComparison.OrdinalIgnoreCase) && !task.Contains("chat", StringComparison.OrdinalIgnoreCase)) continue;
                 if (id.Contains("embed", StringComparison.OrdinalIgnoreCase) || id.Contains("whisper", StringComparison.OrdinalIgnoreCase)
@@ -539,10 +561,39 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             ?? configured;
     }
 
-    public IChatClient CreateClient(ProviderConfig provider)
+    public IChatClient CreateClient(ProviderConfig provider, string? modelId = null)
     {
         var http = httpFactory.CreateClient("llm");
-        return provider.Type == "anthropic" ? new AnthropicChatClient(http, provider) : new OpenAiChatClient(http, provider);
+        if (provider.Flavor == "opencode-go" && modelId is not null && OpenCodeGo.WireFor(modelId) == OpenCodeGo.Wire.Anthropic)
+            return new AnthropicChatClient(http, OpenCodeGo.ForAnthropic(provider));
+        if (provider.Type == "anthropic") return new AnthropicChatClient(http, provider);
+        ProviderAuthResolver? auth = provider.Flavor == "copilot" ? ct => _copilot.ResolveAsync(provider, ct) : null;
+        return new OpenAiChatClient(http, provider, auth);
+    }
+
+    /// <summary>Copilot's catalog mixes chat models with embeddings, hidden picks and Responses-only models.</summary>
+    internal static List<DiscoveredModel> ParseCopilotModels(JsonNode? json)
+    {
+        var result = new List<DiscoveredModel>();
+        foreach (var item in json?["data"]?.AsArray() ?? [])
+        {
+            var id = item?["id"]?.GetValue<string>();
+            if (item is null || string.IsNullOrEmpty(id) || result.Any(m => m.Id == id)) continue;
+            var caps = item["capabilities"];
+            if (caps?["type"]?.GetValue<string>() is { } type && type != "chat") continue;
+            if (item["model_picker_enabled"] is JsonValue picker && picker.TryGetValue<bool>(out var shown) && !shown) continue;
+            if (caps?["supports"]?["tool_calls"] is JsonValue tools && tools.TryGetValue<bool>(out var canTool) && !canTool) continue;
+            if (item["supported_endpoints"] is JsonArray endpoints
+                && !endpoints.Any(e => e?.GetValue<string>() == "/chat/completions")) continue;
+
+            var known = ModelLimits.Known(id);
+            var ctx = Int(caps?["limits"]?["max_context_window_tokens"]) ?? known?.Context ?? 128_000;
+            var maxOut = Int(caps?["limits"]?["max_output_tokens"]) ?? known?.MaxOutput ?? ModelLimits.DefaultMaxOutput(ctx);
+            var vision = caps?["supports"]?["vision"] is JsonValue v && v.TryGetValue<bool>(out var hasVision) ? hasVision : known?.Vision ?? ModelLimits.LooksVision(id);
+            var reasoning = known?.Reasoning ?? ModelLimits.LooksReasoning(id);
+            result.Add(new DiscoveredModel(id, item["name"]?.GetValue<string>() ?? id, ctx, Math.Min(maxOut, ctx), reasoning, vision, null));
+        }
+        return result;
     }
 
     public async Task<List<ModelInfo>> ProbeAsync(string type, string baseUrl, string? apiKey, CancellationToken ct)
@@ -573,6 +624,10 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         if (url.Contains("generativelanguage.googleapis.com")) return "gemini";
         if (url.Contains("api.x.ai")) return "xai";
         if (url.Contains("api.groq.com")) return "groq";
+        if (url.Contains("api.deepseek.com")) return "deepseek";
+        if (url.Contains("opencode.ai/inference/go")) return "opencode-go";
+        if (url.Contains(".maas.aliyuncs.com")) return "qwencloud";
+        if (url.Contains("githubcopilot.com")) return "copilot";
         if (url.Contains(":11434")) return "ollama";
         if (url.Contains(":8888")) return "unsloth";
         if (url.Contains(":1234")) return "lmstudio";

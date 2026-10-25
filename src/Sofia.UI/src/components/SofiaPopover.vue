@@ -1,20 +1,14 @@
-<script lang="ts">
-import { ref } from 'vue'
-
-/** Only one popover is open at a time (shortcuts can open one while another is showing). */
-const openPopover = ref<symbol | null>(null)
-</script>
-
 <script setup lang="ts">
 // Reusable "chip + dropdown" selector. Used in the composer for model,
 // permission and reasoning. Plain elements (not Mantine Menu) so behaviour and
 // styling stay predictable; click-outside and Escape both close it. When open
 // it is also keyboard driven (arrows + Enter) and can be opened from outside
 // through the exposed `open()` (keyboard shortcuts).
-import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import { useSound } from '@/composables/useSound'
+import { usePopoverLock } from '@/composables/usePopoverLock'
 
 export interface PopoverItem {
   value: string
@@ -22,13 +16,6 @@ export interface PopoverItem {
   description?: string
   icon?: string
   badge?: string
-  /** Optional section header rendered above the item (SOF-11). */
-  group?: string
-  /** SOF-11: an action item (e.g. switch agent) does not change the bound
-   *  value; it only emits `pick` so the parent can run its own handler. */
-  action?: boolean
-  /** Marks the current selection for action items (value isn't bound to them). */
-  active?: boolean
 }
 
 const props = defineProps<{
@@ -45,31 +32,23 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
-  (e: 'pick', item: PopoverItem): void
   /** Closed with Escape or by picking an item (not by clicking elsewhere). */
   (e: 'dismiss'): void
 }>()
 
 const { playSound } = useSound()
+const { isOpen, claim, release } = usePopoverLock()
 
-const id = Symbol('popover')
 const open = computed({
-  get: () => openPopover.value === id,
-  set: (value: boolean) => {
-    if (value) openPopover.value = id
-    else if (openPopover.value === id) openPopover.value = null
-  },
+  get: isOpen,
+  set: (value: boolean) => (value ? claim() : release()),
 })
 const root = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
 const focusIndex = ref(0)
 
 const selected = computed(
-  () =>
-    // Action items never represent the bound value (SOF-11).
-    props.items.find((i) => !i.action && i.value === props.modelValue) ??
-    props.items.find((i) => !i.action) ??
-    props.items[0],
+  () => props.items.find((i) => i.value === props.modelValue) ?? props.items[0],
 )
 
 function toggle(): void {
@@ -85,8 +64,7 @@ function openMenu(): void {
 }
 
 function pick(item: PopoverItem): void {
-  emit('pick', item)
-  if (!item.action) emit('update:modelValue', item.value)
+  emit('update:modelValue', item.value)
   open.value = false
   playSound('select')
   emit('dismiss')
@@ -103,11 +81,11 @@ function scrollFocusedIntoView(): void {
   menu.value?.querySelectorAll('.sp-item')[focusIndex.value]?.scrollIntoView({ block: 'nearest' })
 }
 
-defineExpose({ open: openMenu })
+defineExpose({ open: openMenu, close })
 
-/** True when the item is the current one (bound value or explicit active). */
+/** True when the item is the bound value. */
 function isActive(item: PopoverItem): boolean {
-  return item.action ? !!item.active : item.value === props.modelValue
+  return item.value === props.modelValue
 }
 
 function onDocumentPointer(event: MouseEvent): void {
@@ -172,26 +150,25 @@ onBeforeUnmount(() => {
       :class="`sp-menu--${align ?? 'left'}`"
       :style="width ? { minWidth: `${width}px` } : undefined"
     >
-      <template v-for="(it, i) in items" :key="it.value">
-        <p v-if="it.group && it.group !== items[i - 1]?.group" class="sp-group">{{ it.group }}</p>
-        <button
-          class="sp-item"
-          :class="{ 'sp-item--active': isActive(it), 'sp-item--focus': i === focusIndex }"
-          type="button"
-          @mouseenter="focusIndex = i"
-          @click="pick(it)"
-        >
-          <SofiaIcon v-if="it.icon" class="sp-item-icon" :name="it.icon" :size="'0.95rem'" />
-          <span class="sp-item-body">
-            <span class="sp-item-label">
-              {{ it.label }}
-              <span v-if="it.badge" class="sp-item-badge">{{ it.badge }}</span>
-            </span>
-            <span v-if="it.description" class="sp-item-desc">{{ it.description }}</span>
+      <button
+        v-for="(it, i) in items"
+        :key="it.value"
+        class="sp-item"
+        :class="{ 'sp-item--active': isActive(it), 'sp-item--focus': i === focusIndex }"
+        type="button"
+        @mouseenter="focusIndex = i"
+        @click="pick(it)"
+      >
+        <SofiaIcon v-if="it.icon" class="sp-item-icon" :name="it.icon" :size="'0.95rem'" />
+        <span class="sp-item-body">
+          <span class="sp-item-label">
+            {{ it.label }}
+            <span v-if="it.badge" class="sp-item-badge">{{ it.badge }}</span>
           </span>
-          <SofiaIcon v-if="isActive(it)" class="sp-check" name="check" :size="'0.9rem'" />
-        </button>
-      </template>
+          <span v-if="it.description" class="sp-item-desc">{{ it.description }}</span>
+        </span>
+        <SofiaIcon v-if="isActive(it)" class="sp-check" name="check" :size="'0.9rem'" />
+      </button>
     </div>
   </div>
 </template>
@@ -292,20 +269,6 @@ onBeforeUnmount(() => {
   color: var(--sofia-text);
   text-align: left;
   cursor: pointer;
-}
-
-/* SOF-11: section header inside the dropdown (Agent / Model). */
-.sp-group {
-  margin: 0.35rem 0.5rem 0.15rem;
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--sofia-text-faint);
-}
-
-.sp-group:first-child {
-  margin-top: 0.15rem;
 }
 
 .sp-item:hover,

@@ -36,12 +36,15 @@ src/Sofia.UI/src/
 ├── App.vue                    # shell: sidebar + main + right panel
 ├── main.ts                    # bootstrap
 ├── assets/logo.png            # brand mark
+├── assets/chat-wallpaper.svg  # seamless doodle tile painted behind the transcript
 ├── components/
 │   ├── AppSidebar.vue         # workspace tree, chat groups, brand header + settings gear
 │   ├── ChatHeader.vue         # slim title bar, language picker, panel toggle
-│   ├── ChatComposer.vue       # frosted-glass composer: model/perms/reasoning chips,
-│   │                          #   "/" command palette, "@" subagent mentions
-│   ├── ChatMessages.vue       # scrollable transcript
+│   ├── ChatComposer.vue       # frosted-glass composer: agent/model/perms/reasoning chips,
+│   │                          #   "/" command palette, "@" subagent mentions; publishes
+│   │                          #   --sofia-composer-height from its own ResizeObserver
+│   ├── ChatMessages.vue       # scrollable transcript (wallpaper canvas, reserves the
+│   │                          #   composer height as bottom padding)
 │   ├── ChatMessageItem.vue    # renders one message: text, reasoning, tool cards,
 │   │                          #   permission cards, question cards, error banners,
 │   │                          #   report cards, attachments
@@ -51,6 +54,7 @@ src/Sofia.UI/src/
 │   ├── WorkspaceSettings.vue  # hover gear: icon, model, rename, remove
 │   ├── SofiaIcon.vue          # inline SVG icon set (add entries to PATHS record)
 │   ├── SofiaPopover.vue       # reusable chip+dropdown (model/perms/reasoning pickers)
+│   ├── AgentDropdown.vue      # agent picker: own chip+panel, PATCHes the session `agent`
 │   └── DiffViewer.vue         # side-by-side diff
 ├── composables/
 │   ├── useHarness.ts          # central store: workspaces, sessions, messages and
@@ -98,9 +102,25 @@ All colors are custom properties on `:root` (set in `global.css`):
 | `--sofia-primary-soft` / `--sofia-primary-soft-strong` | translucent brown wash |
 | `--sofia-ok` / `--sofia-warn` / `--sofia-err` (+ `-soft` variants) | status colors |
 | `--sofia-detail` | beige detail (reasoning blocks) |
+| `--sofia-composer-height` | live height of the overlay composer, published by `ChatComposer` |
 
 Use `color-mix(in srgb, var(--sofia-surface-2) 72%, transparent)` for
 translucent surfaces. Use `var(--sofia-primary-soft)` for active/selected rows.
+
+The composer is `position: absolute` over the bottom of `.messages`, so the
+transcript must reserve room for it. Never hard-code that reservation:
+`ChatComposer` measures its own footer with a `ResizeObserver` and writes
+`--sofia-composer-height`, and `ChatMessages` pads with
+`calc(var(--sofia-composer-height) + 1.25rem)` — the gap stays constant whether
+the box is one line, multi-line or carrying an attachment strip.
+
+The transcript canvas paints `assets/chat-wallpaper.svg` (a seamless doodle
+tile, white line art at ~3–5% opacity) under a faint paper-grain data-URI at
+0.03. Keep both that quiet — anything stronger makes the white transcript text
+hard to read. The
+tile is plain hand-editable SVG: motifs are `<use>` references to the symbols in
+its `<defs>`, and every one of them sits fully inside the 400×400 viewBox, which
+is what keeps the repeat seamless — never move a motif across an edge.
 
 Font: system stack. Monospace for code/branch names via
 `var(--font-family-monospace)`.
@@ -167,14 +187,15 @@ combo, group, icon). One capture-phase `keydown` listener on `window`
 (`useShortcutListener()`, installed in `App.vue`) matches the combo and calls
 `preventDefault` + `stopPropagation`, so browser bindings (Ctrl+L, Ctrl+P,
 Ctrl+O…) never fire. Components attach behaviour with
-`useShortcut(id, handler)`; `SofiaPopover` exposes `open()` and is arrow/Enter
-driven while open. Combos are layout-independent (`event.code` for letters,
-digits and punctuation), e.g. `Ctrl+Shift+N`.
+`useShortcut(id, handler)`; `SofiaPopover` and `AgentDropdown` expose `open()`
+and are arrow/Enter driven while open. Combos are layout-independent
+(`event.code` for letters, digits and punctuation), e.g. `Ctrl+Shift+N`.
 
-Defaults: Ctrl+M model/agent, Ctrl+B reasoning, Ctrl+P permission, Ctrl+L focus
-composer, Ctrl+. stop reply, Ctrl+N new session (same workspace/chat group),
-Ctrl+Shift+E archive session, Alt+↑/↓ previous/next session, Ctrl+O add
-workspace, Ctrl+\ toggle changes panel, Ctrl+, settings, Ctrl+/ shortcuts tab.
+Defaults: Ctrl+Shift+A agent, Ctrl+M model, Ctrl+B reasoning, Ctrl+P permission,
+Ctrl+L focus composer, Ctrl+. stop reply, Ctrl+N new session (same
+workspace/chat group),
+Ctrl+Shift+E archive session, Alt+↑/↓ previous/next session, Ctrl+O add workspace,
+Ctrl+\ toggle changes panel, Ctrl+, settings, Ctrl+/ shortcuts tab.
 
 Settings → Shortcuts lists them and rebinds on click (Esc cancels, Backspace
 unbinds, conflicts and modifier-less combos are rejected). Only overrides are

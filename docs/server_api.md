@@ -165,6 +165,7 @@ interface KnowledgeEntryDto {
   id: string
   scope: 'workspace' | 'agent'
   text: string
+  why?: string            // utility argument the reviewer gave for keeping the note
   deleted?: boolean       // the user removed the note after it was announced
 }
 
@@ -249,6 +250,8 @@ cache of the earlier steps survives.
 | `DELETE` | `/api/providers/{id}` | – | `204` (discovered local providers are disabled instead) |
 | `POST` | `/api/providers/refresh` | – | `ProviderDto[]` (re-runs local discovery and model listing) |
 | `POST` | `/api/providers/probe` | `{ type, baseUrl, apiKey? }` | `{ models: ModelDto[] }` (does not save) |
+| `POST` | `/api/providers/github-copilot/login` | – | `CopilotDeviceFlow` (starts the GitHub OAuth device flow) |
+| `POST` | `/api/providers/github-copilot/login/poll` | `{ deviceCode }` | `{ status: 'pending' \| 'success' \| 'expired' \| 'denied', interval?, provider? }` (on `success` the GitHub token is stored on the `github-copilot` provider, which is created/enabled) |
 
 ```ts
 interface ModelDto {
@@ -282,7 +285,13 @@ interface ProviderDto {
   models: number
 }
 
-interface ProviderPresetDto { id: string; name: string; type: 'openai' | 'anthropic'; baseUrl: string; envKey?: string }
+interface ProviderPresetDto {
+  id: string; name: string; type: 'openai' | 'anthropic'; baseUrl: string; envKey?: string
+  auth?: 'github-device'   // sign in through the GitHub device flow instead of pasting a key
+  note?: string
+}
+
+interface CopilotDeviceFlow { deviceCode: string; userCode: string; verificationUri: string; interval: number; expiresIn: number }
 ```
 
 Local discovery probes Unsloth Studio (`:8888`), Ollama (`:11434`), llama.cpp
@@ -291,8 +300,29 @@ Context windows come from each runtime's own metadata (`context_length`,
 `max_model_len`, `/props` `n_ctx`, Ollama `/api/show`), then a built-in table
 for cloud models, then a 32K fallback. Cloud providers are enabled from
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`,
-`DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY` or keys
+`DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`,
+`OPENCODE_API_KEY`, `QWENCLOUD_API_KEY`, `COPILOT_GITHUB_TOKEN` or keys
 saved through the API.
+
+Provider presets with specific behaviour:
+
+- **DeepSeek Platform** (`deepseek`, `https://api.deepseek.com`): thinking is
+  toggled with `thinking: { type }` + `reasoning_effort`, and each assistant
+  turn's `reasoning_content` is sent back (the API rejects tool conversations
+  that drop it).
+- **OpenCode Go** (`opencode-go`, subscription): models are listed from
+  `/inference/go/v1/models`; each model is routed to Chat Completions
+  (`/inference/go/openai/v1`) or Anthropic Messages (`/inference/go/anthropic`,
+  Claude, Qwen and MiniMax M2/M3). Models only served through the Responses or
+  Google APIs (GPT, Grok, Muse Spark, Gemini) are not offered.
+- **QwenCloud Token Plan** (`qwencloud`, subscription, Singapore region):
+  OpenAI-compatible endpoint; reasoning is switched with `enable_thinking`.
+- **GitHub Copilot** (`github-copilot`, subscription): signs in with the OAuth
+  device flow (client id overridable with `SOFIA_GITHUB_CLIENT_ID`) or a
+  pasted GitHub token; the server exchanges it for a short-lived Copilot token
+  in memory. Only models that support `/chat/completions` are listed.
+
+Subscription providers report zero per-token cost.
 
 ## Agents, commands, skills
 
@@ -337,10 +367,12 @@ credentials are never included.
 Short learnings the harness distils from a finished conversation (see
 `docs/project_init.md`). Each note is scoped to a **workspace** (project facts) or
 an **agent** (how that agent should behave, e.g. user preferences) and is injected
-into the matching system prompts. When notes are generated the session gets a
-card-only assistant message with `knowledge: KnowledgeEntryDto[]` (never replayed
-to the model). Deleting a note marks its entry `deleted: true` on that card and
-publishes `message.updated`.
+into the matching system prompts. The reviewer must justify every note as useful —
+items it does not mark `"useful": true` with a `why` argument are dropped, so only
+notes that earned their place are stored. When notes are generated the session gets
+a card-only assistant message with `knowledge: KnowledgeEntryDto[]` (never replayed
+to the model); the card shows each note's utility argument. Deleting a note marks
+its entry `deleted: true` on that card and publishes `message.updated`.
 
 Agents can also read and write notes through the `notes` tool (actions `list`,
 `save`, `delete`). Scope `workspace` uses the same notes as above (so they show up
@@ -361,6 +393,7 @@ interface KnowledgeNote {
   workspaceId: string     // workspace the note was learned in
   agent: string           // agent that was running
   text: string
+  why: string             // utility argument from the review ('' on notes saved by the `notes` tool)
   sessionId: string
   messageId: string       // the card that announced it
   createdAt: string

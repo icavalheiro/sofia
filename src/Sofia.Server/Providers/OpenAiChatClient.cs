@@ -8,23 +8,33 @@ using Sofia.Server.Domain;
 namespace Sofia.Server.Providers;
 
 /// <summary>OpenAI Chat Completions wire protocol (OpenAI, local runtimes, OpenRouter, Gemini, DeepSeek, …).</summary>
-public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider) : IChatClient
+public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider, ProviderAuthResolver? authResolver = null) : IChatClient
 {
     private static readonly HashSet<string> LocalFlavors = ["unsloth", "ollama", "llamacpp", "vllm", "lmstudio", "local"];
+    // Thinking models on these flavors reject a follow-up request that drops the earlier reasoning_content.
+    private static readonly HashSet<string> ReasoningEchoFlavors = ["deepseek", "opencode-go"];
 
     public async IAsyncEnumerable<StreamEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken ct)
     {
         var body = BuildBody(request);
-        using var message = new HttpRequestMessage(HttpMethod.Post, $"{provider.BaseUrl.TrimEnd('/')}/chat/completions")
+        var auth = authResolver is null ? RequestAuth.From(provider) : await authResolver(ct);
+        var baseUrl = (auth.BaseUrl ?? provider.BaseUrl).TrimEnd('/');
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
         {
             Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        var key = provider.ResolveKey();
-        if (!string.IsNullOrEmpty(key)) message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        if (!string.IsNullOrEmpty(auth.Key)) message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", auth.Key);
+        foreach (var (name, value) in auth.Headers ?? new Dictionary<string, string>()) message.Headers.TryAddWithoutValidation(name, value);
         if (provider.Flavor == "openrouter")
         {
             message.Headers.TryAddWithoutValidation("HTTP-Referer", "https://github.com/icavalheiro/sofia");
             message.Headers.TryAddWithoutValidation("X-Title", "Sofia");
+        }
+        else if (provider.Flavor == "copilot")
+        {
+            message.Headers.TryAddWithoutValidation("X-Initiator", request.Messages.LastOrDefault()?.Role == "user" ? "user" : "agent");
+            if (request.Messages.Any(m => m.Content.Any(c => c.ImageBase64 is not null)))
+                message.Headers.TryAddWithoutValidation("Copilot-Vision-Request", "true");
         }
         message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
@@ -149,6 +159,7 @@ public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider) :
                     var obj = new JsonObject { ["role"] = "assistant" };
                     var text = m.TextContent;
                     obj["content"] = string.IsNullOrEmpty(text) ? null : text;
+                    if (!string.IsNullOrEmpty(m.Reasoning) && ReasoningEchoFlavors.Contains(provider.Flavor)) obj["reasoning_content"] = m.Reasoning;
                     if (m.ToolCalls.Count > 0)
                     {
                         obj["tool_calls"] = new JsonArray(m.ToolCalls.Select(tc => (JsonNode)new JsonObject
@@ -242,6 +253,13 @@ public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider) :
                 break;
             case "openrouter":
                 body["reasoning"] = off ? new JsonObject { ["enabled"] = false } : new JsonObject { ["effort"] = request.Reasoning };
+                break;
+            case "deepseek":
+                body["thinking"] = new JsonObject { ["type"] = off ? "disabled" : "enabled" };
+                if (!off) body["reasoning_effort"] = request.Reasoning;
+                break;
+            case "qwencloud":
+                body["enable_thinking"] = !off;
                 break;
             case "gemini":
             case "xai":

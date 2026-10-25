@@ -276,6 +276,13 @@ public sealed class SessionRun : IToolHost
 
     private async Task RunTurnAsync(CancellationToken ct)
     {
+        // The request prefix (system prompt + tool schemas) is rebuilt only at the start of a turn. Providers cache on
+        // the longest common prefix, so anything that changed inside it — a note saved through `notes`, a workspace
+        // note learned by a background review, a branch switch, midnight, an MCP server connecting mid-run — would
+        // invalidate every cached token of the conversation for this step and all later ones. History stays append-only
+        // within a run (see `HistoryBuilder`), so a frozen prefix is what keeps each step hitting the cache. Whatever
+        // changed is picked up by the first step of the next turn.
+        _turnPrompt = null;
         for (var step = 0; step < MaxSteps; step++)
         {
             ct.ThrowIfCancellationRequested();
@@ -285,11 +292,7 @@ public sealed class SessionRun : IToolHost
             if (config.AutoCompact && Session.Context.Used > config.CompactThreshold * model.ContextLength)
                 await CompactAsync(auto: true, ct);
 
-            var agent = _s.AgentCatalog.Get(Session.Agent, Workspace.IsFolder ? Workspace.Path : null);
-            var tools = _s.Tools.For(agent, Workspace);
-            // Subagents never ask the user or spawn further subagents.
-            if (Session.ParentId is not null) tools.RemoveAll(t => t.Kind is ToolKind.Agent or ToolKind.Interactive);
-            var system = await BuildSystemPromptAsync(agent, tools, config, ct);
+            var (system, tools) = await TurnPromptAsync(config, ct);
             var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model);
             var estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments)));
             var room = model.ContextLength - estimatedInput - 512;
@@ -330,6 +333,25 @@ public sealed class SessionRun : IToolHost
         throw new InvalidOperationException($"Stopped after {MaxSteps} steps without a final answer.");
     }
 
+    private (string System, List<ITool> Tools, string Agent)? _turnPrompt;
+
+    /// <summary>
+    /// The system prompt and tool set of the current turn, built on its first step and reused by every later step so the
+    /// request prefix never changes while the provider's prompt cache is warm. Cleared by <c>RunTurnAsync</c>, and
+    /// rebuilt if the session's agent changed meanwhile, so a mid-run agent switch cannot leave a wider tool set live.
+    /// </summary>
+    private async Task<(string System, List<ITool> Tools)> TurnPromptAsync(ServerConfig config, CancellationToken ct)
+    {
+        if (_turnPrompt is { } cached && cached.Agent == Session.Agent) return (cached.System, cached.Tools);
+        var agent = _s.AgentCatalog.Get(Session.Agent, Workspace.IsFolder ? Workspace.Path : null);
+        var tools = _s.Tools.For(agent, Workspace);
+        // Subagents never ask the user or spawn further subagents.
+        if (Session.ParentId is not null) tools.RemoveAll(t => t.Kind is ToolKind.Agent or ToolKind.Interactive);
+        var system = await BuildSystemPromptAsync(agent, tools, config, ct);
+        _turnPrompt = (system, tools, agent.Id);
+        return (system, tools);
+    }
+
     private async Task<string> BuildSystemPromptAsync(AgentDefinition agent, List<ITool> tools, ServerConfig config, CancellationToken ct)
     {
         var dir = Workspace.IsFolder ? Workspace.Path : null;
@@ -356,7 +378,7 @@ public sealed class SessionRun : IToolHost
     private async Task<(List<ToolCall> Calls, string Finish)> StreamStepAsync(ProviderConfig provider, ModelInfo model, ChatRequest request,
         Message assistant, List<ITool> tools, int estimatedInput, CancellationToken ct)
     {
-        var client = _s.Providers.CreateClient(provider);
+        var client = _s.Providers.CreateClient(provider, model.ModelId);
         var builders = new SortedDictionary<int, (ToolCall Call, StringBuilder Args)>();
         var stepClock = Stopwatch.StartNew();
         TimeSpan? firstToken = null;
@@ -865,7 +887,7 @@ public sealed class SessionRun : IToolHost
 
         _s.Store.SetStatus(Session, SessionStatus.Working);
         var summary = new StringBuilder();
-        await foreach (var ev in _s.Providers.CreateClient(provider).StreamAsync(request, ct))
+        await foreach (var ev in _s.Providers.CreateClient(provider, model.ModelId).StreamAsync(request, ct))
             if (ev is TextDelta t) summary.Append(t.Text);
         if (summary.Length == 0) throw new InvalidOperationException("Compaction failed: the model returned an empty summary.");
 

@@ -127,7 +127,7 @@ public sealed class SofiaInfoTool(
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Agents");
-        sb.AppendLine("Custom agents are Markdown files: the body is the agent's system-prompt addendum. The user calls a subagent by typing @name in the chat; the `task` tool can delegate to it too. Primary agents are picked in the model/agent menu.");
+        sb.AppendLine("Custom agents are Markdown files: the body is the agent's system-prompt addendum. The user calls a subagent by typing @name in the chat; the `task` tool can delegate to it too. Primary agents are picked in the composer's agent dropdown.");
         sb.AppendLine($"Global folders: {Mark(options.AgentsDir)} (preferred), {Path.Combine(Home, ".claude", "agents")}, {Path.Combine(Home, ".config", "opencode", "agent")}");
         sb.AppendLine("Project folders: <project>/.sofia/agents, .claude/agents, .opencode/agent — a project agent overrides a global one (or a built-in) with the same name.");
         sb.AppendLine("The name is the file name (letters, digits, '.', '_', '-'), or the `name` field.");
@@ -169,7 +169,7 @@ public sealed class SofiaInfoTool(
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Model providers");
-        sb.AppendLine("Stored in the database. Local runtimes (Unsloth, Ollama, LM Studio, llama.cpp, vLLM) are discovered automatically; cloud providers turn on from environment keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, …) or keys saved through the API.");
+        sb.AppendLine("Stored in the database. Local runtimes (Unsloth, Ollama, LM Studio, llama.cpp, vLLM) are discovered automatically; cloud providers turn on from environment keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENCODE_API_KEY, QWENCLOUD_API_KEY, COPILOT_GITHUB_TOKEN, …) or keys saved through the API.");
         sb.AppendLine(Api(baseUrl()));
         sb.AppendLine("- GET /api/providers, GET /api/providers/presets, GET /api/models");
         sb.AppendLine("- POST /api/providers { \"name\", \"type\": \"openai\"|\"anthropic\", \"baseUrl\", \"apiKey\"?, \"models\"?: [..], \"presetId\"? }");
@@ -199,7 +199,7 @@ public sealed class SofiaInfoTool(
         sb.AppendLine($"- discovery: {Json(c.Discovery)} (probe local runtimes)");
         sb.AppendLine($"- maxToolOutput: {c.MaxToolOutput}");
         sb.AppendLine($"- keepScreenAwake: {Json(c.KeepScreenAwake)}");
-        sb.AppendLine($"- knowledge: {Json(c.Knowledge)} (learn short notes from finished conversations)");
+        sb.AppendLine($"- knowledge: {Json(c.Knowledge)} (learn short notes from finished conversations; each note must be justified as useful or it is dropped)");
         sb.AppendLine($"- searchProvider: \"{c.SearchProvider}\" (duckduckgo | searxng); searxngUrl: \"{Redact(c.SearxngUrl)}\"");
         sb.AppendLine($"- disabled models: {c.DisabledModels.Count}");
         return sb.ToString();

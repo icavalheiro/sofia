@@ -16,6 +16,7 @@ import {
 } from '@/types'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import SofiaPopover, { type PopoverItem } from '@/components/SofiaPopover.vue'
+import AgentDropdown from '@/components/AgentDropdown.vue'
 
 const {
   state,
@@ -35,15 +36,18 @@ const {
 const { state: backend } = useBackend()
 const { t } = useI18n()
 const fileInput = ref<HTMLInputElement | null>(null)
+const root = ref<HTMLElement | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const modelPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
 const permissionPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
 const reasoningPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
+const agentDropdown = ref<InstanceType<typeof AgentDropdown> | null>(null)
 
 function focusComposer(): void {
   textarea.value?.focus()
 }
 
+useShortcut('agent.pick', () => agentDropdown.value?.open())
 useShortcut('model.pick', () => modelPopover.value?.open())
 useShortcut('permission.pick', () => permissionPopover.value?.open())
 useShortcut('reasoning.pick', () => reasoningPopover.value?.open())
@@ -59,26 +63,29 @@ function query(dir: string): string {
   return dir ? `?directory=${encodeURIComponent(dir)}` : ''
 }
 
-// --- model / agent chip -------------------------------------------------------
-// One chip: primary agents first (picking one PATCHes the session `agent`),
-// then the server's model catalog (picking one PATCHes `modelId`).
-const agents = ref<AgentDto[]>([])
-// Agents the user can call with "@name" (subagent or both); see the mention popup below.
-const subagents = ref<AgentDto[]>([])
+// --- agent dropdown -----------------------------------------------------------
+// Its own control (not part of the model popover): picking an agent PATCHes the
+// session `agent`. The catalog is shared with the "@name" mention popup below.
+const agentCatalog = ref<AgentDto[]>([])
+// Agents the user can call with "@name" (subagent or both).
+const subagents = computed(() => agentCatalog.value.filter((a) => a.mode !== 'primary'))
 
 async function refreshAgents(): Promise<void> {
   try {
-    const list = (await api<AgentDto[]>('GET', `/api/agents${query(directory.value)}`)) ?? []
-    agents.value = list.filter((a) => a.mode !== 'subagent')
-    subagents.value = list.filter((a) => a.mode !== 'primary')
+    agentCatalog.value = (await api<AgentDto[]>('GET', `/api/agents${query(directory.value)}`)) ?? []
   } catch {
-    agents.value = []
-    subagents.value = []
+    agentCatalog.value = []
   }
 }
 
+const activeAgentId = computed(() => activeConversation.value?.agent ?? '')
+
+function selectAgent(id: string): void {
+  void patchActiveSession({ agent: id })
+}
+
+// --- model chip ---------------------------------------------------------------
 const modelItems = computed<PopoverItem[]>(() => {
-  const group = agents.value.length ? 'Model' : undefined
   const items: PopoverItem[] = models.value
     .filter((m) => m.enabled !== false)
     .map((m) => ({
@@ -87,34 +94,13 @@ const modelItems = computed<PopoverItem[]>(() => {
       description: [m.provider, m.context, m.connected ? '' : 'offline'].filter(Boolean).join(' · '),
       icon: m.local ? 'cpu' : 'globe',
       badge: m.local ? 'local' : undefined,
-      group,
     }))
   const current = activeModelId.value
   if (current && !items.some((i) => i.value === current)) {
-    items.unshift({ value: current, label: current, description: 'Not in the catalog', icon: 'globe', group })
+    items.unshift({ value: current, label: current, description: 'Not in the catalog', icon: 'globe' })
   }
   return items
 })
-
-const agentItems = computed<PopoverItem[]>(() =>
-  agents.value.map((a) => ({
-    value: `agent:${a.id}`,
-    label: a.name,
-    description: a.description.split('\n')[0]?.slice(0, 90) ?? '',
-    icon: 'cpu',
-    group: 'Agent',
-    action: true,
-    active: a.id === (activeConversation.value?.agent || 'build'),
-  })),
-)
-
-const chipItems = computed<PopoverItem[]>(() => [...agentItems.value, ...modelItems.value])
-
-/** Agent items only emit `pick`; models go through the v-model setter. */
-function onChipPick(item: PopoverItem): void {
-  if (!item.action) return
-  void patchActiveSession({ agent: item.value.replace(/^agent:/, '') })
-}
 
 const permissionItems: PopoverItem[] = PERMISSION_MODES.map((p) => ({
   value: p.id,
@@ -185,25 +171,32 @@ const costLabel = computed(() => `$${metrics.sessionCost.toFixed(4)}`)
 const tpsLabel = computed(() => `${metrics.tokensPerSec} tok/s`)
 const durationLabel = computed(() => `${(metrics.durationMs / 1000).toFixed(1)}s`)
 
-// Usage.input is the whole prompt (cached + uncached), so hit + miss = 100%.
+// Usage.input is the whole prompt (cached + uncached), so hit % = cacheRead / input.
+// The metric never disappears: before the first request it reads 0% like the other
+// zeroed readouts, and falls back to the session total when messages are not loaded.
 const cacheStats = computed(() => {
   const conv = activeConversation.value
   const pct = (u?: { input: number; cacheRead: number }) =>
     u && u.input > 0 ? Math.min(100, Math.round((u.cacheRead / u.input) * 100)) : null
   let last: UsageDto | undefined
   for (const m of conv?.messages ?? []) if (m.usage && m.usage.input > 0) last = m.usage
-  const lastHit = pct(last)
-  if (lastHit === null) return null
-  const total = conv?.usage
+  const total = conv?.usage && conv.usage.input > 0 ? conv.usage : undefined
   const totalHit = pct(total)
-  return {
-    hit: lastHit,
-    miss: 100 - lastHit,
-    title:
-      `${t('composer.hintCache')}\n` +
-      `${last!.cacheRead.toLocaleString()} / ${last!.input.toLocaleString()} tok` +
-      (totalHit === null ? '' : ` · ${totalHit}% (${total!.cacheRead.toLocaleString()} / ${total!.input.toLocaleString()} tok)`),
+  const hit = pct(last) ?? totalHit ?? 0
+  const lines = [t('composer.hintCache')]
+  if (last) {
+    lines.push(
+      `${t('composer.cacheLastStep')} ${hit}% ` +
+        `(${last.cacheRead.toLocaleString()} / ${last.input.toLocaleString()} tok)`,
+    )
   }
+  if (total && totalHit !== null) {
+    lines.push(
+      `${t('composer.cacheSession')} ${totalHit}% ` +
+        `(${total.cacheRead.toLocaleString()} / ${total.input.toLocaleString()} tok)`,
+    )
+  }
+  return { hit, title: lines.join('\n') }
 })
 const contextLabel = computed(() =>
   metrics.contextLimit > 0 ? `${compactTokens(metrics.contextUsed)} / ${compactTokens(metrics.contextLimit)}` : '',
@@ -525,17 +518,38 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
+// The composer overlays the transcript, so ChatMessages reserves room for it.
+// Publish its real height — the attachment strip, the growing textarea and the
+// reply-mode buttons all change it — so the reserved space tracks the box
+// instead of a fixed guess. The observer watches the footer itself, so every one
+// of those changes re-publishes without extra watchers.
+function publishHeight(): void {
+  const el = root.value
+  if (!el) return
+  document.documentElement.style.setProperty('--sofia-composer-height', `${Math.ceil(el.getBoundingClientRect().height)}px`)
+}
+
+let heightObserver: ResizeObserver | null = null
+
 onMounted(() => {
   autoResize()
+  publishHeight()
+  if (root.value && typeof ResizeObserver !== 'undefined') {
+    heightObserver = new ResizeObserver(publishHeight)
+    heightObserver.observe(root.value)
+  }
   document.addEventListener('mousedown', onDocumentPointer)
 })
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocumentPointer))
+onBeforeUnmount(() => {
+  heightObserver?.disconnect()
+  document.removeEventListener('mousedown', onDocumentPointer)
+})
 
 // Each chat keeps its own draft: re-fit the textarea when another one is loaded.
 watch(() => state.activeConversationId, () => nextTick(autoResize))
 </script>
 <template>
-  <footer class="composer">
+  <footer ref="root" class="composer">
     <div class="composer-inner">
       <div v-if="state.attachments.length" class="attach-strip">
         <div v-for="a in state.attachments" :key="a.id" class="attach-chip">
@@ -693,9 +707,9 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
             <SofiaIcon name="zap" :size="'0.75rem'" />
             {{ tpsLabel }}
           </span>
-          <span v-if="cacheStats" class="metric" :title="cacheStats.title">
+          <span class="metric" :title="cacheStats.title">
             <SofiaIcon name="database" :size="'0.75rem'" />
-            {{ cacheStats.hit }}% hit · {{ cacheStats.miss }}% miss
+            {{ cacheStats.hit }}% {{ t('composer.cacheHit') }}
           </span>
           <span v-if="contextLabel" class="metric" title="Context used / model window">
             <SofiaIcon name="layers" :size="'0.75rem'" />
@@ -721,6 +735,16 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
             @update:model-value="onPermissionSelect"
             @dismiss="focusComposer"
           />
+          <AgentDropdown
+            ref="agentDropdown"
+            align="right"
+            :agents="agentCatalog"
+            :model-value="activeAgentId"
+            :width="280"
+            @update:model-value="selectAgent"
+            @refresh="refreshAgents"
+            @dismiss="focusComposer"
+          />
           <SofiaPopover
             ref="modelPopover"
             compact
@@ -728,9 +752,8 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
             v-model="activeModelId"
             icon="sparkles"
             :label="t('composer.model')"
-            :items="chipItems"
+            :items="modelItems"
             :width="280"
-            @pick="onChipPick"
             @dismiss="focusComposer"
           />
           <SofiaPopover

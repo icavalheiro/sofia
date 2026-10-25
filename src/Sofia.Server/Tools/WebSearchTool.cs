@@ -116,13 +116,41 @@ public sealed partial class WebSearchTool(IHttpClientFactory httpFactory) : IToo
         return null;
     }
 
-    private static async Task<List<SearchHit>> SearxngAsync(HttpClient http, Uri baseUri, string query, CancellationToken ct)
+    internal static async Task<List<SearchHit>> SearxngAsync(HttpClient http, Uri baseUri, string query, CancellationToken ct)
     {
-        var url = new Uri(baseUri, $"search?q={Uri.EscapeDataString(query)}&format=json");
-        using var response = await http.GetAsync(url, ct);
-        response.EnsureSuccessStatusCode();
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        // Keep a sub-path such as /searxng/ (new Uri(base, "search") would drop it).
+        var search = baseUri.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/search?q=" + Uri.EscapeDataString(query);
+        var (jsonStatus, json) = await GetBodyAsync(http, search + "&format=json", ct);
+        if (json.Length > 0)
+        {
+            try
+            {
+                return ParseSearxngJson(json);
+            }
+            catch (JsonException)
+            {
+                // Instance answers the JSON request with a page instead: fall through to the HTML parser.
+            }
+        }
+
+        // Most instances leave the json engine disabled (403 on format=json), so read the result page.
+        var (htmlStatus, html) = await GetBodyAsync(http, search, ct);
+        if (string.IsNullOrEmpty(html))
+            throw new HttpRequestException($"the instance answered nothing usable (HTTP {jsonStatus} for format=json, HTTP {htmlStatus} for the result page).");
+        return ParseSearxngHtml(html);
+    }
+
+    /// <summary>GETs <paramref name="path"/> and returns the status code with its body (empty when the status is not 2xx).</summary>
+    private static async Task<(int Status, string Body)> GetBodyAsync(HttpClient http, string path, CancellationToken ct)
+    {
+        using var response = await http.GetAsync(path, HttpCompletionOption.ResponseContentRead, ct);
+        return ((int)response.StatusCode, response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(ct) : "");
+    }
+
+    internal static List<SearchHit> ParseSearxngJson(string body)
+    {
         var hits = new List<SearchHit>();
+        using var doc = JsonDocument.Parse(body);
         if (!doc.RootElement.TryGetProperty("results", out var results)) return hits;
         foreach (var item in results.EnumerateArray())
         {
@@ -135,6 +163,33 @@ public sealed partial class WebSearchTool(IHttpClientFactory httpFactory) : IToo
         }
         return hits;
     }
+
+    /// <summary>Reads the SearXNG result page: one <c>&lt;article class="result …"&gt;</c> per hit, title in its <c>&lt;h3&gt;</c> and snippet in <c>p.content</c>.</summary>
+    internal static List<SearchHit> ParseSearxngHtml(string html)
+    {
+        var hits = new List<SearchHit>();
+        foreach (Match article in ArticleRegex().Matches(html))
+        {
+            var title = TitleLinkRegex().Match(article.Groups["body"].Value);
+            if (!Uri.TryCreate(WebUtility.HtmlDecode(title.Groups["href"].Value), UriKind.Absolute, out var uri)
+                || uri.Scheme is not ("http" or "https")) continue;
+            var snippet = SnippetParaRegex().Match(article.Groups["body"].Value);
+            hits.Add(new SearchHit(
+                Text.FirstLine(WebFetchTool.HtmlToText(title.Groups["text"].Value), 300),
+                uri.ToString(),
+                snippet.Success ? Text.FirstLine(WebFetchTool.HtmlToText(snippet.Groups["text"].Value), 400) : ""));
+        }
+        return hits;
+    }
+
+    [GeneratedRegex("""<article[^>]*class="[^"]*\bresult\b[^"]*"[^>]*>(?<body>.*?)</article>""", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex ArticleRegex();
+
+    [GeneratedRegex("""<h[34][^>]*>\s*<a[^>]*href="(?<href>[^"]+)"[^>]*>(?<text>.*?)</a>""", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex TitleLinkRegex();
+
+    [GeneratedRegex("""<p class="content"[^>]*>(?<text>.*?)</p>""", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex SnippetParaRegex();
 
     [GeneratedRegex("""<a[^>]*class="result__a"[^>]*href="(?<href>[^"]+)"[^>]*>(?<text>.*?)</a>""", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
     private static partial Regex TitleRegex();

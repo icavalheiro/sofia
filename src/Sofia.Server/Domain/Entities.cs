@@ -189,6 +189,8 @@ public sealed class KnowledgeNote
     /// <summary>Agent id the note belongs to (always set; only used for lookup when the scope is 'agent').</summary>
     public string Agent { get; set; } = "";
     public string Text { get; set; } = "";
+    /// <summary>Why the reviewer judged the note worth keeping forever: the future situation where it helps. Never injected into the prompt.</summary>
+    public string Why { get; set; } = "";
     public string SessionId { get; set; } = "";
     /// <summary>Chat card that announced the note.</summary>
     public string MessageId { get; set; } = "";
@@ -201,6 +203,8 @@ public sealed class KnowledgeEntry
     public string Id { get; set; } = "";
     public string Scope { get; set; } = KnowledgeScope.Workspace;
     public string Text { get; set; } = "";
+    /// <summary>The utility argument the reviewer gave for the note, shown on the card.</summary>
+    public string Why { get; set; } = "";
     public bool Deleted { get; set; }
 }
 

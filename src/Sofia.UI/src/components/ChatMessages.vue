@@ -6,6 +6,7 @@ import { useHarness } from '@/composables/useHarness'
 import { useI18n } from '@/i18n'
 import ChatMessageItem from '@/components/ChatMessageItem.vue'
 import SofiaIcon from '@/components/SofiaIcon.vue'
+import { annotateCacheBreaks } from '@/services/cacheHealth'
 import type { Message } from '@/types'
 
 const { messages, activeConversation, activeWorkspace } = useHarness()
@@ -16,6 +17,9 @@ const content = ref<HTMLElement | null>(null)
 
 /** True while the open conversation's run is working (not waiting on the user). */
 const workingHere = computed(() => !!activeConversation.value?.working)
+
+/** Per-message prompt-cache warnings, indexed like `messages`. */
+const cacheBreaks = computed(() => annotateCacheBreaks(messages.value))
 
 /** True once the LLM started answering (text, reasoning, tool calls or a prompt for the user). */
 const answering = computed(() => {
@@ -133,6 +137,7 @@ watch(() => activeConversation.value?.id, followFromStart)
         :key="m.id"
         :message="m"
         :streaming="workingHere && i === messages.length - 1"
+        :cache-break="cacheBreaks[i] ?? null"
       />
 
       <!-- Working indicator: a lone spinner centred below the transcript, only until the LLM starts answering. -->
@@ -155,16 +160,24 @@ watch(() => activeConversation.value?.id, followFromStart)
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* Subtle paper-grain texture across the conversation canvas. */
+  /* Chat wallpaper: a seamless doodle tile that stays put while the transcript
+     scrolls, plus a faint paper grain over it. Both are kept deliberately quiet
+     (tile motifs ~3–5%, grain 0.03) so they never fight the white transcript
+     text; raise them only in small steps. */
   background-color: var(--sofia-bg);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
+    url('@/assets/chat-wallpaper.svg');
+  background-repeat: repeat;
 }
 
 .messages-inner {
   max-width: 880px;
   margin: 0 auto;
-  /* Reserve room for the frosted composer that overlays the transcript. */
-  padding: 1.25rem 1.5rem 12rem;
+  /* Reserve room for the frosted composer that overlays the transcript. The
+     height comes from the composer itself, so the gap never grows stale when
+     the input box shrinks or an attachment strip appears. */
+  padding: 1.25rem 1.5rem calc(var(--sofia-composer-height) + 1.25rem);
 }
 
 /* --- empty state -------------------------------------------------------- */

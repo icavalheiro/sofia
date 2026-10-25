@@ -16,7 +16,15 @@ import {
 } from '@/composables/useShortcuts'
 import { api, onServerEvent } from '@/services/sofia'
 import { useI18n } from '@/i18n'
-import type { ConfigDto, McpServer, ModelOption, Provider, ProviderPresetDto } from '@/types'
+import type {
+  ConfigDto,
+  CopilotDeviceFlow,
+  CopilotLoginPoll,
+  McpServer,
+  ModelOption,
+  Provider,
+  ProviderPresetDto,
+} from '@/types'
 import PairingDialog from '@/components/PairingDialog.vue'
 import SkillsSection from '@/components/SkillsSection.vue'
 import SofiaIcon from '@/components/SofiaIcon.vue'
@@ -241,6 +249,7 @@ async function loadPresets(): Promise<void> {
 }
 
 function pickPreset(id: string): void {
+  stopCopilotLogin()
   presetId.value = id
   const preset = presets.value.find((p) => p.id === id)
   newProvider.name = preset?.name ?? ''
@@ -253,10 +262,68 @@ function pickPreset(id: string): void {
 }
 
 function clearPreset(): void {
+  stopCopilotLogin()
   presetId.value = null
   loadedModels.value = []
   modelsNote.value = null
 }
+
+// GitHub Copilot signs in with the OAuth device flow: show the code, open GitHub,
+// and poll the server until the user approves it there.
+const copilotFlow = ref<CopilotDeviceFlow | null>(null)
+const copilotBusy = ref(false)
+let copilotTimer: ReturnType<typeof setTimeout> | null = null
+
+function stopCopilotLogin(): void {
+  if (copilotTimer) clearTimeout(copilotTimer)
+  copilotTimer = null
+  copilotFlow.value = null
+  copilotBusy.value = false
+}
+
+async function startCopilotLogin(): Promise<void> {
+  if (copilotBusy.value) return
+  copilotBusy.value = true
+  if (copilotTimer) clearTimeout(copilotTimer)
+  connectError.value = null
+  connectDone.value = false
+  try {
+    const flow = await api<CopilotDeviceFlow>('POST', '/api/providers/github-copilot/login')
+    copilotFlow.value = flow
+    window.open(flow.verificationUri, '_blank', 'noopener')
+    copilotTimer = setTimeout(() => void pollCopilotLogin(flow), flow.interval * 1000)
+  } catch (e) {
+    connectError.value = failure(e)
+  } finally {
+    copilotBusy.value = false
+  }
+}
+
+async function pollCopilotLogin(flow: CopilotDeviceFlow): Promise<void> {
+  try {
+    const res = await api<CopilotLoginPoll>('POST', '/api/providers/github-copilot/login/poll', {
+      deviceCode: flow.deviceCode,
+    })
+    if (copilotFlow.value?.deviceCode !== flow.deviceCode) return
+    if (res.status === 'success') {
+      stopCopilotLogin()
+      if (res.provider) replaceProvider(res.provider)
+      connectDone.value = true
+      await refreshCatalog()
+      await refreshModels()
+    } else if (res.status === 'pending') {
+      copilotTimer = setTimeout(() => void pollCopilotLogin(flow), (res.interval ?? flow.interval) * 1000)
+    } else {
+      stopCopilotLogin()
+      connectError.value = res.status === 'denied' ? 'GitHub sign-in was denied.' : 'The sign-in code expired. Try again.'
+    }
+  } catch (e) {
+    stopCopilotLogin()
+    connectError.value = failure(e)
+  }
+}
+
+onBeforeUnmount(stopCopilotLogin)
 
 async function loadModels(): Promise<void> {
   if (!canProbe.value || loadingModels.value) return
@@ -305,6 +372,7 @@ async function submitProvider(): Promise<void> {
 }
 
 function resetProviderForm(): void {
+  stopCopilotLogin()
   showAddProvider.value = false
   presetId.value = null
   newProvider.name = ''
@@ -769,7 +837,7 @@ onBeforeUnmount(stopEvents)
                   <label class="row">
                     <span class="row-text">
                       <span class="row-title">Learn from conversations</span>
-                      <span class="row-sub">After a reply, the model distils short notes about the workspace or agent into the system prompt. Costs one extra model call.</span>
+                      <span class="row-sub">After a reply, the model distils short notes about the workspace or agent into the system prompt. It must justify each note as useful, so unjustified ones are dropped. Costs one extra model call.</span>
                     </span>
                     <button
                       class="toggle"
@@ -799,7 +867,7 @@ onBeforeUnmount(stopEvents)
                   <div v-if="config.searchProvider === 'searxng'" class="row">
                     <span class="row-text">
                       <span class="row-title">SearXNG URL</span>
-                      <span class="row-sub">Instance base URL with the JSON format enabled.</span>
+                      <span class="row-sub">Instance base URL. Sofia uses the instance JSON API when it is enabled and falls back to the result page otherwise.</span>
                     </span>
                     <input
                       v-model="searxngDraft"
@@ -887,7 +955,21 @@ onBeforeUnmount(stopEvents)
               </div>
 
               <template v-if="presetId !== null">
-                <div class="field">
+                <p v-if="selectedPreset?.note" class="form-note">{{ selectedPreset.note }}</p>
+                <div v-if="selectedPreset?.auth === 'github-device'" class="field">
+                  <label class="field-label">GitHub sign-in</label>
+                  <div v-if="copilotFlow" class="device-flow">
+                    <span>Enter this code at {{ copilotFlow.verificationUri }}</span>
+                    <code class="device-code">{{ copilotFlow.userCode }}</code>
+                    <span class="form-note">Waiting for approval…</span>
+                  </div>
+                  <div class="add-actions add-actions--start">
+                    <button class="mini-btn" type="button" :disabled="copilotBusy" @click="startCopilotLogin">
+                      <SofiaIcon name="link" :size="'0.85rem'" />
+                      {{ copilotFlow ? 'Restart sign-in' : 'Sign in with GitHub' }}
+                    </button>
+                  </div>
+                </div>                <div class="field">
                   <label class="field-label">Name</label>
                   <input v-model="newProvider.name" class="field-input" placeholder="My provider" autocomplete="off" />
                 </div>
@@ -1856,6 +1938,23 @@ onBeforeUnmount(stopEvents)
 
 .form-note--error {
   color: var(--sofia-danger, #c0605a);
+}
+
+.device-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.device-code {
+  font-size: 1.1rem;
+  letter-spacing: 0.15em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.3rem;
+  user-select: all;
 }
 
 .spinning {

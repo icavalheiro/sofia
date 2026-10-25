@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <!-- Sofia chat wallpaper: seamless doodle tile (line art, low opacity).
+       Motifs are <use> refs of the symbols below; keep each one fully inside the
+       400x400 viewBox so the repeat stays seamless. -->
+  <defs>
+    <g id="bubble" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M-10,-8 h20 a3,3 0 0 1 3,3 v10 a3,3 0 0 1 -3,3 h-11 l-6,5 v-5 h-3 a3,3 0 0 1 -3,-3 v-10 a3,3 0 0 1 3,-3 z"/></g>
+    <g id="heart" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M0,9 C-9,2 -11,-4 -7,-8 C-4,-11 -1,-9 0,-6 C1,-9 4,-11 7,-8 C11,-4 9,2 0,9 Z"/></g>
+    <g id="smiley" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle r="9"/><path d="M-4.5,2 a5,5 0 0 0 9,0"/><path d="M-3.6,-3.4 v0.1 M3.6,-3.4 v0.1"/></g>
+    <g id="star" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M0.00,-11.00 L2.76,-3.80 L10.46,-3.40 L4.47,1.45 L6.47,8.90 L0.00,4.70 L-6.47,8.90 L-4.47,1.45 L-10.46,-3.40 L-2.76,-3.80 Z"/></g>
+    <g id="moon" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5,-9 A9.2,9.2 0 1 0 4.5,9 A7.2,7.2 0 1 1 4.5,-9 Z"/></g>
+    <g id="pencil" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M-8.5,8.5 l2,-5 L4.5,-9 a2.2,2.2 0 0 1 3.1,3.1 L-1.5,6.5 z M-6.5,3.5 l4,4"/></g>
+    <g id="flame" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M0,-10 C5,-4 9,-2 9,3 A9,9 0 0 1 -9,3 C-9,-2 -4,-5 0,-10 Z"/><path d="M0,7.5 a4,4 0 0 0 3.2,-4.5"/></g>
+    <g id="bulb" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cy="-3" r="6"/><path d="M-3,5 h6 M-2.4,8.4 h4.8 M-1.2,-4.5 a2.4,2.4 0 0 1 2.4,2.4"/></g>
+    <g id="lock" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="-7" y="-1.5" width="14" height="11.5" rx="2.4"/><path d="M-4,-1.5 v-3 a4,4 0 0 1 8,0 v3"/></g>
+    <g id="plane" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10,-8.5 L-10,1 L-1.4,4.2 L0.6,10 Z M-1.4,4.2 L10,-8.5"/></g>
+    <g id="note" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="-3" cy="7" r="3.2"/><path d="M0.2,7 V-8 l7,2.4"/></g>
+    <g id="cloud" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M-9.5,4.5 a4.6,4.6 0 0 1 1.4,-8.6 a6.2,6.2 0 0 1 11.6,1.4 a4.2,4.2 0 0 1 -1.2,7.2 z"/></g>
+    <g id="bolt" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5,-10 L-6.5,2 L-1,2 L-2.5,10 L6.5,-3 L1,-3 Z"/></g>
+    <g id="eye" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M-10,0 C-6,-6.4 6,-6.4 10,0 C6,6.4 -6,6.4 -10,0 Z"/><circle r="3"/></g>
+    <g id="sun" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle r="5"/><path d="M7.60,0.00 L10.60,0.00"/><path d="M5.37,5.37 L7.50,7.50"/><path d="M0.00,7.60 L0.00,10.60"/><path d="M-5.37,5.37 L-7.50,7.50"/><path d="M-7.60,0.00 L-10.60,0.00"/><path d="M-5.37,-5.37 L-7.50,-7.50"/><path d="M-0.00,-7.60 L-0.00,-10.60"/><path d="M5.37,-5.37 L7.50,-7.50"/></g>
+    <g id="cup" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M-8.5,-4 h13 v7.5 a5.2,5.2 0 0 1 -5.2,5.2 h-2.6 a5.2,5.2 0 0 1 -5.2,-5.2 z"/><path d="M4.9,-2 a3.6,3.6 0 0 1 0,6.4 M-5,-8 v-2.4 M-1,-8 v-2.4"/></g>
+    <g id="gem" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M-8.5,-3 L-4.2,-8.4 H4.2 L8.5,-3 L0,9 Z M-8.5,-3 H8.5 M-4.2,-8.4 L-2,-3 M4.2,-8.4 L2,-3"/></g>
+    <g id="clock" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle r="8"/><path d="M0,-4.2 V0.4 h3.6"/></g>
+    <g id="check" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M-7,0.5 L-2,6 L8,-6.5"/></g>
+    <g id="cursor" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M-6,-8.5 L7,1.5 L1.4,2.2 L4,8.6 L1.6,9.6 L-1,3.2 L-6,8 z"/></g>
+    <g id="send" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M0,9 V-8 M-5.2,-2.8 L0,-8 L5.2,-2.8"/></g>
+    <g id="ring" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle r="7"/></g>
+  </defs>
+  <use href="#bubble" transform="translate(28.1 22.1) rotate(-30) scale(0.83)" opacity="0.035"/>
+  <use href="#heart" transform="translate(74.6 279.4) rotate(-19) scale(1.34)" opacity="0.032"/>
+  <use href="#smiley" transform="translate(240.7 235.3) rotate(17) scale(1.39)" opacity="0.046"/>
+  <use href="#star" transform="translate(192.6 139.8) rotate(-5) scale(0.91)" opacity="0.036"/>
+  <use href="#moon" transform="translate(267.2 378.2) rotate(-2) scale(1.27)" opacity="0.037"/>
+  <use href="#pencil" transform="translate(77.1 341.5) rotate(2) scale(1.09)" opacity="0.045"/>
+  <use href="#flame" transform="translate(129.5 55.7) rotate(-19) scale(1.26)" opacity="0.033"/>
+  <use href="#bulb" transform="translate(358.0 268.9) rotate(20) scale(1.35)" opacity="0.052"/>
+  <use href="#lock" transform="translate(118.9 177.5) rotate(6) scale(1.05)" opacity="0.053"/>
+  <use href="#plane" transform="translate(173.7 343.5) rotate(10) scale(1.29)" opacity="0.031"/>
+  <use href="#note" transform="translate(317.0 172.9) rotate(20) scale(1.06)" opacity="0.027"/>
+  <use href="#cloud" transform="translate(325.7 332.6) rotate(-13) scale(0.94)" opacity="0.038"/>
+  <use href="#bolt" transform="translate(250.3 150.7) rotate(22) scale(1.13)" opacity="0.035"/>
+  <use href="#eye" transform="translate(49.2 169.0) rotate(-18) scale(1.36)" opacity="0.040"/>
+  <use href="#sun" transform="translate(191.3 68.3) rotate(2) scale(1.28)" opacity="0.029"/>
+  <use href="#cup" transform="translate(294.0 23.0) rotate(-12) scale(1.07)" opacity="0.044"/>
+  <use href="#gem" transform="translate(378.6 364.3) rotate(-8) scale(1.25)" opacity="0.042"/>
+  <use href="#clock" transform="translate(130.3 255.4) rotate(-26) scale(1.22)" opacity="0.032"/>
+  <use href="#check" transform="translate(96.5 104.6) rotate(19) scale(1.01)" opacity="0.045"/>
+  <use href="#cursor" transform="translate(375.5 157.5) rotate(12) scale(0.93)" opacity="0.037"/>
+  <use href="#send" transform="translate(222.6 311.0) rotate(-16) scale(0.81)" opacity="0.049"/>
+  <use href="#ring" transform="translate(34.8 230.2) rotate(-18) scale(0.94)" opacity="0.032"/>
+  <use href="#bubble" transform="translate(362.2 100.8) rotate(-22) scale(1.33)" opacity="0.028"/>
+  <use href="#heart" transform="translate(274.2 84.8) rotate(26) scale(1.28)" opacity="0.046"/>
+  <use href="#smiley" transform="translate(181.9 226.9) rotate(25) scale(1.07)" opacity="0.055"/>
+  <use href="#star" transform="translate(371.2 40.2) rotate(-13) scale(1.23)" opacity="0.042"/>
+  <use href="#moon" transform="translate(18.5 82.8) rotate(18) scale(1.03)" opacity="0.032"/>
+  <use href="#pencil" transform="translate(228.5 21.9) rotate(5) scale(0.84)" opacity="0.038"/>
+  <use href="#flame" transform="translate(18.1 360.6) rotate(5) scale(0.84)" opacity="0.028"/>
+  <use href="#bulb" transform="translate(292.0 273.1) rotate(-30) scale(1.35)" opacity="0.050"/>
+</svg>

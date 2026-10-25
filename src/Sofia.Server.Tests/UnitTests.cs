@@ -135,6 +135,95 @@ public class ProviderBodyTests
     }
 
     [Fact]
+    public void DeepSeekBodyTogglesThinkingAndEchoesReasoning()
+    {
+        var request = new ChatRequest
+        {
+            Model = "deepseek-v4-pro",
+            Reasoning = "high",
+            ModelSupportsReasoning = true,
+            Messages =
+            [
+                ChatMessage.UserText("hi"),
+                new ChatMessage { Role = "assistant", Reasoning = "thinking…", ToolCalls = [new ToolCallSpec("c1", "read", "{}")] },
+            ],
+        };
+        var client = new OpenAiChatClient(new HttpClient(), new ProviderConfig { Flavor = "deepseek" });
+        var body = client.BuildBody(request);
+        Assert.Equal("enabled", body["thinking"]!["type"]!.GetValue<string>());
+        Assert.Equal("high", body["reasoning_effort"]!.GetValue<string>());
+        Assert.Equal("thinking…", body["messages"]![1]!["reasoning_content"]!.GetValue<string>());
+
+        var off = new OpenAiChatClient(new HttpClient(), new ProviderConfig { Flavor = "deepseek" })
+            .BuildBody(new ChatRequest { Model = "deepseek-flash", Reasoning = "off", ModelSupportsReasoning = true });
+        Assert.Equal("disabled", off["thinking"]!["type"]!.GetValue<string>());
+        Assert.Null(off["reasoning_effort"]);
+    }
+
+    [Fact]
+    public void QwenCloudBodySendsEnableThinking()
+    {
+        var body = new OpenAiChatClient(new HttpClient(), new ProviderConfig { Flavor = "qwencloud" })
+            .BuildBody(new ChatRequest { Model = "qwen3.8-max", Reasoning = "off", ModelSupportsReasoning = true });
+        Assert.False(body["enable_thinking"]!.GetValue<bool>());
+    }
+
+    [Theory]
+    [InlineData("glm-5.3", OpenCodeGo.Wire.Chat)]
+    [InlineData("kimi-k3", OpenCodeGo.Wire.Chat)]
+    [InlineData("minimax-m3.1-flash", OpenCodeGo.Wire.Chat)]
+    [InlineData("minimax-m3", OpenCodeGo.Wire.Anthropic)]
+    [InlineData("qwen3.8-max", OpenCodeGo.Wire.Anthropic)]
+    [InlineData("claude-haiku-5-5", OpenCodeGo.Wire.Anthropic)]
+    [InlineData("gpt-6-luna", OpenCodeGo.Wire.Unsupported)]
+    [InlineData("gemini-4-argon", OpenCodeGo.Wire.Unsupported)]
+    public void OpenCodeGoRoutesModelsByWire(string model, OpenCodeGo.Wire wire) =>
+        Assert.Equal(wire, OpenCodeGo.WireFor(model));
+
+    [Fact]
+    public void OpenCodeGoUsesDedicatedModelsAndAnthropicUrls()
+    {
+        Assert.Equal("https://opencode.ai/inference/go/v1/models", OpenCodeGo.ModelsUrl("https://opencode.ai/inference/go/openai/v1"));
+        var routed = OpenCodeGo.ForAnthropic(new ProviderConfig { BaseUrl = "https://opencode.ai/inference/go/openai/v1", ApiKey = "k", Flavor = "opencode-go" });
+        Assert.Equal("anthropic", routed.Type);
+        Assert.Equal("https://opencode.ai/inference/go/anthropic", routed.BaseUrl);
+        Assert.Equal("k", routed.ApiKey);
+    }
+
+    [Fact]
+    public void CopilotCatalogKeepsOnlyChatCapableModels()
+    {
+        var json = JsonNode.Parse("""
+        { "data": [
+          { "id": "gpt-6-sol", "name": "GPT 6 Sol", "model_picker_enabled": true, "supported_endpoints": ["/chat/completions", "/responses"],
+            "capabilities": { "type": "chat", "limits": { "max_context_window_tokens": 400000, "max_output_tokens": 64000 }, "supports": { "vision": true, "tool_calls": true } } },
+          { "id": "codex-only", "model_picker_enabled": true, "supported_endpoints": ["/responses"], "capabilities": { "type": "chat" } },
+          { "id": "text-embedding-3", "capabilities": { "type": "embeddings" } },
+          { "id": "hidden", "model_picker_enabled": false, "capabilities": { "type": "chat" } },
+          { "id": "gpt-6-sol", "capabilities": { "type": "chat" } }
+        ] }
+        """);
+        var models = ProviderService.ParseCopilotModels(json);
+        var model = Assert.Single(models);
+        Assert.Equal("gpt-6-sol", model.Id);
+        Assert.Equal(400_000, model.ContextLength);
+        Assert.Equal(64_000, model.MaxOutput);
+        Assert.True(model.Vision);
+    }
+
+    [Fact]
+    public void NewPresetsAreRegisteredWithTheirFlavors()
+    {
+        var presets = ProviderService.Presets.ToDictionary(p => p.Id);
+        Assert.Equal("opencode-go", presets["opencode-go"].Flavor);
+        Assert.Equal("qwencloud", presets["qwencloud"].Flavor);
+        Assert.Equal("deepseek", presets["deepseek"].Flavor);
+        Assert.Equal("github-device", presets["github-copilot"].Auth);
+        Assert.Equal("copilot", ProviderService.GuessFlavor("https://api.githubcopilot.com", "openai"));
+        Assert.Equal("opencode-go", ProviderService.GuessFlavor("https://opencode.ai/inference/go/openai/v1", "openai"));
+    }
+
+    [Fact]
     public void AnthropicBodyMergesToolResultsWithFollowingUserTurn()
     {
         var body = new AnthropicChatClient(new HttpClient(), new ProviderConfig()).BuildBody(Request());
