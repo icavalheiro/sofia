@@ -132,25 +132,15 @@ watch(() => activeConversation.value?.id, followFromStart)
         </p>
       </div>
 
-      <ChatMessageItem
-        v-for="(m, i) in messages"
-        :key="m.id"
-        :message="m"
-        :streaming="workingHere && i === messages.length - 1"
-        :cache-break="cacheBreaks[i] ?? null"
-      />
+      <ChatMessageItem v-for="(m, i) in messages" :key="m.id" :message="m"
+        :streaming="workingHere && i === messages.length - 1" :cache-break="cacheBreaks[i] ?? null" />
 
       <!-- Working indicator: a lone spinner centred below the transcript, only until the LLM starts answering. -->
       <div v-if="showSpinner" class="working" role="status" :aria-label="t('chat.working')">
         <SofiaIcon class="spinner" name="loader" spin :size="'1.6rem'" />
       </div>
 
-      <ChatMessageItem
-        v-for="p in pendingMessages"
-        :key="p.message.id"
-        :message="p.message"
-        :pending="p.delivery"
-      />
+      <ChatMessageItem v-for="p in pendingMessages" :key="p.message.id" :message="p.message" :pending="p.delivery" />
     </div>
   </div>
 </template>
@@ -166,7 +156,7 @@ watch(() => activeConversation.value?.id, followFromStart)
      text; raise them only in small steps. */
   background-color: var(--sofia-bg);
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.02'/%3E%3C/svg%3E"),
     url('@/assets/chat-wallpaper.svg');
   background-repeat: repeat;
 }
