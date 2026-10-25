@@ -10,3 +10,5 @@ src/Sofia.UI/dist/
 
 # Local plan specs (working state, never committed)
 /.specs/
+# Docker compose workspaces mount
+/workspaces/

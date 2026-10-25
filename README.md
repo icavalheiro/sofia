@@ -1,4 +1,8 @@
-# Sofia
+<p align="center">
+  <img src="brand/logo.png" alt="Sofia logo" width="200">
+</p>
+
+<h1 align="center">Sofia</h1>
 
 Sofia is a local AI harness for everyday work: an ASP.NET agent server and a
 carefully designed web interface. It is built from scratch — no other harness
@@ -22,6 +26,25 @@ Sofia.UI (Vue 3.5 + Vite + TypeScript) ──REST + SignalR──▶ Sofia.Serve
 
 Local model runtimes are discovered automatically, together with each model's
 context window.
+
+## Run with Docker
+
+The easiest way to try Sofia is the Docker image, which bundles the server and
+the UI. CI publishes it to `ghcr.io/icavalheiro/sofia` on every push to `main`.
+
+```bash
+docker compose up -d            # or: docker compose up -d --build  (build from this checkout)
+docker compose exec sofia curl -s -X POST http://127.0.0.1:5199/api/pair
+```
+
+Open http://localhost:5199. Because the browser is outside the container, the
+UI asks for a pairing code: paste the `code` printed by the second command
+(choose "Pairing code" in the connect panel). Data lives in the `sofia-data`
+volume; put the folders the agent should work on in `./workspaces` (mounted at
+`/workspaces`, override with `SOFIA_WORKSPACES`). Host runtimes such as Ollama
+are reachable at `host.docker.internal` (see `SOFIA_LOCAL_ENDPOINTS` in
+`docker-compose.yml`). An installable desktop version, with no Docker or
+manual setup, is planned for the future.
 
 ## Quickstart
 

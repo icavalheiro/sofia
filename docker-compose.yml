@@ -1,0 +1,24 @@
+# Sofia server + UI on http://localhost:5199.
+#   docker compose up -d                       # pulls the published image
+#   docker compose up -d --build               # builds it from this checkout instead
+services:
+  sofia:
+    image: ghcr.io/icavalheiro/sofia:latest
+    build: .
+    ports:
+      # Published on loopback only; browsers outside the container must pair (see README).
+      - "127.0.0.1:5199:5199"
+    environment:
+      SOFIA_HOME: /data
+      # Extra OpenAI-compatible runtimes, e.g. Ollama on the host:
+      # SOFIA_LOCAL_ENDPOINTS: "ollama=http://host.docker.internal:11434/v1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - sofia-data:/data
+      # Folders the agent can work on, available inside the container as /workspaces.
+      - ${SOFIA_WORKSPACES:-./workspaces}:/workspaces
+    restart: unless-stopped
+
+volumes:
+  sofia-data:
