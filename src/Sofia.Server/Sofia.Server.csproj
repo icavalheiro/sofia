@@ -1,0 +1,41 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sofia.Server</RootNamespace>
+    <AssemblyName>Sofia.Server</AssemblyName>
+    <Version>0.2.0</Version>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DiffPlex" Version="1.9.0" />
+    <PackageReference Include="LiteDB" Version="5.0.21" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.64.1" />
+    <PackageReference Include="ModelContextProtocol" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sofia.Server.Tests" />
+  </ItemGroup>
+
+  <!-- `dotnet publish` also builds Sofia.UI and ships it as wwwroot, so the published server
+       serves the harness UI on the same URL. Opt out with -p:BuildUiOnPublish=false. -->
+  <PropertyGroup>
+    <BuildUiOnPublish Condition="'$(BuildUiOnPublish)' == ''">true</BuildUiOnPublish>
+    <SofiaUiDir>$(MSBuildThisFileDirectory)..\Sofia.UI\</SofiaUiDir>
+  </PropertyGroup>
+
+  <Target Name="BuildSofiaUi" AfterTargets="ComputeFilesToPublish" Condition="'$(BuildUiOnPublish)' == 'true'">
+    <Exec Command="npm ci" WorkingDirectory="$(SofiaUiDir)" Condition="!Exists('$(SofiaUiDir)node_modules')" />
+    <Exec Command="npm run build" WorkingDirectory="$(SofiaUiDir)" />
+
+    <ItemGroup>
+      <SofiaUiFile Include="$(SofiaUiDir)dist\**" />
+      <ResolvedFileToPublish Include="@(SofiaUiFile)" RelativePath="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
+</Project>

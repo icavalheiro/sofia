@@ -1,0 +1,12 @@
+# .NET build output
+bin/
+obj/
+*.user
+TestResults/
+
+# Sofia.UI dependencies and build output
+node_modules/
+src/Sofia.UI/dist/
+
+# Local plan specs (working state, never committed)
+/.specs/

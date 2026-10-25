@@ -1,0 +1,7 @@
+node_modules/
+dist/
+
+# Local env files (may hold a remote server URL).
+.env
+.env.*
+!.env.example
