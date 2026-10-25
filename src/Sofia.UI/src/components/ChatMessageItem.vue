@@ -285,6 +285,16 @@ function closeLightbox(): void {
         </div>
       </div>
 
+      <!-- Message text comes before the tool cards: the model speaks, then acts. -->
+      <template v-if="!message.knowledge?.length">
+        <MarkdownText
+          v-if="message.text && message.role === 'assistant'"
+          class="msg-text msg-text--md"
+          :source="message.text"
+        />
+        <p v-else-if="message.text" class="msg-text">{{ message.text }}</p>
+      </template>
+
       <!-- Tool invocations (success + failure); each card folds to its header. -->
       <div v-if="message.toolCalls?.length" class="tool-list">
         <div v-for="tc in message.toolCalls" :key="tc.id" class="tool" :class="`tool--${tc.status}`">
@@ -448,13 +458,6 @@ function closeLightbox(): void {
         </ul>
         <p v-if="knowledgeError" class="knowledge-error">{{ knowledgeError }}</p>
       </div>
-
-      <MarkdownText
-        v-else-if="message.text && message.role === 'assistant'"
-        class="msg-text msg-text--md"
-        :source="message.text"
-      />
-      <p v-else-if="message.text" class="msg-text">{{ message.text }}</p>
 
       <!-- Structured report produced by a deep-search run (with its file). -->
       <div v-if="message.report" class="report">
@@ -997,6 +1000,10 @@ function closeLightbox(): void {
 }
 
 /* --- tool calls --------------------------------------------------------- */
+.msg-text + .tool-list {
+  margin-top: 0.6rem;
+}
+
 .tool-list {
   display: flex;
   flex-direction: column;
