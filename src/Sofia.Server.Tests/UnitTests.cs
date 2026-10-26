@@ -190,6 +190,146 @@ public class ProviderBodyTests
         Assert.Equal("k", routed.ApiKey);
     }
 
+    /// <summary>Go rejects requests without the harness identity, so both wire protocols must send it.</summary>
+    [Fact]
+    public async Task OpenCodeGoRequestsCarryAgentUserAgentAndSessionId()
+    {
+        var go = new ProviderConfig { Name = "OpenCode Go", BaseUrl = "https://opencode.ai/inference/go/openai/v1", ApiKey = "k", Flavor = "opencode-go" };
+        var request = new ChatRequest { Model = "glm-5.3", Messages = [ChatMessage.UserText("hi")], SessionId = "ses_abc" };
+
+        var capture = new CapturingHandler();
+        await Drain(new OpenAiChatClient(capture.Http(), go).StreamAsync(request, CancellationToken.None));
+        Assert.Equal("ses_abc", Header(capture.Last, "x-opencode-session"));
+        Assert.Contains("sofia/", capture.Last.Headers.UserAgent.ToString());
+
+        capture = new CapturingHandler();
+        await Drain(new AnthropicChatClient(capture.Http(), OpenCodeGo.ForAnthropic(go))
+            .StreamAsync(request, CancellationToken.None));
+        Assert.Equal("ses_abc", Header(capture.Last, "x-opencode-session"));
+
+        // Vendor names other than Go's stay out of the request.
+        Assert.False(capture.Last.Headers.Contains("x-amzn-bedrock-agentcore-runtime-session-id"));
+    }
+
+    /// <summary>Every provider gets the conversation id, under each gateway's own header name.</summary>
+    [Theory]
+    [InlineData("openai", "https://api.openai.com/v1")]
+    [InlineData("anthropic-proxy", "https://gw.example.com/v1")]
+    [InlineData("ollama", "http://127.0.0.1:11434/v1")]
+    public async Task EveryProviderSendsTheSessionHeaders(string flavor, string baseUrl)
+    {
+        var capture = new CapturingHandler();
+        await Drain(new OpenAiChatClient(capture.Http(), new ProviderConfig { Name = "P", BaseUrl = baseUrl, Flavor = flavor })
+            .StreamAsync(new ChatRequest { Model = "m", Messages = [ChatMessage.UserText("hi")], SessionId = "ses_abc" }, CancellationToken.None));
+        foreach (var name in new[] { "x-session-id", "x-litellm-trace-id", "x-claude-code-session-id", "x-dynamo-session-id" })
+            Assert.Equal("ses_abc", Header(capture.Last, name));
+    }
+
+    /// <summary>Anthropic itself has no proxy in between, so Claude Code's session name is not claimed.</summary>
+    [Fact]
+    public async Task FirstPartyAnthropicDoesNotClaimAClaudeCodeSession()
+    {
+        var capture = new CapturingHandler();
+        await Drain(new AnthropicChatClient(capture.Http(), new ProviderConfig { Name = "Anthropic", Type = "anthropic", BaseUrl = "https://api.anthropic.com" })
+            .StreamAsync(new ChatRequest { Model = "claude-x", Messages = [ChatMessage.UserText("hi")], SessionId = "ses_abc" }, CancellationToken.None));
+        Assert.False(capture.Last.Headers.Contains("x-claude-code-session-id"));
+        Assert.Equal("ses_abc", Header(capture.Last, "x-session-id"));
+    }
+
+    /// <summary>AgentCore rejects a runtime session id shorter than 33 characters; the padding stays stable.</summary>
+    [Fact]
+    public async Task AgentCoreRequestsSendAPaddedRuntimeSessionId()
+    {
+        var agentCore = new ProviderConfig
+        {
+            Name = "AgentCore", BaseUrl = "https://abc.agentcore-data.bedrock-agentcore.us-east-1.amazonaws.com/runtime/runtimes/abc/invocations",
+        };
+        var capture = new CapturingHandler();
+        await Drain(new OpenAiChatClient(capture.Http(), agentCore)
+            .StreamAsync(new ChatRequest { Model = "m", Messages = [ChatMessage.UserText("hi")], SessionId = "ses_abc" }, CancellationToken.None));
+
+        var runtime = Header(capture.Last, "x-amzn-bedrock-agentcore-runtime-session-id");
+        Assert.NotNull(runtime);
+        Assert.True(runtime!.Length >= 33, $"expected at least 33 characters, got {runtime.Length}");
+        Assert.StartsWith("ses_abc", runtime);
+        Assert.Equal(runtime, Header(capture.Last, "x-amzn-bedrock-agentcore-runtime-session-id"));
+        Assert.Equal("ses_abc", Header(capture.Last, "x-amzn-bedrock-agentcore-policy-session-id"));
+    }
+
+    /// <summary>A request with no conversation (model discovery) still identifies itself with the harness session id.</summary>
+    [Fact]
+    public void DiscoveryRequestsFallBackToTheHarnessSessionId()
+    {
+        var message = new HttpRequestMessage(HttpMethod.Get, "https://opencode.ai/inference/go/v1/models");
+        ProviderIdentity.ApplyIdentity(message, new ProviderConfig { Name = "Go", BaseUrl = "https://opencode.ai/inference/go/openai/v1", Flavor = "opencode-go" }, null);
+        Assert.Equal(ProviderIdentity.HarnessSessionId, Header(message, "x-opencode-session"));
+        Assert.Equal(ProviderIdentity.HarnessSessionId, Header(message, "x-session-id"));
+        Assert.Equal(ProviderIdentity.UserAgent, message.Headers.UserAgent.ToString());
+
+        // The same fallback covers a second unidentified request, so probes group together.
+        var other = new HttpRequestMessage(HttpMethod.Get, "https://api.openai.com/v1/models");
+        ProviderIdentity.ApplyIdentity(other, new ProviderConfig { Name = "OpenAI", BaseUrl = "https://api.openai.com/v1" }, "  ");
+        Assert.Equal(ProviderIdentity.HarnessSessionId, Header(other, "x-session-id"));
+    }
+
+    [Theory]
+    [InlineData("ses_abc", 33)]
+    [InlineData("ses_0123456789012345678901234567890", 33)]
+    public void PaddingReachesTheMinimumDeterministicallyAndStaysUnique(string id, int min)
+    {
+        var padded = ProviderIdentity.Padded(id, min);
+        Assert.True(padded.Length >= min);
+        Assert.Equal(padded, ProviderIdentity.Padded(id, min));
+        Assert.StartsWith(id, padded);
+        Assert.NotEqual(padded, ProviderIdentity.Padded(id + "x", min));
+    }
+
+    private static string? Header(HttpRequestMessage message, string name) =>
+        message.Headers.TryGetValues(name, out var values) ? values.SingleOrDefault() : null;
+
+    /// <summary>A Go request must send exactly one user agent — the harness one, not the client default.</summary>
+    [Fact]
+    public async Task GoRequestsReplaceTheClientDefaultUserAgent()
+    {
+        var capture = new CapturingHandler();
+        using var http = capture.Http();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("testharness/9");
+        var go = new ProviderConfig { Name = "OpenCode Go", BaseUrl = "https://opencode.ai/inference/go/openai/v1", ApiKey = "k", Flavor = "opencode-go" };
+        await Drain(new OpenAiChatClient(http, go).StreamAsync(
+            new ChatRequest { Model = "glm-5.3", Messages = [ChatMessage.UserText("hi")], SessionId = "ses_abc" }, CancellationToken.None));
+        Assert.Equal(ProviderIdentity.UserAgent, capture.Last.Headers.UserAgent.ToString());
+
+        // A non-Go provider keeps the client default untouched.
+        capture = new CapturingHandler();
+        using var plain = capture.Http();
+        plain.DefaultRequestHeaders.UserAgent.ParseAdd("testharness/9");
+        await Drain(new OpenAiChatClient(plain, new ProviderConfig { Name = "OpenAI", BaseUrl = "https://api.openai.com/v1" })
+            .StreamAsync(new ChatRequest { Model = "gpt-6", Messages = [ChatMessage.UserText("hi")] }, CancellationToken.None));
+        Assert.Equal("testharness/9", capture.Last.Headers.UserAgent.ToString());
+    }
+
+    private static async Task Drain(IAsyncEnumerable<StreamEvent> events)
+    {
+        try { await foreach (var _ in events) { } } catch (ProviderException) { /* the stub endpoint answers with no usable stream */ }
+    }
+
+    /// <summary>Minimal transport: keeps the request it was given and answers with an empty SSE body.</summary>
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        private HttpRequestMessage? _request;
+        /// <summary>The request the client sent; throws when a test reads it before any call.</summary>
+        public HttpRequestMessage Last => _request ?? throw new InvalidOperationException("the client sent no request");
+        public HttpClient Http() => new(this);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            _request = request;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("data: [DONE]\n\n", System.Text.Encoding.UTF8, "text/event-stream"),
+            });
+        }
+    }
+
     [Fact]
     public void CopilotCatalogKeepsOnlyChatCapableModels()
     {

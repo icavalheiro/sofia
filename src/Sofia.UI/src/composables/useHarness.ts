@@ -177,6 +177,7 @@ function newConversation(dto: ConversationSummaryDto): Conversation {
     working: dto.status === 'working',
     parentId: dto.parentId || undefined,
     archived: !!dto.archived,
+    pinned: !!dto.pinned,
     loaded: false,
     messages: [],
   }
@@ -192,6 +193,7 @@ function applySessionDetails(conv: Conversation, s: SessionDto): void {
   }
   conv.parentId = s.parentId || undefined
   if (s.archived !== undefined) conv.archived = !!s.archived
+  if (s.pinned !== undefined) setPinnedLocal(conv, !!s.pinned)
   conv.modelId = s.modelId
   conv.agent = s.agent
   conv.permissionMode = s.permissionMode
@@ -412,6 +414,18 @@ function pushLocalError(conv: Conversation, text: string): void {
   })
 }
 
+/** Applies a pin change and moves the row to the front of its group (the list shows pinned rows first). */
+function setPinnedLocal(conv: Conversation, pinned: boolean): void {
+  if (!!conv.pinned === pinned) return
+  conv.pinned = pinned
+  const list = findWorkspace(conv.workspaceId)?.conversations
+  const index = list?.findIndex((c) => c.id === conv.id) ?? -1
+  if (list && index > 0) {
+    list.splice(index, 1)
+    list.unshift(conv)
+  }
+}
+
 // --- tree sync ----------------------------------------------------------------
 
 /** Inserts or updates a conversation from a summary, keeping loaded state. */
@@ -427,6 +441,7 @@ function upsertConversation(ws: Workspace, dto: ConversationSummaryDto, quiet = 
     }
     existing.parentId = dto.parentId || undefined
     if (dto.archived !== undefined) existing.archived = !!dto.archived
+    if (dto.pinned !== undefined) existing.pinned = !!dto.pinned
     if (dto.status) applyStatus(existing, dto.status, quiet)
     return existing
   }
@@ -957,6 +972,37 @@ export function useHarness() {
     return null
   }
 
+  /** Pins a conversation to the top of its list, or releases it. */
+  async function pinConversation(conversationId: string, pinned: boolean): Promise<string | null> {
+    try {
+      await api<SessionDto>('POST', `/api/sessions/${conversationId}/${pinned ? 'pin' : 'unpin'}`)
+    } catch (e) {
+      state.error = errorText(e)
+      return state.error
+    }
+    const conv = findConversation(conversationId)
+    if (conv) setPinnedLocal(conv, pinned)
+    return null
+  }
+
+  /** Stores a manual order for a workspace's visible conversations (`orderedIds`: first = top). */
+  async function reorderConversations(workspaceId: string, orderedIds: string[]): Promise<string | null> {
+    const ws = findWorkspace(workspaceId)
+    if (!ws) return null
+    const byId = new Map(ws.conversations.map((c) => [c.id, c]))
+    const ordered = orderedIds.map((id) => byId.get(id)).filter((c): c is Conversation => !!c)
+    const moved = new Set(ordered.map((c) => c.id))
+    let next = 0
+    ws.conversations = ws.conversations.map((c) => (moved.has(c.id) ? ordered[next++] : c))
+    try {
+      await api('PUT', `/api/workspaces/${workspaceId}/sessions/order`, { ids: orderedIds })
+    } catch (e) {
+      state.error = errorText(e)
+      return state.error
+    }
+    return null
+  }
+
   /** Brings an archived conversation back into its workspace's list. */
   async function restoreConversation(conversationId: string): Promise<string | null> {
     try {
@@ -1323,6 +1369,8 @@ export function useHarness() {
     selectConversation,
     openConversation,
     archiveConversation,
+    pinConversation,
+    reorderConversations,
     restoreConversation,
     deleteConversation,
     toggleWorkspace,

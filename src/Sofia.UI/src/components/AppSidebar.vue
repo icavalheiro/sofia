@@ -22,6 +22,8 @@ const {
   newConversation,
   newConversationIn,
   archiveConversation,
+  pinConversation,
+  reorderConversations,
   restoreConversation,
   deleteConversation,
 } = useHarness()
@@ -60,9 +62,11 @@ const STATUS_TITLE: Record<string, string> = {
 type Ws = (typeof state.workspaces)[number]
 type Conv = Ws['conversations'][number]
 
-/** Subagent sessions (with a parent) open from their tool card, not the list. */
+/** Subagent sessions (with a parent) open from their tool card, not the list. Pinned rows come first. */
 function visibleConvs(ws: Ws): Conv[] {
-  return ws.conversations.filter((c) => !c.parentId && !c.archived)
+  return ws.conversations
+    .filter((c) => !c.parentId && !c.archived)
+    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
 }
 
 /** Archived conversations of a workspace — the "Archived" sub-folder's rows. */
@@ -115,6 +119,53 @@ async function archive(conv: Conv): Promise<void> {
 async function restore(conv: Conv): Promise<void> {
   playSound('select')
   await restoreConversation(conv.id)
+}
+
+async function togglePin(conv: Conv): Promise<void> {
+  playSound('select')
+  await pinConversation(conv.id, !conv.pinned)
+}
+
+// --- drag to reorder (mouse) --------------------------------------------------
+
+const dragId = ref<string | null>(null)
+/** Row under the pointer and which half of it: the dragged row lands before or after it. */
+const dropTarget = ref<{ id: string; after: boolean } | null>(null)
+
+function onDragStart(c: Conv, event: DragEvent): void {
+  dragId.value = c.id
+  if (!event.dataTransfer) return
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', c.id)
+}
+
+function canDropOn(ws: Ws, target: Conv): boolean {
+  const dragged = dragId.value ? visibleConvs(ws).find((c) => c.id === dragId.value) : undefined
+  return !!dragged && dragged.id !== target.id && !!dragged.pinned === !!target.pinned
+}
+
+function onDragOver(ws: Ws, c: Conv, event: DragEvent): void {
+  if (!canDropOn(ws, c)) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  dropTarget.value = { id: c.id, after: event.clientY > rect.top + rect.height / 2 }
+}
+
+function onDrop(ws: Ws, c: Conv, event: DragEvent): void {
+  if (!canDropOn(ws, c)) return
+  event.preventDefault()
+  const after = dropTarget.value?.after ?? false
+  const ids = visibleConvs(ws).map((x) => x.id).filter((id) => id !== dragId.value)
+  ids.splice(ids.indexOf(c.id) + (after ? 1 : 0), 0, dragId.value as string)
+  endDrag()
+  playSound('select')
+  void reorderConversations(ws.id, ids)
+}
+
+function endDrag(): void {
+  dragId.value = null
+  dropTarget.value = null
 }
 
 /** Opens a row. Enter on one of the row's own buttons must not also select it. */
@@ -361,12 +412,21 @@ useShortcut('session.next', () => stepSession(1))
                 'conv-row--active': c.id === state.activeConversationId,
                 'conv-row--working': convStatus(c) === 'working',
                 'conv-row--sub': depth > 0,
+                'conv-row--dragging': c.id === dragId,
+                'conv-row--drop-before': dropTarget?.id === c.id && !dropTarget.after,
+                'conv-row--drop-after': dropTarget?.id === c.id && dropTarget.after,
               }"
               :style="depth > 0 ? { marginLeft: `${depth * 0.875}rem`, width: `calc(100% - ${depth * 0.875}rem)` } : undefined"
+              :draggable="depth === 0"
               role="button"
               tabindex="0"
               @click="selectConversation(ws.id, c.id)"
               @keydown.enter="openRow(ws, c, $event)"
+              @dragstart="depth === 0 && onDragStart(c, $event)"
+              @dragover="depth === 0 && onDragOver(ws, c, $event)"
+              @dragleave="dropTarget?.id === c.id && (dropTarget = null)"
+              @drop="depth === 0 && onDrop(ws, c, $event)"
+              @dragend="endDrag"
             >
               <!-- The conversation's state replaces the chat icon; hovering shows the row actions instead. -->
               <span class="conv-slot">
@@ -383,7 +443,18 @@ useShortcut('session.next', () => stepSession(1))
               </span>
               <span class="conv-title sofia-truncate">{{ c.title }}</span>
               <span class="conv-trail">
+                <SofiaIcon v-if="c.pinned" class="conv-pin" name="pin" :size="'0.75rem'" />
                 <span class="conv-actions">
+                  <button
+                    v-if="depth === 0"
+                    class="conv-action"
+                    type="button"
+                    :aria-label="c.pinned ? t('conv.unpin') : t('conv.pin')"
+                    :title="c.pinned ? t('conv.unpin') : t('conv.pin')"
+                    @click.stop="togglePin(c)"
+                  >
+                    <SofiaIcon :name="c.pinned ? 'unpin' : 'pin'" :size="'0.8rem'" />
+                  </button>
                   <button
                     class="conv-action"
                     type="button"
@@ -991,6 +1062,7 @@ useShortcut('session.next', () => stepSession(1))
 }
 
 .conv-actions {
+  grid-area: 1 / 1;
   display: inline-flex;
   align-items: center;
   gap: 0.1rem;
@@ -1030,6 +1102,31 @@ useShortcut('session.next', () => stepSession(1))
 .conv-action--danger:hover {
   background: var(--sofia-err-soft);
   color: var(--sofia-err);
+}
+
+/* Pin marker: shares the trail cell with the hover actions and yields to them. */
+.conv-pin {
+  grid-area: 1 / 1;
+  color: var(--sofia-primary);
+  opacity: 0.8;
+}
+
+.conv-row:hover .conv-pin,
+.conv-row:focus-within .conv-pin {
+  opacity: 0;
+}
+
+/* Drag to reorder. */
+.conv-row--dragging {
+  opacity: 0.4;
+}
+
+.conv-row--drop-before {
+  box-shadow: 0 -2px 0 0 var(--sofia-primary);
+}
+
+.conv-row--drop-after {
+  box-shadow: 0 2px 0 0 var(--sofia-primary);
 }
 
 /* --- archived sub-folder of a workspace / chat group ---------------------- */

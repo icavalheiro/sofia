@@ -239,6 +239,12 @@ finishes, the setting is turned off or the server stops.
   in Settings → Models, alongside custom OpenAI/Anthropic-compatible endpoints.
   `Providers/CopilotAuth.cs` handles the Copilot sign-in and token exchange;
   `Providers/OpenCodeGo.cs` routes OpenCode Go models to the right wire protocol.
+- Every LLM request carries the conversation id in session headers for gateways
+  (`Providers/ProviderIdentity.cs`): `x-session-id`, `x-litellm-trace-id`,
+  `x-claude-code-session-id`, `x-dynamo-session-id`, plus the vendor's own name
+  where it differs (`x-opencode-session`, Bedrock AgentCore runtime/policy ids,
+  the runtime one padded to AWS's 33-character minimum). OpenCode Go also
+  demands an agent user agent (`sofia/<version>`) on both of its wires.
 - Reasoning modes map to `reasoning_effort` (OpenAI-style),
   `reasoning.effort` (OpenRouter), `thinking` + `reasoning_effort` (DeepSeek,
   which also needs `reasoning_content` echoed back), `enable_thinking`

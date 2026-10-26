@@ -85,6 +85,7 @@ interface ConversationSummaryDto {
   parentId?: string       // set for subagent sessions
   archived?: boolean      // parked in the workspace's "Archived" folder
   archivedAt?: string     // set while archived
+  pinned?: boolean        // kept at the top of the workspace's list
 }
 
 interface UsageDto {
@@ -202,6 +203,9 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `DELETE` | `/api/sessions/{id}` | – | `204` |
 | `POST` | `/api/sessions/{id}/archive` | – | `SessionDto` (aborts a live run, sets `archived: true`; the UI parks it in the workspace's **Archived** folder) |
 | `POST` | `/api/sessions/{id}/unarchive` | – | `SessionDto` (`archived` cleared) |
+| `POST` | `/api/sessions/{id}/pin` | – | `SessionDto` (`pinned: true`; first among the pinned) |
+| `POST` | `/api/sessions/{id}/unpin` | – | `SessionDto` (`pinned` cleared) |
+| `PUT` | `/api/workspaces/{id}/sessions/order` | `{ ids: string[] }` | `204` (manual order, first id = top; lists are sorted pinned first, then by this order, then by recency) |
 | `POST` | `/api/sessions/{id}/prompt` | `PromptRequest` | `{ messageId }` |
 | `POST` | `/api/sessions/{id}/command` | `{ name, arguments? }` | `{ messageId }` |
 | `POST` | `/api/sessions/{id}/abort` | – | `204` |
@@ -314,7 +318,10 @@ Provider presets with specific behaviour:
   `/inference/go/v1/models`; each model is routed to Chat Completions
   (`/inference/go/openai/v1`) or Anthropic Messages (`/inference/go/anthropic`,
   Claude, Qwen and MiniMax M2/M3). Models only served through the Responses or
-  Google APIs (GPT, Grok, Muse Spark, Gemini) are not offered.
+  Google APIs (GPT, Grok, Muse Spark, Gemini) are not offered. Go rejects
+  third-party requests that do not identify themselves: it gets the
+  `sofia/<version>` agent user agent and `x-opencode-session`, without which the
+  gateway answers `MissingSessionID`.
 - **QwenCloud Token Plan** (`qwencloud`, subscription, Singapore region):
   OpenAI-compatible endpoint; reasoning is switched with `enable_thinking`.
 - **GitHub Copilot** (`github-copilot`, subscription): signs in with the OAuth
@@ -323,6 +330,16 @@ Provider presets with specific behaviour:
   in memory. Only models that support `/chat/completions` are listed.
 
 Subscription providers report zero per-token cost.
+
+Session identity (`Providers/ProviderIdentity.cs`) applies to **every** provider, so a Sofia conversation keeps one
+id through any gateway in front of a model. Each LLM request carries the same conversation id under the generic and
+proxy-specific names — `x-session-id`, `x-litellm-trace-id` (LiteLLM's highest-priority session header),
+`x-claude-code-session-id` (Claude Code compatible gateways; LiteLLM also auto-detects any
+`x-<vendor>-session-id`) and `x-dynamo-session-id` (NVIDIA Dynamo) — plus the vendor's own name where it differs:
+`x-opencode-session` for Go, and `x-amzn-bedrock-agentcore-runtime-session-id` (padded to AWS's 33-character
+minimum) with `x-amzn-bedrock-agentcore-policy-session-id` for a Bedrock AgentCore endpoint. Names an endpoint does
+not know are inert; `x-claude-code-session-id` is omitted when the endpoint is Anthropic itself. Requests with no
+conversation (model discovery, probes) fall back to one stable per-process `harness_…` id, so none leaves unidentified.
 
 ## Agents, commands, skills
 

@@ -305,6 +305,7 @@ public sealed class SessionRun : IToolHost
                 Reasoning = Session.ReasoningMode,
                 MaxTokens = Math.Max(1024, Math.Min(model.MaxOutput, room)),
                 ModelSupportsReasoning = model.Reasoning,
+                SessionId = Session.Id,
             };
 
             var assistant = _s.Store.AddMessage(Session, new Message
@@ -883,6 +884,7 @@ public sealed class SessionRun : IToolHost
             Reasoning = "off",
             MaxTokens = Math.Min(4096, model.MaxOutput),
             ModelSupportsReasoning = model.Reasoning,
+            SessionId = Session.Id,
         };
 
         _s.Store.SetStatus(Session, SessionStatus.Working);

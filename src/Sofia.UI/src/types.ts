@@ -34,6 +34,8 @@ export interface ConversationSummaryDto {
   /** Parked in the workspace's "Archived" folder; hidden from the normal list. */
   archived?: boolean
   archivedAt?: string
+  /** Kept at the top of the workspace's list. */
+  pinned?: boolean
 }
 
 export interface WorkspaceDto {
@@ -368,6 +370,8 @@ export interface Conversation {
   parentId?: string
   /** Parked in the workspace's "Archived" folder (hidden from the normal list). */
   archived?: boolean
+  /** Kept at the top of the workspace's list. */
+  pinned?: boolean
   /** Whether `messages` was fetched from the server. */
   loaded: boolean
   messages: Message[]

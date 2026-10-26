@@ -165,6 +165,7 @@ public sealed partial class KnowledgeService(SofiaDb db, SessionStore store, Pro
             Reasoning = "off",
             MaxTokens = Math.Min(2048, resolved.Model.MaxOutput),
             ModelSupportsReasoning = resolved.Model.Reasoning,
+            SessionId = session.Id,
         };
         var answer = new StringBuilder();
         await foreach (var ev in providers.CreateClient(resolved.Provider, resolved.Model.ModelId).StreamAsync(request, ct))
