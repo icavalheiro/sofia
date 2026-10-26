@@ -145,7 +145,7 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         return $"{text.Trim()}\n\n<agent_mentions>\n{AgentCatalog.DelegationHint(mentioned.Select(a => a.Id))}\n</agent_mentions>";
     }
 
-    public async Task<string> CommandAsync(string sessionId, string name, string? arguments, CancellationToken ct = default)
+    public async Task<string> CommandAsync(string sessionId, string name, string? arguments, List<string>? attachments = null, CancellationToken ct = default)
     {
         var (session, workspace) = Load(sessionId);
         if (name == "compact")
@@ -174,7 +174,7 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         var switchTo = target is not null && delegateTo is null ? target.Id : null;
         if (delegateTo is not null && catalog.Get(switchTo ?? session.Agent, dir).HasTaskTool)
             text = $"Run the task below as a subtask: call the `task` tool with agent \"{delegateTo}\", passing the task as its prompt with every detail it needs, then report the result to the user.\n\n<task>\n{text}\n</task>";
-        return Prompt(session.Id, new PromptInput(display, Agent: switchTo, ModelId: command.Model), text);
+        return Prompt(session.Id, new PromptInput(display, attachments, Agent: switchTo, ModelId: command.Model), text);
     }
 
     internal SessionRun CreateChildRun(Session child, Workspace workspace, SessionRun root, CancellationToken parent)

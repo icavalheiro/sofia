@@ -120,6 +120,29 @@ function answerQuestion(option: string): void {
   void answerFormQuestion(props.message, option)
 }
 
+// Free-text answer: an extra option at the end of every question.
+const singleFree = ref('')
+function answerFree(): void {
+  const text = singleFree.value.trim()
+  if (!text) return
+  answerQuestion(text)
+  singleFree.value = ''
+}
+const freeText = reactive<Record<number, string>>({})
+function submitFree(index: number): void {
+  const text = (freeText[index] ?? '').trim()
+  const q = questionSet.value?.questions[index]
+  if (!text || !q) return
+  freeText[index] = ''
+  if (q.multi) {
+    const current = picks.value[index] ?? []
+    if (!current.includes(text)) picks.value[index] = [...current, text]
+    return
+  }
+  picks.value[index] = [text]
+  goTo(index + 1)
+}
+
 // --- multi-question form ----------------------------------------------------
 // Pages walk each question, then a review page; nothing is sent until the user
 // confirms there. Picks live in a draft store (not on the message) because
@@ -586,6 +609,7 @@ function closeLightbox(): void {
             :disabled="!!message.question?.resolved"
             @click="answerQuestion(o)"
           >{{ o }}</button>
+          <input v-model="singleFree" class="q-free" type="text" :placeholder="t('q.freePlaceholder')" :aria-label="t('q.freePlaceholder')" @keydown.enter.prevent="answerFree()">
         </div>
       </div>
 
@@ -625,6 +649,7 @@ function closeLightbox(): void {
                   type="button"
                   @click="pickOption(slide, o)"
                 >{{ o }}</button>
+                <input v-model="freeText[slide]" class="q-free" type="text" :placeholder="t('q.freePlaceholder')" :aria-label="t('q.freePlaceholder')" @keydown.enter.prevent="submitFree(slide)">
               </div>
               <div v-if="message.questionSet.questions[slide].multi" class="q-slide-foot">
                 <span class="q-hint">{{ t('q.multiHint') }}</span>
@@ -1743,6 +1768,21 @@ function closeLightbox(): void {
 .q-title {
   font-size: 0.8125rem;
   font-weight: 600;
+}
+
+.q-free {
+  padding: 0.3rem 0.6rem;
+  border: 1px dashed var(--sofia-border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sofia-text);
+  font-size: 0.75rem;
+}
+
+.q-free:focus {
+  outline: none;
+  border-style: solid;
+  border-color: #a9744f;
 }
 
 .q-options {

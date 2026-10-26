@@ -404,6 +404,22 @@ function setStatusLocal ( conv: Conversation, status: WorkspaceStatus ): void
   conv.working = status === 'working';
 }
 
+/** Desktop notification when a session needs attention and the window is not focused. */
+function notifyDesktop ( conv: Conversation, kind: 'permission' | 'question' ): void
+{
+  if ( typeof Notification === 'undefined' || document.hasFocus() ) return;
+  const show = (): void =>
+  {
+    const n = new Notification( kind === 'permission' ? 'Sofia: permissão necessária' : 'Sofia: pergunta pendente', {
+      body: conv.title || 'Uma sessão aguarda sua resposta',
+      tag: `sofia-${ conv.id }`
+    } );
+    n.onclick = (): void => { window.focus(); n.close(); };
+  };
+  if ( Notification.permission === 'granted' ) show();
+  else if ( Notification.permission === 'default' ) void Notification.requestPermission().then( ( p ) => { if ( p === 'granted' ) show(); } );
+}
+
 /**
  * Applies a server status. A run that ends while its conversation is not
  * open shows a 'done' badge until the user opens it. Sounds play for the
@@ -416,6 +432,7 @@ function applyStatus ( conv: Conversation, status: SessionStatus, quiet = false 
   let next: WorkspaceStatus = status;
   if ( status === 'idle' && ( BUSY.has( prev ) || prev === 'done' ) && !isActive ) next = 'done';
   setStatusLocal( conv, next );
+  if ( !quiet && prev !== next && ( next === 'permission' || next === 'question' ) ) notifyDesktop( conv, next );
   if ( quiet || !isActive || prev === next ) return;
   if ( next === 'error' ) playSound( 'error' );
   else if ( next === 'permission' || next === 'question' ) playSound( 'permission' );
@@ -1362,14 +1379,20 @@ export function useHarness ()
     playSound( 'send' );
     try
     {
+      const pending = [ ...state.attachments ];
+      const ids: string[] = [];
+      for ( const a of pending ) ids.push( a.uploadedId ?? ( await uploadAttachment( a.file! ) ).id );
       await api( 'POST', `/api/sessions/${ conv.id }/prompt`, {
         text,
+        attachments: ids.length ? ids : undefined,
         delivery,
         modelId: modelOf( conv ) || undefined,
         permissionMode: conv.permissionMode ?? state.permissionMode,
         reasoningMode: conv.reasoningMode ?? state.reasoningMode,
         language: settings.language,
       } );
+      for ( const a of pending ) if ( a.previewUrl ) URL.revokeObjectURL( a.previewUrl );
+      state.attachments = state.attachments.filter( ( a ) => !pending.includes( a ) );
       return null;
     } catch ( e )
     {
@@ -1384,15 +1407,25 @@ export function useHarness ()
     if ( !conv ) return 'No active conversation.';
     if ( state.isReplying ) return 'Wait for the current reply to finish.';
     const previous = conv.status;
+    const pending = [ ...state.attachments ];
     state.composerText = '';
+    state.attachments = [];
     setStatusLocal( conv, 'working' );
     playSound( 'send' );
     try
     {
-      await api( 'POST', `/api/sessions/${ conv.id }/command`, { name, arguments: argText || undefined } );
+      const ids: string[] = [];
+      for ( const a of pending ) ids.push( a.uploadedId ?? ( await uploadAttachment( a.file! ) ).id );
+      await api( 'POST', `/api/sessions/${ conv.id }/command`, {
+        name,
+        arguments: argText || undefined,
+        attachments: ids.length ? ids : undefined,
+      } );
+      for ( const a of pending ) if ( a.previewUrl ) URL.revokeObjectURL( a.previewUrl );
       return null;
     } catch ( e )
     {
+      restoreDraft( conv, `/${ name }${ argText ? ' ' + argText : '' }`, pending );
       if ( conv.status === 'working' ) setStatusLocal( conv, previous === 'done' ? 'idle' : previous );
       const message = errorText( e );
       pushLocalError( conv, message );

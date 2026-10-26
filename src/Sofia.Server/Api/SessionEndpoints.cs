@@ -20,7 +20,7 @@ public sealed record UpdateWorkspaceRequest(string? Name, string? Icon, string? 
 public sealed record CreateSessionRequest(string? Title);
 public sealed record ReorderRequest(List<string>? Ids);
 public sealed record UpdateSessionRequest(string? Title, string? ModelId, string? Agent, string? PermissionMode, string? ReasoningMode);
-public sealed record CommandRequest(string Name, string? Arguments);
+public sealed record CommandRequest(string Name, string? Arguments, List<string>? Attachments = null);
 public sealed record RevertRequest(string MessageId);
 public sealed record PermissionReplyRequest(string Decision);
 public sealed record AnswerRequest(List<JsonElement?> Answers);
@@ -201,7 +201,7 @@ public static class SessionEndpoints
             Results.Ok(new { messageId = agents.Prompt(id, body) }));
 
         api.MapPost("/sessions/{id}/command", async (string id, CommandRequest body, AgentService agents, CancellationToken ct) =>
-            Results.Ok(new { messageId = await agents.CommandAsync(id, body.Name.TrimStart('/'), body.Arguments, ct) }));
+            Results.Ok(new { messageId = await agents.CommandAsync(id, body.Name.TrimStart('/'), body.Arguments, body.Attachments, ct) }));
 
         api.MapPost("/sessions/{id}/abort", (string id, AgentService agents) =>
         {

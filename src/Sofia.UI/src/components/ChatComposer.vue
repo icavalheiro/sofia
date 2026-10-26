@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } 
 import { useHarness } from '@/composables/useHarness'
 import { useShortcut } from '@/composables/useShortcuts'
 import { api, useBackend } from '@/services/sofia'
+import { hitPercent } from '@/services/cacheHealth'
 import { useI18n } from '@/i18n'
 import {
   PERMISSION_MODES,
@@ -180,7 +181,7 @@ const durationLabel = computed(() => `${(metrics.durationMs / 1000).toFixed(1)}s
 const cacheStats = computed(() => {
   const conv = activeConversation.value
   const pct = (u?: { input: number; cacheRead: number }) =>
-    u && u.input > 0 ? Math.min(100, Math.round((u.cacheRead / u.input) * 100)) : null
+    u && u.input > 0 ? hitPercent(u.cacheRead, u.input) : null
   let last: UsageDto | undefined
   for (const m of conv?.messages ?? []) if (m.usage && m.usage.input > 0) last = m.usage
   const total = conv?.usage && conv.usage.input > 0 ? conv.usage : undefined
@@ -478,7 +479,7 @@ async function submit(): Promise<void> {
   if (!canSend.value) return
   if (state.isReplying) {
     const text = state.composerText.trim()
-    if (!text || steering.value) return
+    if ((!text && !state.attachments.length) || steering.value) return
     steering.value = true
     const before = state.composerText
     const err = await sendSteered(text, steerDelivery.value)

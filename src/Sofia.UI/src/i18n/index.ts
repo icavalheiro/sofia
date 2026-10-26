@@ -96,6 +96,7 @@ const en: Dict = {
   'q.back': 'Back',
   'q.edit': 'Edit answer',
   'q.multiHint': 'Pick one or more',
+  'q.freePlaceholder': 'Or type your own answer and press Enter',
 
   'img.download': 'Download',
   'img.close': 'Close',
@@ -353,6 +354,7 @@ const pt: Dict = {
   'q.back': 'Voltar',
   'q.edit': 'Editar resposta',
   'q.multiHint': 'Escolha uma ou mais',
+  'q.freePlaceholder': 'Ou escreva sua resposta e tecle Enter',
 
   'img.download': 'Baixar',
   'img.close': 'Fechar',

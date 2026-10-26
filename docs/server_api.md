@@ -208,7 +208,7 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `PUT` | `/api/workspaces/order` | `{ ids: string[] }` | `204` (manual order of the sidebar tree: first id = top, workspace folders first and chat groups after them; ids the server does not know are ignored and the workspaces it knows but the client omitted keep their place at the end) |
 | `PUT` | `/api/workspaces/{id}/sessions/order` | `{ ids: string[] }` | `204` (manual order, first id = top; lists are sorted pinned first, then by this order, then by recency) |
 | `POST` | `/api/sessions/{id}/prompt` | `PromptRequest` | `{ messageId }` |
-| `POST` | `/api/sessions/{id}/command` | `{ name, arguments? }` | `{ messageId }` |
+| `POST` | `/api/sessions/{id}/command` | `{ name, arguments?, attachments?: string[] }` | `{ messageId }` |
 | `POST` | `/api/sessions/{id}/abort` | – | `204` |
 | `POST` | `/api/sessions/{id}/compact` | – | `204` (summary arrives as a `message.created` with `summary: true`) |
 | `POST` | `/api/sessions/{id}/revert` | `{ messageId }` | `{ removed: string[], restoredFiles: string[] }` |

@@ -19,7 +19,14 @@ const BIG_TOOL_OUTPUT_SHARE = 0.25
 /** Cache hit percentage of one request, or null when nothing was reported. */
 export function cacheHitPct(usage?: UsageDto): number | null {
   if (!usage || usage.input <= 0) return null
-  return Math.min(100, Math.round((usage.cacheRead / usage.input) * 100))
+  return hitPercent(usage.cacheRead, usage.input)
+}
+
+/** A 100% hit is impossible: whole numbers below 99, then up to 3 decimals capped at 99.999. */
+export function hitPercent(cached: number, input: number): number {
+  const raw = (cached / input) * 100
+  if (raw < 99) return Math.round(raw)
+  return Math.min(99.999, Math.floor(raw * 1000) / 1000)
 }
 
 /**
