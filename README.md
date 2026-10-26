@@ -17,11 +17,12 @@ Sofia is a local AI harness—an ASP.NET Core agent server and a Vue web interfa
 ## How it fits together
 
 ```
-Sofia.UI (Vue 3.5 + Vite + TypeScript) ──REST + SignalR──▶ Sofia.Server (ASP.NET, .NET 10)
-                                                             ├─ LiteDB (~/.sofia/sofia.db)
-                                                             ├─ local runtimes: Unsloth, Ollama, LM Studio, llama.cpp, vLLM
-                                                             ├─ cloud: OpenAI-compatible and Anthropic APIs
-                                                             └─ MCP servers (stdio and HTTP)
+Sofia.UI (Vue 3.5 + Vite + TypeScript) ──REST + SignalR
+├─ Sofia.Server (ASP.NET, .NET 10)
+├─ LiteDB (~/.sofia/sofia.db)
+├─ local runtimes: Unsloth, Ollama, LM Studio, llama.cpp, vLLM
+├─ cloud: OpenAI-compatible and Anthropic APIs
+└─ MCP servers (stdio and HTTP)
 ```
 
 Local model runtimes are discovered automatically, together with each model's
