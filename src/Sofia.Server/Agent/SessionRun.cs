@@ -153,7 +153,7 @@ public sealed class SessionRun : IToolHost
 
                 if (next.Kind == "compact")
                 {
-                    await CompactAsync(auto: false, ct);
+                    _ = await CompactAsync(auto: false, ct);
                     continue;
                 }
                 AddUserMessage(next);
@@ -289,12 +289,22 @@ public sealed class SessionRun : IToolHost
             var (provider, model) = ResolveModel();
             var config = _s.Db.GetConfig();
             Session.Context.Limit = model.ContextLength;
-            if (config.AutoCompact && Session.Context.Used > config.CompactThreshold * model.ContextLength)
-                await CompactAsync(auto: true, ct);
-
             var (system, tools) = await TurnPromptAsync(config, ct);
             var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model);
             var estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments)));
+
+            // `Context.Used` only reflects the previous response; tool results and the new user message added since then
+            // are not in it. Compare against the estimate of what is about to be sent as well, otherwise a large tool
+            // output pushes the next request past the window before compaction ever triggers.
+            var threshold = config.CompactThreshold * model.ContextLength;
+            if (config.AutoCompact && Math.Max(Session.Context.Used, estimatedInput) > threshold)
+            {
+                if (await CompactAsync(auto: true, ct))
+                {
+                    history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model);
+                    estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments)));
+                }
+            }
             var room = model.ContextLength - estimatedInput - 512;
             var request = new ChatRequest
             {
@@ -829,13 +839,52 @@ public sealed class SessionRun : IToolHost
 
     // --- compaction ----------------------------------------------------------------
 
-    private async Task CompactAsync(bool auto, CancellationToken ct)
+    /// <summary>
+    /// Compacts the history and reports progress and outcome as a system notice in the chat.
+    /// Returns true when the history was actually replaced by a summary.
+    /// </summary>
+    private async Task<bool> CompactAsync(bool auto, CancellationToken ct)
+    {
+        var live = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).ToList();
+        var before = Math.Max(Session.Context.Used, live.Sum(Estimate));
+        var notice = new CompactionNotice { Status = "running", Auto = auto, Before = before };
+        var card = _s.Store.AddMessage(Session, new Message { Role = "assistant", Synthetic = true, Compaction = notice });
+        void Finish(string status, int? after = null, string? error = null, string? result = null)
+        {
+            lock (card)
+            {
+                card.Compaction = new CompactionNotice { Status = status, Auto = auto, Before = before, After = after, Error = error, Result = result };
+            }
+            _s.Store.UpdateMessage(Session, card);
+        }
+
+        try
+        {
+            var done = await CompactCoreAsync(auto, ct);
+            if (done is null) { Finish("skipped"); return false; }
+            Finish("done", done.Value.After, result: done.Value.Summary);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            Finish("failed", error: "Aborted.");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Finish("failed", error: ex.Message);
+            throw;
+        }
+    }
+
+    /// <summary>Returns the context size after compaction, or null when there was nothing to compact.</summary>
+    private async Task<(int After, string Summary)?> CompactCoreAsync(bool auto, CancellationToken ct)
     {
         var (provider, model) = ResolveModel();
-        var messages = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).ToList();
+        var messages = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).OrderBy(m => m.Seq).ToList();
         var previous = messages.Where(m => m.Summary == true).ToList();
         var conversation = messages.Where(m => m.Summary != true).ToList();
-        if (conversation.Count < 2) return;
+        if (conversation.Count < 2) return null;
 
         // Keep the newest messages that fit in ~30% of the window when compacting automatically.
         var cut = conversation.Count;
@@ -853,7 +902,7 @@ public sealed class SessionRun : IToolHost
             if (cut >= conversation.Count) cut = conversation.Count - 1;
         }
         var prefix = conversation.Take(cut).ToList();
-        if (prefix.Count == 0) return;
+        if (prefix.Count == 0) return null;
 
         var transcript = new StringBuilder();
         foreach (var s in previous) transcript.AppendLine("[Earlier summary]").AppendLine(s.Text).AppendLine();
@@ -888,10 +937,33 @@ public sealed class SessionRun : IToolHost
         };
 
         _s.Store.SetStatus(Session, SessionStatus.Working);
+        // Thinking models can spend the whole output budget on reasoning (or ignore "off") and emit no text at all.
+        // Retry once with a bigger budget, then fall back to whatever reasoning text was produced.
         var summary = new StringBuilder();
-        await foreach (var ev in _s.Providers.CreateClient(provider, model.ModelId).StreamAsync(request, ct))
-            if (ev is TextDelta t) summary.Append(t.Text);
-        if (summary.Length == 0) throw new InvalidOperationException("Compaction failed: the model returned an empty summary.");
+        var reasoning = new StringBuilder();
+        for (var attempt = 0; attempt < 2 && summary.Length == 0; attempt++)
+        {
+            if (attempt == 1) request = new ChatRequest
+            {
+                Model = request.Model,
+                System = request.System,
+                Messages = request.Messages,
+                Reasoning = "off",
+                MaxTokens = Math.Max(request.MaxTokens, Math.Min(model.MaxOutput, 16384)),
+                ModelSupportsReasoning = request.ModelSupportsReasoning,
+                SessionId = request.SessionId,
+            };
+            reasoning.Clear();
+            await foreach (var ev in _s.Providers.CreateClient(provider, model.ModelId).StreamAsync(request, ct))
+            {
+                if (ev is TextDelta t) summary.Append(t.Text);
+                else if (ev is ReasoningDelta r) reasoning.Append(r.Text);
+            }
+            if (summary.ToString().Trim().Length == 0) summary.Clear();
+        }
+        if (summary.Length == 0 && reasoning.ToString().Trim().Length > 0) summary.Append(reasoning);
+        if (summary.Length == 0)
+            throw new InvalidOperationException($"Compaction failed: the model ({model.Label}) returned an empty summary even after a retry.");
 
         foreach (var m in prefix.Concat(previous))
         {
@@ -909,6 +981,7 @@ public sealed class SessionRun : IToolHost
         Session.Context = new ContextInfo { Used = keptTokens, Limit = model.ContextLength };
         _s.Store.SaveSession(Session);
         PublishMetrics(0);
+        return (keptTokens, summary.ToString().Trim());
     }
 
     private static int Estimate(Message m) =>

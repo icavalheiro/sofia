@@ -166,6 +166,7 @@ function mapMessage ( m: MessageDto ): Message
     error: m.error,
     summary: m.summary,
     knowledge: m.knowledge?.map( ( k ) => ( { ...k } ) ),
+    compaction: m.compaction ? { ...m.compaction } : undefined,
     usage: m.usage,
     durationMs: m.durationMs,
   };

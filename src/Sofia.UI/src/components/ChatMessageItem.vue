@@ -250,6 +250,26 @@ const knowledgeError = ref<string | null>(null)
 const deletingNote = ref<string | null>(null)
 const liveNotes = computed(() => (props.message.knowledge ?? []).filter((k) => !k.deleted).length)
 
+const compactionOpen = ref(false)
+const compactionBody = computed(() => {
+  const c = props.message.compaction
+  if (!c) return ''
+  return c.status === 'failed' ? c.error ?? '' : c.result ?? ''
+})
+const canExpandCompaction = computed(() => compactionBody.value.length > 0)
+
+const compactionText = computed(() => {
+  const c = props.message.compaction
+  if (!c) return ''
+  const before = c.before.toLocaleString()
+  switch (c.status) {
+    case 'running': return t(c.auto ? 'chat.compact.runningAuto' : 'chat.compact.running', { before })
+    case 'done': return t('chat.compact.done', { before, after: (c.after ?? 0).toLocaleString() })
+    case 'failed': return t('chat.compact.failed', { before, error: c.error ?? '' })
+    default: return t('chat.compact.skipped', { before })
+  }
+})
+
 async function deleteNote(note: KnowledgeEntryDto): Promise<void> {
   if (deletingNote.value) return
   deletingNote.value = note.id
@@ -314,11 +334,33 @@ function closeLightbox(): void {
 <template>
   <div class="msg" :class="[`msg--${message.role}`, { 'msg--pending': pending }]">
     <!-- Only the assistant gets an avatar; user messages align without one. -->
-    <div v-if="message.role === 'assistant'" class="msg-avatar msg-avatar--ai">
+    <div v-if="message.role === 'assistant' && !message.compaction" class="msg-avatar msg-avatar--ai">
       <img :src="logoUrl" alt="" />
     </div>
 
     <div class="msg-body">
+      <!-- Compaction notice: a system line, not a chat bubble. -->
+      <div v-if="message.compaction" class="compact-card" :class="`compact-notice--${message.compaction.status}`">
+        <component
+          :is="canExpandCompaction ? 'button' : 'div'"
+          class="compact-notice"
+          :class="`compact-notice--${message.compaction.status}`"
+          role="status"
+          :type="canExpandCompaction ? 'button' : undefined"
+          :aria-expanded="canExpandCompaction ? compactionOpen : undefined"
+          @click="canExpandCompaction && (compactionOpen = !compactionOpen)"
+        >
+          <SofiaIcon :name="message.compaction.status === 'failed' ? 'alert' : 'book'" :size="'0.85rem'" />
+          <span class="compact-text">{{ compactionText }}</span>
+          <SofiaIcon
+            v-if="canExpandCompaction"
+            :name="compactionOpen ? 'chevronUp' : 'chevronDown'"
+            :size="'0.75rem'"
+          />
+        </component>
+        <MarkdownText v-if="compactionOpen && canExpandCompaction" class="summary-text compact-result" :source="compactionBody" />
+      </div>
+      <template v-else>
       <div class="msg-meta">
         <span class="msg-author">{{ message.role === 'assistant' ? 'Sofia' : 'You' }}</span>
         <span v-if="message.model" class="msg-model">{{ message.model }}</span>
@@ -772,6 +814,7 @@ function closeLightbox(): void {
           <span>{{ reverting ? 'Reverting…' : revertArmed ? 'Confirm' : 'Revert' }}</span>
         </button>
       </div>
+      </template>
     </div>
 
     <Teleport to="body">
@@ -1227,6 +1270,56 @@ function closeLightbox(): void {
 }
 
 /* --- compaction summary ---------------------------------------------------- */
+.compact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-width: 74ch;
+}
+
+.compact-notice {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px dashed var(--sofia-border-strong);
+  border-radius: 8px;
+  color: var(--sofia-text-muted);
+  background: var(--sofia-surface-2);
+}
+
+button.compact-notice {
+  cursor: pointer;
+}
+
+.compact-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.compact-result {
+  padding: 0.55rem 0.75rem;
+  border: 1px dashed var(--sofia-border-strong);
+  border-radius: 10px;
+  background: var(--sofia-surface-2);
+}
+
+.compact-notice--failed {
+  color: var(--sofia-danger, #d9534f);
+  border-color: currentColor;
+}
+
+.compact-notice--running .compact-text {
+  animation: compact-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes compact-pulse {
+  50% { opacity: 0.55; }
+}
 .summary-card {
   max-width: 74ch;
   padding: 0.55rem 0.75rem;

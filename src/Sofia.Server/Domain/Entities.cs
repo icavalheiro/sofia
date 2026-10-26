@@ -212,6 +212,22 @@ public sealed class KnowledgeEntry
     public bool Deleted { get; set; }
 }
 
+/// <summary>Progress/result of a context compaction, shown as a system message in the chat.</summary>
+public sealed class CompactionNotice
+{
+    /// <summary>'running' | 'done' | 'failed' | 'skipped'.</summary>
+    public string Status { get; set; } = "running";
+    /// <summary>True when triggered by the context threshold, false for /compact.</summary>
+    public bool Auto { get; set; }
+    /// <summary>Estimated context tokens before compaction.</summary>
+    public int Before { get; set; }
+    /// <summary>Estimated context tokens after compaction (done only).</summary>
+    public int? After { get; set; }
+    public string? Error { get; set; }
+    /// <summary>The generated summary (done only), so the card can expand to show it.</summary>
+    public string? Result { get; set; }
+}
+
 public sealed class Message
 {
     [BsonId] public string Id { get; set; } = "";
@@ -232,6 +248,8 @@ public sealed class Message
     public List<KnowledgeEntry>? Knowledge { get; set; }
     public string? Error { get; set; }
     public bool? Summary { get; set; }
+    /// <summary>System notice card (compaction progress/result); UI-only, never replayed to the model.</summary>
+    public CompactionNotice? Compaction { get; set; }
     public Usage? Usage { get; set; }
     public long? DurationMs { get; set; }
 

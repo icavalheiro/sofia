@@ -115,10 +115,25 @@ export interface MessageDto
   };
   error?: string;
   summary?: boolean;
+  /** System notice for a context compaction (progress and result). */
+  compaction?: CompactionNoticeDto;
   usage?: UsageDto;
   durationMs?: number;
   /** Notes the harness learned from the conversation (card-only message). */
   knowledge?: KnowledgeEntryDto[];
+}
+
+export interface CompactionNoticeDto
+{
+  status: 'running' | 'done' | 'failed' | 'skipped';
+  auto: boolean;
+  /** Estimated context tokens before compaction. */
+  before: number;
+  /** Estimated context tokens after compaction (done only). */
+  after?: number;
+  error?: string;
+  /** The generated summary (done only); shown when the card is expanded. */
+  result?: string;
 }
 
 export interface KnowledgeEntryDto
@@ -355,6 +370,8 @@ export interface Message
   /** Client-side card (e.g. a failed request) that the server never saw. */
   local?: boolean;
 }
+  /** System notice for a context compaction (progress and result). */
+  compaction?: CompactionNoticeDto;
 
 /**
  * An assistant step whose prompt was almost fully re-billed: under the low-cache

@@ -158,6 +158,7 @@ interface MessageDto {
   error?: string
   summary?: boolean       // compaction summary card
   knowledge?: KnowledgeEntryDto[]  // card-only message: notes learned from the conversation
+  compaction?: { status: 'running'|'done'|'failed'|'skipped', auto: boolean, before: number, after?: number, error?: string, result?: string }  // system notice card: compaction progress/result (token counts are estimates)
   usage?: UsageDto
   durationMs?: number
 }
