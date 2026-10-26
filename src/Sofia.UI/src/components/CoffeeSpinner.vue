@@ -1,10 +1,39 @@
 <script setup lang="ts">
-/** Loading indicator: a coffee mug with animated vapor. Inherits currentColor and sizes by `size`. */
-defineProps<{ size?: string }>()
+import { computed } from 'vue'
+
+/**
+ * Loading indicator: a coffee mug with animated vapor. Inherits currentColor and sizes by `size`.
+ * When too small for the vapor to read (< 1rem), it becomes a coffee bean that spins, pauses, repeats.
+ */
+const props = defineProps<{ size?: string }>()
+
+const small = computed(() => {
+  const m = /^([\d.]+)(rem|em|px)?$/.exec(props.size ?? '')
+  if (!m) return false
+  const px = parseFloat(m[1]) * (m[2] === 'px' ? 1 : 16)
+  return px < 16
+})
 </script>
 
 <template>
   <svg
+    v-if="small"
+    class="bean"
+    :style="{ width: size, height: size }"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <ellipse cx="12" cy="12" rx="6.5" ry="9.5" transform="rotate(35 12 12)" />
+    <path d="M9.5 5.5 C14 9 10 15 14.5 18.5" transform="rotate(35 12 12)" />
+  </svg>
+  <svg
+    v-else
     class="coffee"
     :style="{ width: size ?? '1.125rem', height: size ?? '1.125rem' }"
     viewBox="0 0 24 24"
@@ -28,6 +57,21 @@ defineProps<{ size?: string }>()
 .coffee {
   flex: none;
   overflow: visible;
+}
+
+.bean {
+  flex: none;
+  animation: bean-spin 1.8s ease-in-out infinite;
+}
+
+@keyframes bean-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  45%,
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .steam {
