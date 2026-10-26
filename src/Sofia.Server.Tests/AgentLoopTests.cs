@@ -15,6 +15,20 @@ internal sealed class FakeLlmHandler : HttpMessageHandler
     /// <summary>Every request body the fake endpoint received (shared: handlers are created per client).</summary>
     public static readonly System.Collections.Concurrent.ConcurrentBag<string> Bodies = [];
 
+    /// <summary>
+    /// Conversations that get nginx' <c>499 Client Closed Request</c> until this counter runs out, keyed by a marker the
+    /// test puts at the start of its user message. Only the request whose last message starts with the marker is rejected,
+    /// so Sofia's repeated attempts are hit and background calls (knowledge review) are not.
+    /// </summary>
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> FlakyRemaining = [];
+
+    /// <summary>How often each marker was rejected: a conversation that recovered made one more attempt than this.</summary>
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> FlakyHits = [];
+
+    /// <summary>How long the fake holds the answer of a flaky conversation that it did <em>not</em> reject, so a test can
+    /// read the retry notice off the message while Sofia is waiting for that attempt.</summary>
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> FlakyHoldMs = [];
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var url = request.RequestUri!.ToString();
@@ -24,6 +38,22 @@ internal sealed class FakeLlmHandler : HttpMessageHandler
 
         var body = await request.Content!.ReadAsStringAsync(ct);
         Bodies.Add(body);
+        var flaky = FlakyMarker(body);
+        if (flaky is not null)
+        {
+            var left = FlakyRemaining.AddOrUpdate(flaky, 0, (_, n) => n - 1);
+            if (left >= 0)
+            {
+                FlakyHits.AddOrUpdate(flaky, 1, (_, n) => n + 1);
+                return new HttpResponseMessage((HttpStatusCode)499)
+                {
+                    Content = new StringContent("""{"error":{"message":"Client Closed Request"}}""", Encoding.UTF8, "application/json"),
+                };
+            }
+            // The gateway recovered: answer this conversation with plain text, no tools.
+            if (FlakyHoldMs.TryGetValue(flaky, out var hold)) await Task.Delay(hold, ct);
+            return Sse(RecoveredScript);
+        }
         // Prompt-cache turn: every turn of that test gets two steps — the model saves a workspace note, then answers.
         // The markers live in that test's user messages, and a save already in the history means this turn's save is
         // done, so the script stays deterministic however many turns the test runs.
@@ -71,6 +101,41 @@ internal sealed class FakeLlmHandler : HttpMessageHandler
         """{"choices":[{"index":0,"delta":{"content":"Noted"}}]}""",
         """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
     ];
+
+    /// <summary>The answer the fake gives once a flaky conversation recovers: plain text, no tool calls.</summary>
+    private static string[] RecoveredScript =>
+    [
+        """{"choices":[{"index":0,"delta":{"content":"Recovered"}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+    ];
+
+    /// <summary>
+    /// The flaky marker this request carries. The last message has to <em>start</em> with it, so the repeats of one step
+    /// are rejected while unrelated calls that merely quote the chat (the knowledge review) are not.
+    /// </summary>
+    private static string? FlakyMarker(string body)
+    {
+        var text = LastMessageText(body);
+        if (string.IsNullOrEmpty(text)) return null;
+        foreach (var marker in FlakyRemaining.Keys)
+            if (text.StartsWith(marker, StringComparison.Ordinal)) return marker;
+        return null;
+    }
+
+    private static string? LastMessageText(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("messages", out var messages) || messages.ValueKind != JsonValueKind.Array || messages.GetArrayLength() == 0) return null;
+            var last = messages[messages.GetArrayLength() - 1];
+            return last.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String ? content.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private static HttpResponseMessage Sse(string[] chunks) =>
         new(HttpStatusCode.OK)
@@ -245,7 +310,91 @@ public sealed class AgentLoopTests : IDisposable
         Assert.Equal(secondTurn[0], secondTurn[1]);
     }
 
+    [Fact]
+    public async Task RepeatsAStepTheGatewayRejectedAndRecovers()
+    {
+        var http = _factory.CreateClient();
+        var provider = await Post(http, "/api/providers", new { name = "Fake", type = "openai", baseUrl = "http://fake.llm/v1", apiKey = "test" });
+        var modelId = $"{provider.GetProperty("id").GetString()}/fake-model";
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        // The endpoint answers this conversation with 499 twice. Sofia repeats the step and the answer lands as if
+        // nothing happened: no error on the card, no stale retry notice.
+        var marker = "FLAKYRECOVER" + Guid.NewGuid().ToString("N");
+        FakeLlmHandler.FlakyRemaining[marker] = 2;
+
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = marker + " hello", modelId, permissionMode = "full" });
+
+        var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle");
+        var last = session.GetProperty("messages").EnumerateArray().Last();
+        Assert.Equal("Recovered", last.GetProperty("text").GetString());
+        Assert.False(last.TryGetProperty("error", out _));
+        Assert.False(last.TryGetProperty("retry", out _));
+        Assert.Equal(2, FakeLlmHandler.FlakyHits[marker]);   // rejected twice, answered on the third attempt
+    }
+
+    [Fact]
+    public async Task ShowsTheErrorOnlyAfterAllAttemptsFailed()
+    {
+        var http = _factory.CreateClient();
+        var provider = await Post(http, "/api/providers", new { name = "Fake", type = "openai", baseUrl = "http://fake.llm/v1", apiKey = "test" });
+        var modelId = $"{provider.GetProperty("id").GetString()}/fake-model";
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        // A gateway that never recovers: Sofia gives up only after every attempt of the step.
+        var marker = "FLAKYGIVEUP" + Guid.NewGuid().ToString("N");
+        FakeLlmHandler.FlakyRemaining[marker] = 99;
+
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = marker + " hello", modelId, permissionMode = "full" });
+
+        var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "error", tries: 400);
+        var last = session.GetProperty("messages").EnumerateArray().Last();
+        Assert.Equal("assistant", last.GetProperty("role").GetString());
+        Assert.Contains("Client Closed Request", last.GetProperty("error").GetString());
+        Assert.False(last.TryGetProperty("retry", out _));   // the failed card keeps no "still retrying" line
+        Assert.Equal(Sofia.Server.Providers.RetryPolicy.MaxAttempts, FakeLlmHandler.FlakyHits[marker]);
+    }
+
+    [Fact]
+    public async Task AnnouncesTheAttemptItStartsWhileTheProviderIsRetried()
+    {
+        var http = _factory.CreateClient();
+        var provider = await Post(http, "/api/providers", new { name = "Fake", type = "openai", baseUrl = "http://fake.llm/v1", apiKey = "test" });
+        var modelId = $"{provider.GetProperty("id").GetString()}/fake-model";
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        // Rejected once, then held long enough that the retry notice is still on the card when it is read back.
+        var marker = "FLAKYNOTICE" + Guid.NewGuid().ToString("N");
+        FakeLlmHandler.FlakyRemaining[marker] = 1;
+        FakeLlmHandler.FlakyHoldMs[marker] = 4_000;
+
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = marker + " hello", modelId, permissionMode = "full" });
+
+        var session = await WaitFor(http, sessionId, s => RetryCard(s).HasValue);
+        var retry = RetryCard(session)!.Value;
+        Assert.Equal(2, retry.GetProperty("attempt").GetInt32());
+        Assert.Equal(Sofia.Server.Providers.RetryPolicy.MaxAttempts, retry.GetProperty("attempts").GetInt32());
+        Assert.Contains("Client Closed Request", retry.GetProperty("error").GetString());
+
+        // The attempt that answers clears the notice.
+        session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle");
+        var last = session.GetProperty("messages").EnumerateArray().Last();
+        Assert.Equal("Recovered", last.GetProperty("text").GetString());
+        Assert.False(last.TryGetProperty("retry", out _));
+    }
+
     private const string NoteText = "Tests run with dotnet test Sofia.slnx here.";
+
+    /// <summary>The retry notice currently carried by a message of the session, when a step is being repeated.</summary>
+    private static JsonElement? RetryCard(JsonElement session)
+    {
+        foreach (var m in session.GetProperty("messages").EnumerateArray())
+            if (m.TryGetProperty("retry", out var retry)) return retry.Clone();
+        return null;
+    }
 
     private static int Count(JsonElement session, Func<JsonElement, bool> predicate) =>
         session.GetProperty("messages").EnumerateArray().Count(predicate);
@@ -504,10 +653,10 @@ public sealed class AgentLoopTests : IDisposable
         return JsonDocument.Parse(text).RootElement.Clone();
     }
 
-    private static async Task<JsonElement> WaitFor(HttpClient http, string sessionId, Func<JsonElement, bool> predicate)
+    private static async Task<JsonElement> WaitFor(HttpClient http, string sessionId, Func<JsonElement, bool> predicate, int tries = 100)
     {
         JsonElement last = default;
-        for (var i = 0; i < 100; i++)
+        for (var i = 0; i < tries; i++)
         {
             last = await http.GetFromJsonAsync<JsonElement>($"/api/sessions/{sessionId}");
             if (predicate(last)) return last;

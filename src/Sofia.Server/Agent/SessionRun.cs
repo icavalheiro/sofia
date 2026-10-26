@@ -386,7 +386,74 @@ public sealed class SessionRun : IToolHost
 
     // --- streaming -------------------------------------------------------------
 
+    /// <summary>
+    /// Runs one model step, repeating it while the provider fails in a way that means "this request never got an answer":
+    /// a gateway 499/408/429/5xx, a socket dropped mid-stream, a provider timeout, or a stream that closed without a single
+    /// event. Without this, one hiccup of a local runtime ends the conversation on the first failed request; see
+    /// <see cref="RetryPolicy"/> for what counts as transient. A retry restarts the step from scratch — keeping what the
+    /// failed attempt streamed would splice two generations of the same answer together.
+    /// </summary>
     private async Task<(List<ToolCall> Calls, string Finish)> StreamStepAsync(ProviderConfig provider, ModelInfo model, ChatRequest request,
+        Message assistant, List<ITool> tools, int estimatedInput, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var lastAttempt = attempt >= RetryPolicy.MaxAttempts;
+            try
+            {
+                var (calls, finish, produced) = await StreamOnceAsync(provider, model, request, assistant, tools, estimatedInput, ct);
+                // A stream that closed without producing anything is the same failure as a dropped connection: runtimes
+                // answer 200 and hang up. The step body already wrote "empty response" on the card; repeat it first.
+                if (produced || lastAttempt) return (calls, finish);
+                await RetryStepAsync(assistant, "The model returned an empty response.", attempt, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && RetryPolicy.IsTransient(ex))
+            {
+                // Out of attempts: the error reaches the chat and ends the run, exactly as it did before retries existed.
+                if (lastAttempt)
+                {
+                    ClearRetry(assistant);
+                    throw;
+                }
+                await RetryStepAsync(assistant, RetryPolicy.Reason(ex), attempt, ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// What happens between two attempts of one step: drop what the failed attempt streamed (its tool calls never ran),
+    /// show which attempt is starting and why, then wait out the backoff.
+    /// </summary>
+    private async Task RetryStepAsync(Message assistant, string reason, int attempt, CancellationToken ct)
+    {
+        var wait = RetryPolicy.Delay(attempt);
+        lock (assistant)
+        {
+            assistant.Text = "";
+            assistant.Reasoning = null;
+            assistant.ReasoningSignature = null;
+            assistant.ToolCalls = null;
+            assistant.Error = null;
+            assistant.Retry = new RetryNotice { Attempt = attempt + 1, Attempts = RetryPolicy.MaxAttempts, Error = reason };
+        }
+        _s.Store.UpdateMessage(Session, assistant);
+        _s.Log.LogWarning("Step of session {Session} failed ({Reason}); starting attempt {Attempt}/{Attempts} in {Delay}s",
+            Session.Id, reason, attempt + 1, RetryPolicy.MaxAttempts, wait.TotalSeconds);
+        await Task.Delay(wait, ct);
+    }
+
+    /// <summary>Drops a retry notice that has stopped being true (the run gave up on the step).</summary>
+    private void ClearRetry(Message assistant)
+    {
+        lock (assistant)
+        {
+            if (assistant.Retry is null) return;
+            assistant.Retry = null;
+        }
+        _s.Store.UpdateMessage(Session, assistant);
+    }
+
+    private async Task<(List<ToolCall> Calls, string Finish, bool Produced)> StreamOnceAsync(ProviderConfig provider, ModelInfo model, ChatRequest request,
         Message assistant, List<ITool> tools, int estimatedInput, CancellationToken ct)
     {
         var client = _s.Providers.CreateClient(provider, model.ModelId);
@@ -458,6 +525,7 @@ public sealed class SessionRun : IToolHost
 
         var byName = tools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
         var calls = new List<ToolCall>();
+        var produced = false;
         lock (assistant)
         {
             foreach (var (call, args) in builders.Values)
@@ -484,8 +552,11 @@ public sealed class SessionRun : IToolHost
             usage.Cost = model.Cost(usage);
             assistant.Usage = usage;
             assistant.DurationMs = (long)stepClock.Elapsed.TotalMilliseconds;
-            if (string.IsNullOrWhiteSpace(assistant.Text) && string.IsNullOrWhiteSpace(assistant.Reasoning) && calls.Count == 0)
-                assistant.Error = "The model returned an empty response.";
+            produced = !string.IsNullOrWhiteSpace(assistant.Text) || !string.IsNullOrWhiteSpace(assistant.Reasoning) || calls.Count > 0;
+            if (!produced) assistant.Error = "The model returned an empty response.";
+            // Any attempt that ran to the end closes the retry cycle: `StreamStepAsync` re-sets the notice when this
+            // emptiness is worth repeating, so a card never keeps a stale "retrying" line.
+            assistant.Retry = null;
         }
 
         Session.Usage.Add(usage);
@@ -495,7 +566,7 @@ public sealed class SessionRun : IToolHost
         _s.Store.UpdateMessage(Session, assistant);
         _s.Store.SaveSession(Session);
         PublishMetrics(tps);
-        return (calls, finish);
+        return (calls, finish, produced);
     }
 
     private double _lastTps;

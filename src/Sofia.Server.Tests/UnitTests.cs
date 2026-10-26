@@ -603,3 +603,71 @@ public class TextDurationTests
         }
     }
 }
+
+public class RetryPolicyTests
+{
+    [Theory]
+    // 499 is nginx' "Client Closed Request": the gateway hung up, the model never answered.
+    [InlineData(408, true)]
+    [InlineData(409, true)]
+    [InlineData(425, true)]
+    [InlineData(429, true)]
+    [InlineData(499, true)]
+    [InlineData(500, true)]
+    [InlineData(502, true)]
+    [InlineData(503, true)]
+    [InlineData(504, true)]
+    [InlineData(529, true)]
+    // Everything else says the request itself is wrong: repeating it only delays the message.
+    [InlineData(400, false)]
+    [InlineData(401, false)]
+    [InlineData(403, false)]
+    [InlineData(404, false)]
+    [InlineData(413, false)]
+    [InlineData(422, false)]
+    public void RepeatsOnlyTransientStatuses(int status, bool transient) =>
+        Assert.Equal(transient, RetryPolicy.IsTransient(new ProviderException("boom", status)));
+
+    [Fact]
+    public void RepeatsTransportFailuresAndProviderTimeouts()
+    {
+        Assert.True(RetryPolicy.IsTransient(new HttpRequestException("connection refused")));
+        Assert.True(RetryPolicy.IsTransient(new IOException("the response ended prematurely")));
+        Assert.True(RetryPolicy.IsTransient(new TaskCanceledException("The request was canceled due to the configured timeout.")));
+    }
+
+    [Fact]
+    public void RepeatsInStreamOverloadErrorsWithoutAStatus()
+    {
+        Assert.True(RetryPolicy.IsTransient(new ProviderException("Claude: Overloaded_error: Server temporarily operating at capacity")));
+        Assert.True(RetryPolicy.IsTransient(new ProviderException("OpenRouter: Rate limit exceeded, please try again later")));
+    }
+
+    [Fact]
+    public void KeepsPermanentFailuresFast()
+    {
+        Assert.False(RetryPolicy.IsTransient(new ProviderException("Could not reach Ollama at http://localhost:11434: connection refused")));
+        Assert.False(RetryPolicy.IsTransient(new ProviderException("Claude: this model's maximum context length is 4096 tokens")));
+        Assert.False(RetryPolicy.IsTransient(new ProviderException("OpenAI: Incorrect API key provided.")));
+        Assert.False(RetryPolicy.IsTransient(new InvalidOperationException("Stopped after 100 steps without a final answer.")));
+    }
+
+    [Fact]
+    public void MakesFourAttemptsGrowingTheBackoff()
+    {
+        Assert.Equal(4, RetryPolicy.MaxAttempts);
+        Assert.Equal(3, RetryPolicy.MaxRetries);
+        var first = RetryPolicy.Delay(1);
+        var second = RetryPolicy.Delay(2);
+        var third = RetryPolicy.Delay(3);
+        Assert.InRange(first.TotalMilliseconds, 600, 900);
+        Assert.InRange(second.TotalMilliseconds, 1_200, 1_800);
+        Assert.InRange(third.TotalMilliseconds, 2_400, 3_600);
+    }
+
+    [Fact]
+    public void GivesAOneLineReasonForTheNotice()
+    {
+        Assert.Equal("Fake: Client Closed Request", RetryPolicy.Reason(new ProviderException("Fake: Client Closed Request\nnginx/1.27")));
+    }
+}

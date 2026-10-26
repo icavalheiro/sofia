@@ -47,7 +47,7 @@ src/Sofia.UI/src/
 │   │                          #   composer height as bottom padding)
 │   ├── ChatMessageItem.vue    # renders one message: text, reasoning, tool cards,
 │   │                          #   permission cards, question cards, error banners,
-│   │                          #   report cards, attachments
+│   │                          #   provider retry notices, report cards, attachments
 │   ├── RightPanel.vue         # workspace file changes / diff viewer
 │   ├── BrowserPanel.vue       # live headless-browser view (canvas + input), see "Browser panel"
 │   ├── SettingsPanel.vue      # modal: General, Models, MCP, Appearance tabs

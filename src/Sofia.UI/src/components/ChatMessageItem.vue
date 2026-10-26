@@ -198,6 +198,13 @@ function confirmQuestions(): void {
 // Failed messages offer Retry instead; it rewinds the session too, so it asks
 // for confirmation in a modal first.
 const failed = computed(() => !!props.message.error)
+// A transient provider failure Sofia is repeating: the card says which attempt is running and why, until one succeeds.
+const providerRetryText = computed(() => {
+  const notice = props.message.retry
+  if ( !notice ) return ''
+  const base = t( 'chat.providerRetrying', { attempt: notice.attempt, attempts: notice.attempts } )
+  return notice.error ? `${base} — ${notice.error}` : base
+})
 const revertArmed = ref(false)
 const reverting = ref(false)
 const retrying = ref(false)
@@ -370,6 +377,12 @@ function closeLightbox(): void {
           {{ pending === 'steer' ? t('chat.pendingSteer') : t('chat.pendingQueue') }}
         </span>
         <span v-else class="msg-time">{{ message.time }}</span>
+      </div>
+
+      <!-- Provider hiccup being retried: the step restarts, nothing has failed yet. -->
+      <div v-if="message.retry" class="msg-retry" role="status" aria-live="polite">
+        <SofiaIcon name="retry" :size="'0.95rem'" />
+        <div class="msg-retry-text">{{ providerRetryText }}</div>
       </div>
 
       <!-- Connection / runtime error banner. -->
@@ -1561,6 +1574,41 @@ button.compact-notice {
 }
 
 .msg-error-text {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+/* --- provider retry notice --------------------------------------------------- */
+.msg-retry {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-width: 74ch;
+  margin-bottom: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px dashed var(--sofia-warn);
+  border-radius: 8px;
+  background: var(--sofia-surface-2);
+  color: var(--sofia-warn);
+}
+
+.msg-retry svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  animation: msg-retry-spin 1.8s linear infinite;
+}
+
+@keyframes msg-retry-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-retry svg {
+    animation: none;
+  }
+}
+
+.msg-retry-text {
   font-size: 0.8125rem;
   line-height: 1.5;
 }

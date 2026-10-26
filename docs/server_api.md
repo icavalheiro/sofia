@@ -159,6 +159,7 @@ interface MessageDto {
   error?: string
   summary?: boolean       // compaction summary card
   compaction?: { status: 'running'|'done'|'failed'|'skipped', auto: boolean, before: number, after?: number, error?: string, result?: string }  // system notice card: compaction progress/result (token counts are estimates)
+  retry?: { attempt: number, attempts: number, error?: string }  // transient provider failure being retried (499/408/429/5xx, dropped socket, timeout, empty stream): set while the next attempt runs, cleared by the attempt that succeeds. `attempts` is 4 (one try + three retries); when they run out the failure becomes `error` and the session goes to `status: 'error'`
   knowledge?: KnowledgeEntryDto[]  // card-only message: notes learned from the conversation
   usage?: UsageDto
   durationMs?: number

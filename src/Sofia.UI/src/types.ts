@@ -117,6 +117,8 @@ export interface MessageDto
   summary?: boolean;
   /** System notice for a context compaction (progress and result). */
   compaction?: CompactionNoticeDto;
+  /** Transient provider failure Sofia is repeating; cleared by the attempt that succeeds. */
+  retry?: RetryNoticeDto;
   usage?: UsageDto;
   durationMs?: number;
   /** Notes the harness learned from the conversation (card-only message). */
@@ -134,6 +136,15 @@ export interface CompactionNoticeDto
   error?: string;
   /** The generated summary (done only); shown when the card is expanded. */
   result?: string;
+}
+
+/** A transient provider failure Sofia is repeating: shown while the next attempt runs (attempt/attempts are 1-based). */
+export interface RetryNoticeDto
+{
+  attempt: number;
+  attempts: number;
+  /** Why the previous attempt failed, one line. */
+  error?: string;
 }
 
 export interface KnowledgeEntryDto
@@ -372,6 +383,8 @@ export interface Message
   summary?: boolean;
   /** System notice for a context compaction (progress and result). */
   compaction?: CompactionNoticeDto;
+  /** Transient provider failure Sofia is repeating; cleared by the attempt that succeeds. */
+  retry?: RetryNoticeDto;
   usage?: UsageDto;
   durationMs?: number;
   /** Notes the harness learned from the conversation (card-only message). */

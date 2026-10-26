@@ -90,6 +90,19 @@ One `SessionRun` per active session, owned by `AgentService`:
    executed is exactly the one the model saw for that turn.
 5. Loop until the model answers without tool calls, then drain the queue.
 
+A step whose request never got an answer is repeated. `Providers/RetryPolicy`
+calls a failure transient when the model never spoke: `499` (nginx' *Client
+Closed Request*), `408`/`409`/`425`/`429`, 5xx and the Cloudflare family, a
+socket dropped mid-stream, a provider timeout, or a stream that closed without a
+single event. `SessionRun.StreamStepAsync` then restarts the step — up to three
+retries with ~0.75 s / 1.5 s / 3 s backoff, so four attempts before anything
+reaches the chat. What a failed attempt streamed is cleared off the card (its
+tool calls never ran) and the card carries a `Message.Retry` notice with the
+attempt number and the reason until an attempt succeeds; when they all fail the
+error lands on the card and the session goes to `error`, as before. Permanent
+failures — bad key, unknown model, context too long, a runtime that is simply
+not running — still fail fast.
+
 Abort cancels the run token: streaming stops, running tools are killed and
 marked, pending approvals are cancelled.
 

@@ -228,6 +228,20 @@ public sealed class CompactionNotice
     public string? Result { get; set; }
 }
 
+/// <summary>
+/// A transient provider failure Sofia is repeating: shown on the assistant card while the next attempt runs and
+/// cleared by the attempt that succeeds. Distinct from <see cref="Message.Error"/>, which is terminal.
+/// </summary>
+public sealed class RetryNotice
+{
+    /// <summary>The attempt now starting (1-based).</summary>
+    public int Attempt { get; set; } = 1;
+    /// <summary>Attempts Sofia will make before it gives up and shows the error.</summary>
+    public int Attempts { get; set; } = 1;
+    /// <summary>Why the previous attempt failed, one line.</summary>
+    public string? Error { get; set; }
+}
+
 public sealed class Message
 {
     [BsonId] public string Id { get; set; } = "";
@@ -250,6 +264,8 @@ public sealed class Message
     public bool? Summary { get; set; }
     /// <summary>System notice card (compaction progress/result); UI-only, never replayed to the model.</summary>
     public CompactionNotice? Compaction { get; set; }
+    /// <summary>Transient provider failure being retried; UI-only, cleared by the attempt that succeeds.</summary>
+    public RetryNotice? Retry { get; set; }
     public Usage? Usage { get; set; }
     public long? DurationMs { get; set; }
 
