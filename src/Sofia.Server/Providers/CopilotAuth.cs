@@ -111,7 +111,7 @@ public sealed class CopilotAuth(IHttpClientFactory httpFactory)
         using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/copilot_internal/v2/token");
         req.Headers.Authorization = new AuthenticationHeaderValue("token", oauth);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        foreach (var (name, value) in BaseHeaders) req.Headers.TryAddWithoutValidation(name, value);
+        foreach (var (name, value) in BaseHeaders) ProviderIdentity.ApplyHeader(req, name, value);
 
         HttpResponseMessage response;
         try

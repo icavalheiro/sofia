@@ -10,6 +10,7 @@ using Sofia.Server.Context;
 using Sofia.Server.Data;
 using Sofia.Server.Domain;
 using Sofia.Server.Infrastructure;
+using Sofia.Server.Providers;
 using Sofia.Server.Security;
 
 namespace Sofia.Server.Api;
@@ -17,6 +18,7 @@ namespace Sofia.Server.Api;
 public sealed record CreateWorkspaceRequest(string? Kind, string? Path, string? Name, string? Icon, string? ModelId);
 public sealed record UpdateWorkspaceRequest(string? Name, string? Icon, string? ModelId, bool? Expanded, int? Order);
 public sealed record CreateSessionRequest(string? Title);
+public sealed record ReorderSessionsRequest(List<string>? Ids);
 public sealed record UpdateSessionRequest(string? Title, string? ModelId, string? Agent, string? PermissionMode, string? ReasoningMode);
 public sealed record CommandRequest(string Name, string? Arguments);
 public sealed record RevertRequest(string MessageId);
@@ -27,8 +29,7 @@ public sealed record ImportRequest(string? WorkspaceId, Session Info, List<Messa
 
 public static class SessionEndpoints
 {
-    public static string Version { get; } =
-        typeof(SessionEndpoints).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.0.0";
+    public static string Version => ProviderIdentity.Version;
 
     public static void MapSessionApi(this IEndpointRouteBuilder app)
     {
@@ -126,6 +127,13 @@ public static class SessionEndpoints
             return Results.Ok(store.CreateSession(workspace, body?.Title, template));
         });
 
+        api.MapPut("/workspaces/{id}/sessions/order", (string id, ReorderSessionsRequest body, SofiaDb db, SessionStore store) =>
+        {
+            _ = db.Workspaces.FindById(id) ?? throw new NotFoundException("Workspace not found.");
+            store.Reorder(id, body.Ids ?? []);
+            return Results.NoContent();
+        });
+
         // --- sessions -----------------------------------------------------------
 
         api.MapGet("/sessions/status", (AgentService agents) => Results.Ok(agents.Statuses()));
@@ -164,6 +172,20 @@ public static class SessionEndpoints
         {
             var (session, _) = agents.Load(id);
             store.SetArchived(session, false);
+            return Results.Ok(session);
+        });
+
+        api.MapPost("/sessions/{id}/pin", (string id, AgentService agents, SessionStore store) =>
+        {
+            var (session, _) = agents.Load(id);
+            store.SetPinned(session, true);
+            return Results.Ok(session);
+        });
+
+        api.MapPost("/sessions/{id}/unpin", (string id, AgentService agents, SessionStore store) =>
+        {
+            var (session, _) = agents.Load(id);
+            store.SetPinned(session, false);
             return Results.Ok(session);
         });
 

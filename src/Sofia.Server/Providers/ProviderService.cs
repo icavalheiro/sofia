@@ -305,6 +305,7 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             if (!string.IsNullOrEmpty(key)) req.Headers.TryAddWithoutValidation("x-api-key", key);
             req.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+            ProviderIdentity.ApplyIdentity(req, provider, null);
             var json = await SendJsonAsync(http, req, ct);
             foreach (var item in json?["data"]?.AsArray() ?? [])
             {
@@ -321,7 +322,8 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         using (var req = new HttpRequestMessage(HttpMethod.Get, modelsUrl))
         {
             if (!string.IsNullOrEmpty(key)) req.Headers.Authorization = new("Bearer", key);
-            foreach (var (name, value) in auth.Headers ?? new Dictionary<string, string>()) req.Headers.TryAddWithoutValidation(name, value);
+            foreach (var (name, value) in auth.Headers ?? new Dictionary<string, string>()) ProviderIdentity.ApplyHeader(req, name, value);
+            ProviderIdentity.ApplyIdentity(req, provider, null);
             var json = await SendJsonAsync(http, req, ct);
             if (provider.Flavor == "copilot") return MergeDeclared(provider, ParseCopilotModels(json));
             foreach (var item in json?["data"]?.AsArray() ?? [])

@@ -77,6 +77,10 @@ public sealed class Session
     /// <summary>Hidden from the conversation list and parked in the workspace's 'Archived' folder.</summary>
     public bool Archived { get; set; }
     public DateTime? ArchivedAt { get; set; }
+    /// <summary>Kept at the top of the workspace's conversation list.</summary>
+    public bool Pinned { get; set; }
+    /// <summary>Manual position in the list (ascending); 0 = never placed, so it sorts by recency.</summary>
+    public int Order { get; set; }
     public Usage Usage { get; set; } = new();
     public ContextInfo Context { get; set; } = new();
     public List<string> ActiveSkills { get; set; } = [];

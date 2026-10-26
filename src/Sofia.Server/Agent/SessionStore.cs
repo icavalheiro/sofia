@@ -45,7 +45,7 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
 
     public List<WorkspaceView> Workspaces()
     {
-        var sessions = db.Sessions.FindAll().ToList().GroupBy(s => s.WorkspaceId).ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.UpdatedAt).ToList());
+        var sessions = db.Sessions.FindAll().ToList().GroupBy(s => s.WorkspaceId).ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.Pinned).ThenBy(s => s.Order).ThenByDescending(s => s.UpdatedAt).ToList());
         return db.Workspaces.FindAll().OrderBy(w => w.Order).ThenBy(w => w.CreatedAt)
             .Select(w => WorkspaceView.From(w, sessions.GetValueOrDefault(w.Id) ?? []))
             .ToList();
@@ -90,6 +90,29 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
         session.ArchivedAt = archived ? DateTime.UtcNow : null;
         db.Sessions.Update(session);
         bus.Publish(EventTypes.SessionUpdated, session, session.Id, session.WorkspaceId);
+    }
+
+    /// <summary>Pins a conversation to the top of its list (first among the pinned) or releases it.</summary>
+    public void SetPinned(Session session, bool pinned)
+    {
+        session.Pinned = pinned;
+        session.Order = pinned
+            ? Math.Min(0, db.Sessions.Find(s => s.WorkspaceId == session.WorkspaceId).Min(s => s.Order)) - 1
+            : 0;
+        db.Sessions.Update(session);
+        bus.Publish(EventTypes.SessionUpdated, session, session.Id, session.WorkspaceId);
+    }
+
+    /// <summary>Stores the manual order of a workspace's conversations (first id = top of the list).</summary>
+    public void Reorder(string workspaceId, IReadOnlyList<string> ids)
+    {
+        for (var i = 0; i < ids.Count; i++)
+        {
+            var session = db.Sessions.FindById(ids[i]);
+            if (session is null || session.WorkspaceId != workspaceId || session.Order == i + 1) continue;
+            session.Order = i + 1;
+            db.Sessions.Update(session);
+        }
     }
 
     public void SetStatus(Session session, string status, string? error = null)

@@ -43,8 +43,18 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
     .AllowAnyMethod()
     .AllowCredentials()));
 
-builder.Services.AddHttpClient("llm", c => c.Timeout = Timeout.InfiniteTimeSpan);
-builder.Services.AddHttpClient("probe", c => c.Timeout = TimeSpan.FromSeconds(15));
+// Providers that gate subscription traffic (OpenCode Go) reject a generic or missing user agent, so both LLM
+// clients identify the harness; a per-request override in a provider client wins over these defaults.
+builder.Services.AddHttpClient("llm", c =>
+{
+    c.Timeout = Timeout.InfiniteTimeSpan;
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(ProviderIdentity.UserAgent);
+});
+builder.Services.AddHttpClient("probe", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(15);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(ProviderIdentity.UserAgent);
+});
 builder.Services.AddHttpClient("fetch", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(40);

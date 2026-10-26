@@ -24,7 +24,8 @@ public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider, P
             Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
         };
         if (!string.IsNullOrEmpty(auth.Key)) message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", auth.Key);
-        foreach (var (name, value) in auth.Headers ?? new Dictionary<string, string>()) message.Headers.TryAddWithoutValidation(name, value);
+        foreach (var (name, value) in auth.Headers ?? new Dictionary<string, string>()) ProviderIdentity.ApplyHeader(message, name, value);
+        ProviderIdentity.ApplyIdentity(message, provider, request.SessionId);
         if (provider.Flavor == "openrouter")
         {
             message.Headers.TryAddWithoutValidation("HTTP-Referer", "https://github.com/icavalheiro/sofia");

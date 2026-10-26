@@ -34,6 +34,7 @@ public sealed class AnthropicChatClient(HttpClient http, ProviderConfig provider
                 message.Headers.TryAddWithoutValidation("Authorization", $"Bearer {key}");
         }
         message.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+        ProviderIdentity.ApplyIdentity(message, provider, request.SessionId);
 
         HttpResponseMessage response;
         try

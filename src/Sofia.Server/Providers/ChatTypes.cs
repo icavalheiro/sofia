@@ -13,6 +13,8 @@ public sealed class ChatRequest
     public string Reasoning { get; init; } = "medium";
     public int MaxTokens { get; init; } = 8192;
     public bool ModelSupportsReasoning { get; init; }
+    /// <summary>Conversation id, sent to providers that route and cache per session (OpenCode Go).</summary>
+    public string? SessionId { get; init; }
 }
 
 public sealed class ChatMessage

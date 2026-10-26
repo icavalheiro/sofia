@@ -36,4 +36,7 @@ public static class OpenCodeGo
         ApiKeyEnv = provider.ApiKeyEnv,
         Flavor = provider.Flavor,
     };
+
+    /// <summary>True when this provider config talks to OpenCode Go (both wire protocols carry the flavor).</summary>
+    public static bool IsGo(ProviderConfig provider) => provider.Flavor == "opencode-go";
 }
