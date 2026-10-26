@@ -54,11 +54,18 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
     public void PublishWorkspace(Workspace w) =>
         bus.Publish(EventTypes.WorkspaceUpdated, WorkspaceView.From(w, null), workspaceId: w.Id);
 
-    public Session CreateSession(Workspace workspace, string? title = null, Session? template = null, string? parentId = null, string? agent = null)
+    /// <summary>
+    /// Creates a session. The model comes from the template when one is given (branching, cloning, importing keep the
+    /// source's model), otherwise from the workspace's base model; `workspaceModelFirst` makes a brand new conversation
+    /// start on the workspace model even when the workspace has other chats. A model that is gone or hidden in Settings
+    /// never survives: the server default takes over.
+    /// </summary>
+    public Session CreateSession(Workspace workspace, string? title = null, Session? template = null, string? parentId = null, string? agent = null, bool workspaceModelFirst = false)
     {
-        var modelId = template?.ModelId;
-        if (string.IsNullOrEmpty(modelId)) modelId = workspace.ModelId;
-        if (string.IsNullOrEmpty(modelId) || providers.Resolve(modelId) is null) modelId = providers.DefaultModelId();
+        var modelId = workspaceModelFirst
+            ? FirstNonEmpty(workspace.ModelId, template?.ModelId)
+            : FirstNonEmpty(template?.ModelId, workspace.ModelId);
+        if (!IsUsable(modelId)) modelId = providers.DefaultModelId();
         var session = new Session
         {
             Id = Ids.New("ses"),
@@ -76,6 +83,12 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
         bus.Publish(EventTypes.SessionCreated, session, session.Id, workspace.Id);
         return session;
     }
+
+    private static string? FirstNonEmpty(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+    /// <summary>A model is only kept when the catalog knows it and Settings has not switched it off.</summary>
+    private bool IsUsable(string? modelId) =>
+        !string.IsNullOrWhiteSpace(modelId) && providers.Resolve(modelId) is not null && !Db.GetConfig().DisabledModels.Contains(modelId);
 
     /// <summary>
     /// Forks a conversation: a new session with a copy of the history up to and including

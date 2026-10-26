@@ -2,7 +2,7 @@
 // Hover gear for a workspace row: pick an icon, choose the workspace's default
 // model, or remove the workspace. The panel is `position: fixed` (measured from
 // the gear) so the sidebar's scroll container can't clip it.
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useHarness } from '@/composables/useHarness'
 import { useSound } from '@/composables/useSound'
@@ -16,6 +16,16 @@ const props = defineProps<{ workspace: Workspace }>()
 const { models, setWorkspaceIcon, setWorkspaceModel, setWorkspaceName, removeWorkspace } = useHarness()
 const { playSound } = useSound()
 const { t } = useI18n()
+
+/** Model rows offered here: the composer's catalog (models switched off in Settings are left out), plus the
+ *  workspace's current pick when it is no longer in the catalog, so the selection stays visible. */
+const visibleModels = computed<{ id: string; label: string; local: boolean }[]>(() => {
+  const rows = models.value.filter((m) => m.enabled !== false).map((m) => ({ id: m.id, label: m.label, local: m.local }))
+  const current = props.workspace.modelId
+  return current && !rows.some((r) => r.id === current)
+    ? [{ id: current, label: `${current} (not in the catalog)`, local: false }, ...rows]
+    : rows
+})
 
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
@@ -147,9 +157,9 @@ onBeforeUnmount(() => {
         <div class="gear-section">
           <div class="gear-label">{{ t('gear.model') }}</div>
           <div class="model-list">
-            <p v-if="!models.length" class="model-empty">No models available — add a provider in Settings.</p>
+            <p v-if="!visibleModels.length" class="model-empty">No models available — add a provider in Settings.</p>
             <button
-              v-for="m in models"
+              v-for="m in visibleModels"
               :key="m.id"
               class="model-row"
               :class="{ 'model-row--active': workspace.modelId === m.id }"

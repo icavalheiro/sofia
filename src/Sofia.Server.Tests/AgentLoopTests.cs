@@ -349,6 +349,47 @@ public sealed class AgentLoopTests : IDisposable
         Assert.Equal([secondId, firstId], convIds);
     }
 
+    /// <summary>
+    /// A new conversation starts on the workspace's base model, not on whatever model the workspace's last chat used;
+    /// a base model that Settings switched off falls back to the configured default.
+    /// </summary>
+    [Fact]
+    public async Task NewChatsStartOnTheWorkspaceModelAndSkipDisabledModels()
+    {
+        var http = _factory.CreateClient();
+        var provider = await Post(http, "/api/providers", new { name = "Fake", type = "openai", baseUrl = "http://fake.llm/v1", apiKey = "test" });
+        var providerId = provider.GetProperty("id").GetString()!;
+        var first = $"{providerId}/fake-model";
+        var baseModel = $"{providerId}/other-model";
+        await http.PatchAsJsonAsync("/api/config", new { defaultModel = first });
+
+        var workspace = await Post(http, "/api/workspaces", new { kind = "chat", name = "Base model", modelId = baseModel });
+        var wsId = workspace.GetProperty("id").GetString()!;
+        var firstConvId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        // The chat that exists switches to another model, so it is the odd one out from now on.
+        await http.PatchAsJsonAsync($"/api/sessions/{firstConvId}", new { modelId = first });
+        var switched = await http.GetFromJsonAsync<JsonElement>($"/api/sessions/{firstConvId}");
+        Assert.Equal(first, switched.GetProperty("modelId").GetString());
+
+        // Every later chat opens on the workspace's model.
+        var fresh = await Post(http, $"/api/workspaces/{wsId}/sessions", new { title = "fresh" });
+        Assert.Equal(baseModel, fresh.GetProperty("modelId").GetString());
+
+        // Hide that model in Settings: a new chat falls back to the server default instead of keeping it.
+        var hide = await http.PostAsJsonAsync("/api/models/enabled", new { ids = new[] { baseModel }, enabled = false });
+        hide.EnsureSuccessStatusCode();
+        var fallback = await Post(http, $"/api/workspaces/{wsId}/sessions", new { title = "hidden model" });
+        Assert.Equal(first, fallback.GetProperty("modelId").GetString());
+
+        // The existing chat keeps its own choice: the base model only ever applies to a new one.
+        var stillFirst = await http.GetFromJsonAsync<JsonElement>($"/api/sessions/{firstConvId}");
+        Assert.Equal(first, stillFirst.GetProperty("modelId").GetString());
+
+        await http.PostAsJsonAsync("/api/models/enabled", new { ids = new[] { baseModel }, enabled = true });
+        await http.PatchAsJsonAsync("/api/config", new { defaultModel = "" });
+    }
+
     [Fact]
     public async Task ListsCustomAgentsAndHandsMentionsToTheModel()
     {

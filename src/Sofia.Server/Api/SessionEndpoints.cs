@@ -123,8 +123,10 @@ public static class SessionEndpoints
         api.MapPost("/workspaces/{id}/sessions", (string id, CreateSessionRequest? body, SofiaDb db, SessionStore store) =>
         {
             var workspace = db.Workspaces.FindById(id) ?? throw new NotFoundException("Workspace not found.");
+            // Modes still come from the workspace's most recent chat; the model does not: a new chat starts on the
+            // workspace's base model (see SessionStore.CreateSession).
             var template = db.Sessions.Find(s => s.WorkspaceId == id && s.ParentId == null).OrderByDescending(s => s.UpdatedAt).FirstOrDefault();
-            return Results.Ok(store.CreateSession(workspace, body?.Title, template));
+            return Results.Ok(store.CreateSession(workspace, body?.Title, template, workspaceModelFirst: true));
         });
 
         api.MapPut("/workspaces/order", (ReorderRequest body, SessionStore store) =>
