@@ -87,13 +87,19 @@ function toggleArchive(ws: Ws): void {
 // --- conversation row actions -------------------------------------------------
 
 /** Conversation waiting for the delete confirmation (null = modal closed). */
-const pendingDelete = ref<{ conv: Conv; workspace: Ws } | null>(null)
+const pendingDelete = ref<{ conv?: Conv; all?: Conv[]; workspace: Ws } | null>(null)
 const deleteBtn = ref<HTMLButtonElement | null>(null)
 const deleting = ref(false)
 
 function askDelete(conv: Conv, ws: Ws): void {
   playSound('click')
   pendingDelete.value = { conv, workspace: ws }
+  void nextTick(() => deleteBtn.value?.focus())
+}
+
+function askDeleteAllArchived(ws: Ws): void {
+  playSound('click')
+  pendingDelete.value = { all: archivedConvs(ws), workspace: ws }
   void nextTick(() => deleteBtn.value?.focus())
 }
 
@@ -106,7 +112,10 @@ async function confirmDelete(): Promise<void> {
   const target = pendingDelete.value
   if (!target || deleting.value) return
   deleting.value = true
-  const err = await deleteConversation(target.conv.id)
+  let err: unknown
+  for (const c of target.all ?? (target.conv ? [target.conv] : [])) {
+    err = (await deleteConversation(c.id)) || err
+  }
   deleting.value = false
   if (!err) playSound('select')
   pendingDelete.value = null
@@ -115,7 +124,7 @@ async function confirmDelete(): Promise<void> {
 async function archive(conv: Conv): Promise<void> {
   playSound('select')
   const err = await archiveConversation(conv.id)
-  if (!err && conv.workspaceId) archiveOpen[conv.workspaceId] = true
+  void err
 }
 
 async function restore(conv: Conv): Promise<void> {
@@ -604,6 +613,19 @@ useShortcut('session.next', () => stepSession(1))
                 <SofiaIcon class="conv-icon conv-icon--archive" name="archive" :size="'0.875rem'" />
                 <span class="conv-title sofia-truncate">{{ t('nav.archived') }}</span>
                 <span class="conv-count">{{ archivedConvs(ws).length }}</span>
+                <span class="conv-trail">
+                  <span class="conv-actions">
+                    <button
+                      class="conv-action conv-action--danger"
+                      type="button"
+                      :aria-label="t('conv.deleteAll')"
+                      :title="t('conv.deleteAll')"
+                      @click.stop="askDeleteAllArchived(ws)"
+                    >
+                      <SofiaIcon name="trash" :size="'0.8rem'" />
+                    </button>
+                  </span>
+                </span>
               </div>
 
               <div v-if="archiveOpen[ws.id]" class="conv-archived-list">
@@ -663,9 +685,13 @@ useShortcut('session.next', () => stepSession(1))
         @keydown.esc="closeDelete"
       >
         <div class="conv-del-modal" role="alertdialog" aria-modal="true" aria-labelledby="conv-del-title">
-          <h2 id="conv-del-title" class="conv-del-title">{{ t('conv.deleteTitle') }}</h2>
-          <p class="conv-del-name sofia-truncate">{{ pendingDelete.conv.title }}</p>
-          <p class="conv-del-text">{{ t('conv.deleteBody') }}</p>
+          <h2 id="conv-del-title" class="conv-del-title">
+            {{ pendingDelete.all ? t('conv.deleteAllTitle') : t('conv.deleteTitle') }}
+          </h2>
+          <p class="conv-del-name sofia-truncate">
+            {{ pendingDelete.all ? `${t('nav.archived')} (${pendingDelete.all.length})` : pendingDelete.conv?.title }}
+          </p>
+          <p class="conv-del-text">{{ pendingDelete.all ? t('conv.deleteAllBody') : t('conv.deleteBody') }}</p>
           <div class="conv-del-actions">
             <button class="conv-del-btn" type="button" :disabled="deleting" @click="closeDelete">
               {{ t('conv.cancel') }}

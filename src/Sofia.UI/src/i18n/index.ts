@@ -34,6 +34,9 @@ const en: Dict = {
   'conv.deleteTitle': 'Delete this conversation?',
   'conv.deleteBody': 'The conversation and all its messages are removed for good. This cannot be undone.',
   'conv.deleteConfirm': 'Delete',
+  'conv.deleteAll': 'Delete all archived',
+  'conv.deleteAllTitle': 'Delete all archived conversations?',
+  'conv.deleteAllBody': 'Every archived conversation and its messages are removed for good. This cannot be undone.',
   'conv.cancel': 'Cancel',
 
   'gear.name': 'Name',
@@ -301,6 +304,9 @@ const pt: Dict = {
   'conv.deleteTitle': 'Excluir esta conversa?',
   'conv.deleteBody': 'A conversa e todas as suas mensagens serão removidas definitivamente. Isso não pode ser desfeito.',
   'conv.deleteConfirm': 'Excluir',
+  'conv.deleteAll': 'Excluir todas as arquivadas',
+  'conv.deleteAllTitle': 'Excluir todas as conversas arquivadas?',
+  'conv.deleteAllBody': 'Todas as conversas arquivadas e suas mensagens serão removidas definitivamente. Isso não pode ser desfeito.',
   'conv.cancel': 'Cancelar',
 
   'gear.name': 'Nome',

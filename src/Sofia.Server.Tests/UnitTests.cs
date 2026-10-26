@@ -653,16 +653,12 @@ public class RetryPolicyTests
     }
 
     [Fact]
-    public void MakesFourAttemptsGrowingTheBackoff()
+    public void MakesSixAttemptsWaitingFiveSeconds()
     {
-        Assert.Equal(4, RetryPolicy.MaxAttempts);
-        Assert.Equal(3, RetryPolicy.MaxRetries);
-        var first = RetryPolicy.Delay(1);
-        var second = RetryPolicy.Delay(2);
-        var third = RetryPolicy.Delay(3);
-        Assert.InRange(first.TotalMilliseconds, 600, 900);
-        Assert.InRange(second.TotalMilliseconds, 1_200, 1_800);
-        Assert.InRange(third.TotalMilliseconds, 2_400, 3_600);
+        Assert.Equal(6, RetryPolicy.MaxAttempts);
+        Assert.Equal(5, RetryPolicy.MaxRetries);
+        Assert.Equal(TimeSpan.FromSeconds(5), RetryPolicy.Delay(1));
+        Assert.Equal(TimeSpan.FromSeconds(5), RetryPolicy.Delay(4));
     }
 
     [Fact]
@@ -671,3 +667,5 @@ public class RetryPolicyTests
         Assert.Equal("Fake: Client Closed Request", RetryPolicy.Reason(new ProviderException("Fake: Client Closed Request\nnginx/1.27")));
     }
 }
+
+

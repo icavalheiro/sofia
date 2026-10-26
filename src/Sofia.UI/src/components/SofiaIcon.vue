@@ -3,6 +3,7 @@
 // (also persisted for workspace icons), and this map resolves the key to the
 // Lucide component, so the whole app can be re-skinned from one place.
 import { computed, type Component } from 'vue'
+import CoffeeSpinner from './CoffeeSpinner.vue'
 import {
   Archive,
   ArchiveRestore,
@@ -144,9 +145,10 @@ const boxSize = computed(() =>
 </script>
 
 <template>
+  <CoffeeSpinner v-if="name === 'loader'" :size="boxSize" />
   <component
     :is="icon"
-    v-if="icon"
+    v-else-if="icon"
     :class="{ 'sofia-icon--spin': spin }"
     :size="boxSize"
     :stroke-width="strokeWidth ?? 1.75"

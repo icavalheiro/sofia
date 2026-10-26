@@ -13,7 +13,7 @@ namespace Sofia.Server.Providers;
 public static class RetryPolicy
 {
     /// <summary>Repeats made after the first try; Sofia attempts one step <see cref="MaxAttempts"/> times in total.</summary>
-    public const int MaxRetries = 3;
+    public const int MaxRetries = 5;
 
     public const int MaxAttempts = MaxRetries + 1;
 
@@ -42,9 +42,10 @@ public static class RetryPolicy
         _ => false,
     };
 
-    /// <summary>Backoff before attempt number <paramref name="attempt"/> (1 = the first repeat): ~0.75s, 1.5s, 3s, capped at 8s.</summary>
-    public static TimeSpan Delay(int attempt) =>
-        TimeSpan.FromMilliseconds(Math.Min(8_000, 750 * Math.Pow(2, attempt - 1)) * (0.8 + Random.Shared.NextDouble() * 0.4));
+    /// <summary>Fixed 5s wait between attempts.</summary>
+
+    public static TimeSpan Delay(int attempt) => TimeSpan.FromSeconds(5);
+
 
     /// <summary>The one-line reason shown on the retry notice.</summary>
     public static string Reason(Exception ex) => Infrastructure.Text.FirstLine(ex.Message, 200);
@@ -56,3 +57,5 @@ public static class RetryPolicy
         return false;
     }
 }
+
+
