@@ -236,6 +236,19 @@ public class ProviderBodyTests
         Assert.Equal("ses_abc", Header(capture.Last, "x-session-id"));
     }
 
+    /// <summary>An Anthropic-compatible gateway gets every session header, plus the bearer token it usually expects.</summary>
+    [Fact]
+    public async Task AnthropicCompatibleGatewaySendsTheSessionHeaders()
+    {
+        var capture = new CapturingHandler();
+        await Drain(new AnthropicChatClient(capture.Http(), new ProviderConfig { Name = "Gateway", Type = "anthropic", BaseUrl = "https://gw.example.com", ApiKey = "k" })
+            .StreamAsync(new ChatRequest { Model = "claude-x", Messages = [ChatMessage.UserText("hi")], SessionId = "ses_abc" }, CancellationToken.None));
+        foreach (var name in new[] { "x-session-id", "x-litellm-trace-id", "x-claude-code-session-id", "x-dynamo-session-id" })
+            Assert.Equal("ses_abc", Header(capture.Last, name));
+        Assert.Equal("k", Header(capture.Last, "x-api-key"));
+        Assert.Equal("Bearer k", Header(capture.Last, "Authorization"));
+    }
+
     /// <summary>AgentCore rejects a runtime session id shorter than 33 characters; the padding stays stable.</summary>
     [Fact]
     public async Task AgentCoreRequestsSendAPaddedRuntimeSessionId()
