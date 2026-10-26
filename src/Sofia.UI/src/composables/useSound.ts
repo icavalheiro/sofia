@@ -74,35 +74,38 @@ function sweep(
 
 // --- sound definitions -----------------------------------------------------
 
+// Shared peak level so every effect has a similar perceived loudness.
+const LEVEL = 0.12
+
 const sendSound: SoundDef = {
   play(ctx, dest) {
-    sweep(ctx, dest, 500, 900, 0.08, 'sine', 0.1)
+    sweep(ctx, dest, 500, 900, 0.1, 'sine', LEVEL)
   },
 }
 
 const selectSound: SoundDef = {
   play(ctx, dest) {
-    tone(ctx, dest, 1100, 0.045, 'sine', 0.08)
+    tone(ctx, dest, 1100, 0.06, 'sine', LEVEL * 0.8)
   },
 }
 
 const doneSound: SoundDef = {
   play(ctx, dest) {
     // Single soft "bloop" — short, low, gentle confirmation
-    tone(ctx, dest, 520, 0.09, 'sine', 0.028)
+    tone(ctx, dest, 520, 0.12, 'sine', LEVEL)
   },
 }
 
 const errorSound: SoundDef = {
   play(ctx, dest) {
-    sweep(ctx, dest, 220, 110, 0.22, 'sine', 0.05)
+    sweep(ctx, dest, 330, 200, 0.22, 'triangle', LEVEL)
   },
 }
 
 const permissionSound: SoundDef = {
   play(ctx, dest) {
     // Soft "ding" — single note with a gentle upward sweep, like a subtle notification
-    sweep(ctx, dest, 740, 880, 0.16, 'sine', 0.032)
+    sweep(ctx, dest, 740, 880, 0.18, 'sine', LEVEL)
   },
 }
 
@@ -120,7 +123,7 @@ const clickSound: SoundDef = {
     filter.type = 'bandpass'
     filter.frequency.value = 3000
     filter.Q.value = 1
-    const gain = envelope(ctx, dest, 0.025, 0.06)
+    const gain = envelope(ctx, dest, 0.03, LEVEL * 2)
     source.connect(filter)
     filter.connect(gain)
     source.start(ctx.currentTime)

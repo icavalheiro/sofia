@@ -75,9 +75,9 @@ public sealed class SofiaInfoTool(
         sb.AppendLine();
         sb.AppendLine("## Per project");
         if (project is null)
-            sb.AppendLine("This conversation has no project folder. A project can add `.sofia/skills`, `.sofia/commands`, `.sofia/agents`, `.sofia/SYSTEM.md` and `AGENTS.md`; they override global entries with the same name.");
+            sb.AppendLine("This conversation has no project folder. A project can add commands, prompts, skills and agents in `.sofia/` (Sofia's own) or the shared `.agents/`, plus `AGENTS.md` and a `.sofia/SYSTEM.md`; they override global entries with the same name, and `.sofia` wins over `.agents`.");
         else
-            sb.AppendLine($"Current project: {project}. It can add `.sofia/skills`, `.sofia/commands`, `.sofia/agents`, `.sofia/SYSTEM.md` and `AGENTS.md`; they override global entries with the same name.");
+            sb.AppendLine($"Current project: {project}. It can add commands, prompts, skills and agents in `.sofia/` (Sofia's own) or the shared `.agents/`, plus `AGENTS.md` and a `.sofia/SYSTEM.md`; they override global entries with the same name, and `.sofia` wins over `.agents`.");
         sb.AppendLine();
         sb.AppendLine($"Call sofia_info with topic = {string.Join(" | ", Topics.Skip(1))} for formats and what is installed. Skills, commands, agents and context files are re-read on every message, so edits apply without a restart.");
         return sb.ToString();
@@ -88,8 +88,8 @@ public sealed class SofiaInfoTool(
         var sb = new StringBuilder();
         sb.AppendLine("# Skills");
         sb.AppendLine("Reusable instructions. Only name and description go into the system prompt; the `skill` tool loads the body on demand.");
-        sb.AppendLine($"Global folder: {Mark(options.SkillsDir)}. Other harnesses' folders (.claude, .agents, .opencode…) are not read.");
-        sb.AppendLine("Project folder: <project>/.sofia/skills — a project skill overrides a global one of the same name.");
+        sb.AppendLine($"Global folder: {Mark(options.SkillsDir)}. Other harnesses' folders (.claude, .opencode…) are not read.");
+        sb.AppendLine("Project folders: <project>/.sofia/skills (Sofia's own) and <project>/.agents/skills (the shared agentskills folder) — a project skill overrides a global one of the same name; `.sofia` wins over `.agents`.");
         sb.AppendLine("Layout: <folder>/<skill-name>/SKILL.md (supporting files may sit next to it).");
         sb.AppendLine();
         sb.AppendLine("SKILL.md:\n---\nname: my-skill\ndescription: One sentence saying when to use it.\n---\nMarkdown instructions…");
@@ -105,8 +105,8 @@ public sealed class SofiaInfoTool(
         var sb = new StringBuilder();
         sb.AppendLine("# Custom commands (/name)");
         sb.AppendLine("Markdown prompt templates the user runs by typing /name [arguments] in the chat         .");
-                sb.AppendLine($"Global folders: {Mark(options.CommandsDir)} (preferred), {options.PromptsDir}. Other harnesses' folders are not read.");
-                sb.AppendLine("Project folders: <project>/.sofia/commands, .sofia/prompts — a project command overrides a global one of the same name.");
+        sb.AppendLine($"Global folders: {Mark(options.CommandsDir)} (preferred), {options.PromptsDir}. Other harnesses' folders are not read.");
+        sb.AppendLine("Project folders: <project>/.sofia/commands, .sofia/prompts (Sofia's own) and <project>/.agents/commands, .agents/prompts — a project command overrides a global one of the same name; `.sofia` wins over `.agents`.");
         sb.AppendLine("The file name is the command name; sub-folders become part of it (git/pr.md → /git/pr).");
         sb.AppendLine();
         sb.AppendLine("Format:\n---\ndescription: Shown in the / menu\nagent: plan        # optional: agent that runs it (a primary agent takes over the session, a subagent gets the work delegated)\nmodel: provider/model   # optional: switches the session to this model\nsubtask: true      # optional: delegate to a subagent instead of the main context\n---\nTemplate text.");
@@ -127,7 +127,7 @@ public sealed class SofiaInfoTool(
         sb.AppendLine("# Agents");
         sb.AppendLine("Custom agents are Markdown files: the body is the agent's system-prompt addendum. The user calls a subagent by typing @name in the chat; the `task` tool can delegate to it too. Primary agents are picked in the composer's agent dropdown.");
         sb.AppendLine($"Global folder: {Mark(options.AgentsDir)}. Other harnesses' folders are not read.");
-        sb.AppendLine("Project folder: <project>/.sofia/agents — a project agent overrides a global one (or a built-in) with the same name.");
+        sb.AppendLine("Project folders: <project>/.sofia/agents (Sofia's own) and <project>/.agents/agents — a project agent overrides a global one (or a built-in) with the same name; `.sofia` wins over `.agents`.");
         sb.AppendLine("The name is the file name (letters, digits, '.', '_', '-'), or the `name` field.");
         sb.AppendLine();
         sb.AppendLine("Format:\n---\ndescription: When to use this agent\nmode: subagent     # subagent (default) | primary | all\ntools: read, grep, find, ls, bash, write, edit, web_fetch, web_search, skill, task, question, notes, sofia_info\nmcp: false         # include MCP tools (default: only when `tools` is omitted)\n---\nYou are … (instructions)");
@@ -209,7 +209,7 @@ public sealed class SofiaInfoTool(
         sb.AppendLine("# Context files");
         sb.AppendLine($"- Global instructions added to every conversation: {Mark(options.GlobalAgentsFile)}");
         sb.AppendLine("- Project instructions: AGENTS.md (or CLAUDE.md) in the project folder and in every parent folder; they follow the global file.");
-        sb.AppendLine($"- {Mark(Path.Combine(options.DataDir, "SYSTEM.md"))} replaces the system-prompt preamble; {Mark(Path.Combine(options.DataDir, "APPEND_SYSTEM.md"))} appends to it. A project can have its own in <project>/.sofia/.");
+        sb.AppendLine($"- {Mark(Path.Combine(options.DataDir, "SYSTEM.md"))} replaces the system-prompt preamble; {Mark(Path.Combine(options.DataDir, "APPEND_SYSTEM.md"))} appends to it. A project can have its own in <project>/.sofia/ or <project>/.agents/.");
         if (project is not null) sb.AppendLine($"- Current project: {project}");
         sb.AppendLine("All of them are plain Markdown, re-read on every message. Keep them short: they cost context on every request.");
         return sb.ToString();

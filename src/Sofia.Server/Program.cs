@@ -87,6 +87,8 @@ builder.Services.AddSingleton<IEventHandler, TitleHandler>();
 builder.Services.AddHostedService<EventDispatcher>();
 builder.Services.AddHostedService<HubBroadcaster>();
 builder.Services.AddHostedService<MaintenanceService>();
+// Pushes `config.changed` when commands, skills, agents or instruction files are edited on disk.
+builder.Services.AddHostedService<ConfigWatcher>();
 
 var app = builder.Build();
 

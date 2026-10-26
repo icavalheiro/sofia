@@ -22,6 +22,7 @@ import AgentDropdown from '@/components/AgentDropdown.vue'
 const {
   state,
   metrics,
+  configActivity,
   models,
   activeModelId,
   activeConversation,
@@ -345,14 +346,27 @@ watch(directory, () => {
   commands.value = []
 })
 
+// The server watches the config folders (its own home and every workspace's `.sofia` / `.agents`): drop the cached
+// lists when they change, so a command or agent written a moment ago is usable without switching workspace or reloading.
+watch(
+  () => configActivity.tick,
+  () => {
+    commandsLoaded.value = false
+    void refreshAgents()
+    if (paletteOpen.value) void loadCommands(true)
+  },
+)
+
 watch(
   () => state.composerText,
   (text) => {
     nextTick(autoResize)
     if (mentionOpen.value) nextTick(updateMention)
     if (/^\/\S*$/.test(text) && !state.isReplying) {
+      const wasOpen = paletteOpen.value
       paletteOpen.value = true
-      void loadCommands()
+      // Command files are added at any time: re-read them when the palette opens (and on `config.changed`).
+      void loadCommands(!wasOpen)
     } else if (paletteOpen.value) {
       closePalette()
     }
@@ -443,8 +457,9 @@ function pickMention(agent: AgentDto): void {
   })
 }
 
-async function loadCommands(): Promise<void> {
-  if (commandsLoaded.value) return
+/** Reads the command list; `force` re-reads even when it was fetched before (a file may have changed since). */
+async function loadCommands(force = false): Promise<void> {
+  if (commandsLoaded.value && !force) return
   commandsLoading.value = true
   try {
     const list = await api<CommandDto[]>('GET', `/api/commands${query(directory.value)}`)
@@ -477,7 +492,13 @@ async function trySendCommand(): Promise<boolean> {
   const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(state.composerText.trim())
   if (!match) return false
   await loadCommands()
-  const command = commands.value.find((c) => c.name.toLowerCase() === match[1].toLowerCase())
+  const name = match[1].toLowerCase()
+  let command = commands.value.find((c) => c.name.toLowerCase() === name)
+  if (!command) {
+    // The cached list can predate a command file written since: re-read once before treating the text as plain input.
+    await loadCommands(true)
+    command = commands.value.find((c) => c.name.toLowerCase() === name)
+  }
   if (!command) return false
   await runCommand(command.name, (match[2] ?? '').trim())
   nextTick(autoResize)

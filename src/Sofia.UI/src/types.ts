@@ -285,6 +285,15 @@ export interface SofiaEvent
   data: unknown;
 }
 
+/** Payload of `config.changed`: command / skill / agent / instruction files were edited on disk. */
+export interface ConfigChangedDto
+{
+  /** `global` is the harness home (`~/.sofia`), `project` is one workspace folder. */
+  scope: 'global' | 'project';
+  /** Harness home folder for `global`, workspace folder for `project`. */
+  directory: string;
+}
+
 // --- View models -------------------------------------------------------------
 
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'file';
@@ -361,6 +370,8 @@ export interface Message
   error?: string;
   /** Compaction summary card. */
   summary?: boolean;
+  /** System notice for a context compaction (progress and result). */
+  compaction?: CompactionNoticeDto;
   usage?: UsageDto;
   durationMs?: number;
   /** Notes the harness learned from the conversation (card-only message). */
@@ -370,8 +381,6 @@ export interface Message
   /** Client-side card (e.g. a failed request) that the server never saw. */
   local?: boolean;
 }
-  /** System notice for a context compaction (progress and result). */
-  compaction?: CompactionNoticeDto;
 
 /**
  * An assistant step whose prompt was almost fully re-billed: under the low-cache

@@ -54,6 +54,7 @@ interface SofiaEvent {
 | `message.deleted` | `{ ids: string[] }` | Removed (revert / compaction cleanup) |
 | `mcp.updated` | `McpServerDto` | MCP server status changed |
 | `models.updated` | `{}` | Re-fetch `/api/models` and `/api/providers` |
+| `config.changed` | `{ scope: 'global' \| 'project', directory }` | Command / prompt / skill / agent Markdown or `AGENTS.md` / `CLAUDE.md` changed on disk (debounced per root, ≈400ms). `directory` is the harness home (`~/.sofia`) for `global` or the workspace folder for `project`; re-fetch `/api/commands`, `/api/agents` and — for `global` — `/api/skills` |
 | `browser.updated` | `{ open: boolean, agent: boolean, url?: string }` (`sessionId` = root conversation) | The conversation's headless browser opened/closed, or the agent used it (`agent: true`: the UI opens the browser panel) |
 
 `SessionStatus = 'idle' | 'working' | 'permission' | 'question' | 'error'`.
@@ -157,8 +158,8 @@ interface MessageDto {
   }
   error?: string
   summary?: boolean       // compaction summary card
-  knowledge?: KnowledgeEntryDto[]  // card-only message: notes learned from the conversation
   compaction?: { status: 'running'|'done'|'failed'|'skipped', auto: boolean, before: number, after?: number, error?: string, result?: string }  // system notice card: compaction progress/result (token counts are estimates)
+  knowledge?: KnowledgeEntryDto[]  // card-only message: notes learned from the conversation
   usage?: UsageDto
   durationMs?: number
 }
@@ -355,7 +356,9 @@ conversation (model discovery, probes) fall back to one stable per-process `harn
 | `GET` | `/api/skills?directory=` | `{ id, name, description, path, content, source }[]` (the Settings → Skills tab omits `directory`, so it lists only global skills) |
 
 Agents are the built-ins (`build`, `plan`, `general`, `explore`) plus Markdown
-files in `~/.sofia/agents`, `<workspace>/.sofia/agents` (other harnesses' folders are not read): frontmatter `description`, `mode` (`subagent` default |
+files in `~/.sofia/agents`, `<workspace>/.agents/agents` and
+`<workspace>/.sofia/agents` (other harnesses' folders are not read; `.sofia`
+wins over `.agents`): frontmatter `description`, `mode` (`subagent` default |
 `primary` | `all`), `tools` (comma list, e.g. `read, grep, bash`), `mcp`; the body
 is the system-prompt addendum. `primary`/`all` agents show in the agent picker
 (`PATCH /api/sessions/{id}` `{ agent }`); `subagent`/`all` ones are `task`
@@ -363,8 +366,9 @@ targets and can be called with `@name` in a prompt: the server keeps the text
 as typed and gives the model a hidden note to delegate through `task`.
 
 Commands are Markdown prompt templates in `~/.sofia/commands`,
-`~/.sofia/prompts`, `<workspace>/.sofia/commands`, `.sofia/prompts` (project
-overrides global) plus the
+`~/.sofia/prompts`, `<workspace>/.agents/commands`, `.agents/prompts`,
+`<workspace>/.sofia/commands`, `.sofia/prompts` (project overrides global, and
+`.sofia` overrides `.agents`) plus the
 built-ins `compact` and `init`. Sub-folders are part of the name (`git/pr` →
 `/git/pr`). Frontmatter: `description`, `agent` (a primary agent takes over the
 session; a subagent gets the work delegated), `model` (`providerId/modelId`,
@@ -374,8 +378,17 @@ switches the session), `subtask: true` (delegate instead of running inline).
 left as text) and `@path` (a file inside the workspace is appended as a
 `<file>` block). Unknown command → `404`, unknown `agent` / `model` → `400`.
 
-Skills are `SKILL.md` folders under `~/.sofia/skills` and
+Skills are `SKILL.md` folders under `~/.sofia/skills`,
+`<workspace>/.agents/skills` (the shared agentskills folder) and
 `<workspace>/.sofia/skills`.
+
+All of these files are read on every message, so edits need no restart. The
+server also watches them — the harness home recursively (filtered to the
+folders above, never the database or attachments) plus each workspace's root for
+`AGENTS.md` / `CLAUDE.md` and its `.sofia` and `.agents` folders recursively —
+and publishes a debounced `config.changed`, which is what makes a command
+written seconds ago show up in the composer palette. Other harnesses' folders
+are neither read nor watched.
 
 The read-only `sofia_info` tool (topics `overview`, `skills`, `commands`,
 `agents`, `mcp`, `providers`, `config`, `context`) tells agents where all of

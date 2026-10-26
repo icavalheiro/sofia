@@ -12,7 +12,7 @@ import { useI18n } from '@/i18n'
 import type { SessionDto, SkillDto } from '@/types'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 
-const { state, activeConversation } = useHarness()
+const { state, activeConversation, configActivity } = useHarness()
 const { playSound } = useSound()
 const { t } = useI18n()
 
@@ -87,6 +87,13 @@ watch(
   () => state.activeConversationId,
   () => {
     expanded.value = null
+  },
+)
+// This tab lists the skills of the harness home; re-read them when that folder changes on disk.
+watch(
+  () => configActivity.tick,
+  () => {
+    if (configActivity.scope === 'global') void refresh()
   },
 )
 </script>

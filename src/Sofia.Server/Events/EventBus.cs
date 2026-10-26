@@ -24,6 +24,7 @@ public static class EventTypes
     public const string MessageUpdated = "message.updated";
     public const string MessageDelta = "message.delta";
     public const string MessageDeleted = "message.deleted";
+    public const string ConfigChanged = "config.changed";
     public const string McpUpdated = "mcp.updated";
     public const string ModelsUpdated = "models.updated";
     public const string BrowserUpdated = "browser.updated";

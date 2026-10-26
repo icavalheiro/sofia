@@ -10,6 +10,7 @@ import
     type Attachment,
     type AttachmentDto,
     type AttachmentKind,
+    type ConfigChangedDto,
     type Conversation,
     type ConversationSummaryDto,
     type Message,
@@ -165,8 +166,8 @@ function mapMessage ( m: MessageDto ): Message
       : undefined,
     error: m.error,
     summary: m.summary,
-    knowledge: m.knowledge?.map( ( k ) => ( { ...k } ) ),
     compaction: m.compaction ? { ...m.compaction } : undefined,
+    knowledge: m.knowledge?.map( ( k ) => ( { ...k } ) ),
     usage: m.usage,
     durationMs: m.durationMs,
   };
@@ -322,6 +323,13 @@ function restoreDraft ( conv: Conversation, text: string, attachments: PendingAt
 
 /** Bumped whenever a tool call finishes; the workspace panel refreshes its file list on it. */
 const toolActivity = reactive( { tick: 0, workspaceId: '' } );
+
+/**
+ * Bumped when Sofia's own config folders change on disk (`config.changed`): commands, prompts, skills, agents,
+ * AGENTS.md / CLAUDE.md, in the harness home (`scope: 'global'`) or in one workspace (`scope: 'project'`).
+ * Anything that caches those lists (composer palette, agent dropdown, skills tab) refreshes on it.
+ */
+const configActivity = reactive( { tick: 0, scope: '' as '' | ConfigChangedDto[ 'scope' ], directory: '' } );
 
 /** Live run readouts for the active conversation (composer hint row). */
 const metrics = reactive( {
@@ -901,6 +909,13 @@ function handleEvent ( event: SofiaEvent ): void
         if ( !conv?.loaded ) continue;
         if ( conv.messages.some( ( m ) => drop.has( m.id ) ) ) conv.messages = conv.messages.filter( ( m ) => !drop.has( m.id ) );
       }
+      break;
+    }
+    case 'config.changed': {
+      const data = event.data as ConfigChangedDto | null;
+      configActivity.scope = data?.scope ?? '';
+      configActivity.directory = data?.directory ?? '';
+      configActivity.tick += 1;
       break;
     }
     case 'models.updated':
@@ -1644,6 +1659,7 @@ export function useHarness ()
     state,
     metrics,
     toolActivity,
+    configActivity,
     models,
     refreshLiveSessions: loadWorkspaces,
     refreshModels,

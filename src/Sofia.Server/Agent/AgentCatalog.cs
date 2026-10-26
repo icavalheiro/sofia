@@ -5,14 +5,14 @@ using Sofia.Server.Infrastructure;
 namespace Sofia.Server.Agent;
 
 /// <summary>
-/// The built-in agents plus custom ones from Markdown files (`~/.sofia/agents` and `<workspace>/.sofia/agents`; other
-/// harnesses' folders are never read). Frontmatter: `name`, `description`, `mode` (primary | subagent | all,
-/// default subagent), `tools` (comma list; omitted = the default set for the mode) and `mcp` (true/false). The body is the
-/// agent's system-prompt addendum. Later roots win: project over global over built-in, so a file can override a built-in.
+/// The built-in agents plus custom ones from Markdown files (`~/.sofia/agents`, `<workspace>/.agents/agents` and
+/// `<workspace>/.sofia/agents`; other harnesses' folders are never read). Frontmatter: `name`, `description`, `mode`
+/// (primary | subagent | all, default subagent), `tools` (comma list; omitted = the default set for the mode) and `mcp`
+/// (true/false). The body is the agent's system-prompt addendum. Later roots win: project over global over built-in, and
+/// `.sofia` over `.agents`, so a file can override a built-in.
 /// </summary>
 public sealed partial class AgentCatalog(SofiaOptions options)
 {
-    private static readonly string[] ProjectDirs = [".sofia/agents"];
 
     private static readonly Dictionary<string, string> ToolAliases = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -30,7 +30,8 @@ public sealed partial class AgentCatalog(SofiaOptions options)
         yield return options.AgentsDir;
     }
 
-    public static IEnumerable<string> ProjectRoots(string directory) => ProjectDirs.Select(rel => Path.Combine(directory, rel));
+    /// <summary>The workspace's own agent folders, in override order (<c>.agents</c> then <c>.sofia</c>).</summary>
+    public static IEnumerable<string> ProjectRoots(string directory) => ConfigPaths.ProjectRoots(directory, "agents");
 
     public List<AgentDefinition> List(string? directory)
     {
