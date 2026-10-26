@@ -74,7 +74,7 @@ public static class Args
         if (string.IsNullOrWhiteSpace(raw)) return [];
         try
         {
-            return JsonNode.Parse(raw) as JsonObject ?? throw new ToolArgumentException("Tool arguments must be a JSON object.");
+            return ParseLenient(raw) as JsonObject ?? throw new ToolArgumentException("Tool arguments must be a JSON object.");
         }
         catch (JsonException ex)
         {
@@ -85,7 +85,7 @@ public static class Args
             {
                 try
                 {
-                    if (JsonNode.Parse(raw[start..(end + 1)]) is JsonObject recovered) return recovered;
+                    if (ParseLenient(raw[start..(end + 1)]) is JsonObject recovered) return recovered;
                 }
                 catch (JsonException)
                 {
@@ -93,6 +93,38 @@ public static class Args
                 }
             }
             throw new ToolArgumentException($"Invalid JSON arguments: {ex.Message}");
+        }
+    }
+
+    // Models sometimes emit duplicate keys ({"limit":80,"limit":0}); JsonNode.Parse throws ArgumentException for
+    // those, so the last value wins instead of failing the whole call.
+    private static JsonNode? ParseLenient(string raw)
+    {
+        try
+        {
+            return JsonNode.Parse(raw);
+        }
+        catch (ArgumentException)
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return Copy(doc.RootElement);
+        }
+
+        static JsonNode? Copy(JsonElement e)
+        {
+            switch (e.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    var obj = new JsonObject();
+                    foreach (var p in e.EnumerateObject()) obj[p.Name] = Copy(p.Value);
+                    return obj;
+                case JsonValueKind.Array:
+                    return new JsonArray(e.EnumerateArray().Select(Copy).ToArray());
+                case JsonValueKind.Null:
+                    return null;
+                default:
+                    return JsonValue.Create(e.Clone());
+            }
         }
     }
 
