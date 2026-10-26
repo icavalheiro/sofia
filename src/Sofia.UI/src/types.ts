@@ -6,330 +6,354 @@
 
 // --- Sofia.Server DTOs -------------------------------------------------------
 
-export type SessionStatus = 'idle' | 'working' | 'permission' | 'question' | 'error'
-export type WorkspaceKind = 'folder' | 'chat'
+export type SessionStatus = 'idle' | 'working' | 'permission' | 'question' | 'error';
+export type WorkspaceKind = 'folder' | 'chat';
 
-export interface UsageDto {
-  input: number
-  output: number
-  reasoning: number
-  cacheRead: number
-  cacheWrite: number
-  cost: number
+export interface UsageDto
+{
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
 }
 
-export interface ContextDto {
-  used: number
-  limit: number
+export interface ContextDto
+{
+  used: number;
+  limit: number;
 }
 
-export interface ConversationSummaryDto {
-  id: string
-  workspaceId: string
-  title: string
-  createdAt: string
-  updatedAt: string
-  status: SessionStatus
-  parentId?: string
+export interface ConversationSummaryDto
+{
+  id: string;
+  workspaceId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  status: SessionStatus;
+  parentId?: string;
   /** Parked in the workspace's "Archived" folder; hidden from the normal list. */
-  archived?: boolean
-  archivedAt?: string
+  archived?: boolean;
+  archivedAt?: string;
   /** Kept at the top of the workspace's list. */
-  pinned?: boolean
+  pinned?: boolean;
 }
 
-export interface WorkspaceDto {
-  id: string
-  name: string
-  path: string
-  kind: WorkspaceKind
-  icon: string
-  modelId: string
-  expanded: boolean
-  order: number
-  conversations?: ConversationSummaryDto[]
+export interface WorkspaceDto
+{
+  id: string;
+  name: string;
+  path: string;
+  kind: WorkspaceKind;
+  icon: string;
+  modelId: string;
+  expanded: boolean;
+  order: number;
+  conversations?: ConversationSummaryDto[];
 }
 
-export interface AttachmentDto {
-  id: string
-  name: string
-  kind: AttachmentKind
-  mime: string
-  size: string
-  bytes: number
-  url: string
+export interface AttachmentDto
+{
+  id: string;
+  name: string;
+  kind: AttachmentKind;
+  mime: string;
+  size: string;
+  bytes: number;
+  url: string;
 }
 
-export interface ToolCallDto {
-  id: string
-  name: string
-  status: ToolCallStatus
-  summary: string
-  input?: string
-  output?: string
-  error?: string
-  duration: string
-  childSessionId?: string
-  /** Images the tool produced (browser screenshots). */
-  images?: AttachmentDto[]
+export interface ToolCallDto
+{
+  id: string;
+  name: string;
+  status: ToolCallStatus;
+  summary: string;
+  input?: string;
+  output?: string;
+  error?: string;
+  duration: string;
+  childSessionId?: string;
+  /** Media the tool produced (screenshots, images, audio or video). */
+  images?: AttachmentDto[];
 }
 
-export interface MessageDto {
-  id: string
-  sessionId: string
-  role: 'user' | 'assistant'
-  text: string
-  createdAt: string
-  model?: string
-  reasoning?: string
-  reasoningMode?: ReasoningModeId
-  attachments?: AttachmentDto[]
-  toolCalls?: ToolCallDto[]
+export interface MessageDto
+{
+  id: string;
+  sessionId: string;
+  role: 'user' | 'assistant';
+  text: string;
+  createdAt: string;
+  model?: string;
+  reasoning?: string;
+  reasoningMode?: ReasoningModeId;
+  attachments?: AttachmentDto[];
+  toolCalls?: ToolCallDto[];
   permission?: {
-    tool: string
-    description: string
-    choices: string[]
-    resolved?: string
-    requestId: string
-  }
+    tool: string;
+    description: string;
+    choices: string[];
+    resolved?: string;
+    requestId: string;
+  };
   question?: {
-    prompt: string
-    options: string[]
-    resolved?: string
-    formId: string
-    fieldKey: string
-    multi: boolean
-  }
+    prompt: string;
+    options: string[];
+    resolved?: string;
+    formId: string;
+    fieldKey: string;
+    multi: boolean;
+  };
   questionSet?: {
-    questions: { prompt: string; options: string[]; fieldKey: string; multi: boolean }[]
-    answers?: (string | null)[]
-    confirmed?: boolean
-    formId: string
-  }
-  error?: string
-  summary?: boolean
-  usage?: UsageDto
-  durationMs?: number
+    questions: { prompt: string; options: string[]; fieldKey: string; multi: boolean; }[];
+    answers?: ( string | null )[];
+    confirmed?: boolean;
+    formId: string;
+  };
+  error?: string;
+  summary?: boolean;
+  usage?: UsageDto;
+  durationMs?: number;
   /** Notes the harness learned from the conversation (card-only message). */
-  knowledge?: KnowledgeEntryDto[]
+  knowledge?: KnowledgeEntryDto[];
 }
 
-export interface KnowledgeEntryDto {
-  id: string
-  scope: 'workspace' | 'agent'
-  text: string
+export interface KnowledgeEntryDto
+{
+  id: string;
+  scope: 'workspace' | 'agent';
+  text: string;
   /** Why the reviewer judged the note worth keeping permanently (the utility argument). */
-  why?: string
+  why?: string;
   /** The user removed the note after it was announced. */
-  deleted?: boolean
+  deleted?: boolean;
 }
 
-export interface SessionDto extends ConversationSummaryDto {
-  modelId: string
-  agent: string
-  permissionMode: PermissionModeId
-  reasoningMode: ReasoningModeId
-  usage: UsageDto
-  context: ContextDto
-  activeSkills: string[]
-  queued: number
+export interface SessionDto extends ConversationSummaryDto
+{
+  modelId: string;
+  agent: string;
+  permissionMode: PermissionModeId;
+  reasoningMode: ReasoningModeId;
+  usage: UsageDto;
+  context: ContextDto;
+  activeSkills: string[];
+  queued: number;
   /** Prompts waiting to reach the model, steer first (preview under the transcript). */
-  queuedMessages?: QueuedMessageDto[]
-  messages?: MessageDto[]
+  queuedMessages?: QueuedMessageDto[];
+  messages?: MessageDto[];
 }
 
-export interface QueuedMessageDto {
-  id: string
-  text: string
-  delivery: 'steer' | 'queue'
-  attachments?: AttachmentDto[]
+export interface QueuedMessageDto
+{
+  id: string;
+  text: string;
+  delivery: 'steer' | 'queue';
+  attachments?: AttachmentDto[];
 }
 
-export interface MetricsDto {
-  durationMs: number
-  tokensPerSec: number
-  usage: UsageDto
-  cost: number
-  costAvailable: boolean
-  context: ContextDto
+export interface MetricsDto
+{
+  durationMs: number;
+  tokensPerSec: number;
+  usage: UsageDto;
+  cost: number;
+  costAvailable: boolean;
+  context: ContextDto;
 }
 
-export interface FileDiffDto {
-  file: string
-  patch: string
-  additions: number
-  deletions: number
-  status: 'added' | 'deleted' | 'modified'
+export interface FileDiffDto
+{
+  file: string;
+  patch: string;
+  additions: number;
+  deletions: number;
+  status: 'added' | 'deleted' | 'modified';
 }
 
-export interface ConfigDto {
-  defaultModel: string
-  shell: string
-  autoCompact: boolean
-  compactThreshold: number
-  discovery: boolean
-  maxToolOutput: number
-  keepScreenAwake: boolean
-  knowledge: boolean
-  searchProvider: 'duckduckgo' | 'searxng'
-  searxngUrl: string
-  dataDir: string
-  configPath: string
+export interface ConfigDto
+{
+  defaultModel: string;
+  shell: string;
+  autoCompact: boolean;
+  compactThreshold: number;
+  discovery: boolean;
+  maxToolOutput: number;
+  keepScreenAwake: boolean;
+  knowledge: boolean;
+  searchProvider: 'duckduckgo' | 'searxng';
+  searxngUrl: string;
+  dataDir: string;
+  configPath: string;
 }
 
-export interface ProviderPresetDto {
-  id: string
-  name: string
-  type: 'openai' | 'anthropic'
-  baseUrl: string
-  envKey?: string
+export interface ProviderPresetDto
+{
+  id: string;
+  name: string;
+  type: 'openai' | 'anthropic';
+  baseUrl: string;
+  envKey?: string;
   /** 'github-device' = sign in through the GitHub device flow instead of pasting a key. */
-  auth?: 'github-device'
-  note?: string
+  auth?: 'github-device';
+  note?: string;
 }
 
-export interface CopilotDeviceFlow {
-  deviceCode: string
-  userCode: string
-  verificationUri: string
-  interval: number
-  expiresIn: number
+export interface CopilotDeviceFlow
+{
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  interval: number;
+  expiresIn: number;
 }
 
-export interface CopilotLoginPoll {
-  status: 'pending' | 'success' | 'expired' | 'denied'
-  interval?: number | null
-  provider?: Provider | null
+export interface CopilotLoginPoll
+{
+  status: 'pending' | 'success' | 'expired' | 'denied';
+  interval?: number | null;
+  provider?: Provider | null;
 }
 
-export interface AgentDto {
-  id: string
-  name: string
-  description: string
+export interface AgentDto
+{
+  id: string;
+  name: string;
+  description: string;
   /** 'primary' agents are picked in the agent dropdown, 'subagent' ones are called with @name, 'all' are both. */
-  mode: 'primary' | 'subagent' | 'all'
-  source?: 'builtin' | 'global' | 'project'
-  path?: string | null
+  mode: 'primary' | 'subagent' | 'all';
+  source?: 'builtin' | 'global' | 'project';
+  path?: string | null;
 }
 
-export interface CommandDto {
-  name: string
-  description: string
-  source: 'builtin' | 'global' | 'project'
-  agent?: string | null
-  model?: string | null
-  subtask?: boolean
-  path?: string | null
+export interface CommandDto
+{
+  name: string;
+  description: string;
+  source: 'builtin' | 'global' | 'project';
+  agent?: string | null;
+  model?: string | null;
+  subtask?: boolean;
+  path?: string | null;
 }
 
-export interface SkillDto {
-  id: string
-  name: string
-  description: string
-  path: string
-  content: string
-  source: string
+export interface SkillDto
+{
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  content: string;
+  source: string;
 }
 
-export interface StatsDto {
-  sessions: number
-  prompts: number
-  steps: number
-  tokens: { input: number; output: number }
-  cost: number
-  activeDays: number
-  streak: number
+export interface StatsDto
+{
+  sessions: number;
+  prompts: number;
+  steps: number;
+  tokens: { input: number; output: number; };
+  cost: number;
+  activeDays: number;
+  streak: number;
 }
 
 /** One live event pushed by the `/hubs/events` hub (`resync` is local-only). */
-export interface SofiaEvent {
-  type: string
-  sessionId?: string
-  workspaceId?: string
-  data: unknown
+export interface SofiaEvent
+{
+  type: string;
+  sessionId?: string;
+  workspaceId?: string;
+  data: unknown;
 }
 
 // --- View models -------------------------------------------------------------
 
-export type AttachmentKind = 'image' | 'video' | 'file'
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'file';
 
-export interface Attachment {
-  id: string
-  name: string
-  kind: AttachmentKind
+export interface Attachment
+{
+  id: string;
+  name: string;
+  kind: AttachmentKind;
   /** Human readable size, e.g. "1.2 MB". */
-  size: string
-  mime?: string
+  size: string;
+  mime?: string;
   /** Server URL (`/api/attachments/{id}`), relative to the server. */
-  url?: string
+  url?: string;
   /** Local object URL for previews of files not uploaded yet. */
-  previewUrl?: string
+  previewUrl?: string;
 }
 
-export type ToolCallStatus = 'success' | 'error' | 'running'
+export type ToolCallStatus = 'success' | 'error' | 'running';
 
-export interface ToolCall {
-  id: string
-  name: string
-  status: ToolCallStatus
+export interface ToolCall
+{
+  id: string;
+  name: string;
+  status: ToolCallStatus;
   /** One-line summary of the call (usually its main argument). */
-  summary: string
-  input?: string
-  output?: string
-  error?: string
-  duration: string
+  summary: string;
+  input?: string;
+  output?: string;
+  error?: string;
+  duration: string;
   /** Subagent session spawned by this call (task tool). */
-  childSessionId?: string
-  /** Images the tool produced (browser screenshots). */
-  images?: Attachment[]
+  childSessionId?: string;
+  /** Media the tool produced (screenshots, images, audio or video). */
+  images?: Attachment[];
 }
 
-export interface Message {
+export interface Message
+{
   /** Server message id (local-only error cards use a `local-` prefix). */
-  id: string
-  sessionId: string
-  role: 'user' | 'assistant'
-  text: string
-  createdAt: string
+  id: string;
+  sessionId: string;
+  role: 'user' | 'assistant';
+  text: string;
+  createdAt: string;
   /** Clock label derived from `createdAt`. */
-  time: string
-  attachments?: Attachment[]
-  model?: string
-  reasoning?: string
-  reasoningMode?: ReasoningModeId
-  toolCalls?: ToolCall[]
+  time: string;
+  attachments?: Attachment[];
+  model?: string;
+  reasoning?: string;
+  reasoningMode?: ReasoningModeId;
+  toolCalls?: ToolCall[];
   permission?: {
-    tool: string
-    description: string
-    choices: string[]
-    resolved?: string
-    requestId: string
-  }
+    tool: string;
+    description: string;
+    choices: string[];
+    resolved?: string;
+    requestId: string;
+  };
   question?: {
-    prompt: string
-    options: string[]
-    resolved?: string
-    formId: string
-    fieldKey: string
-    multi: boolean
-  }
+    prompt: string;
+    options: string[];
+    resolved?: string;
+    formId: string;
+    fieldKey: string;
+    multi: boolean;
+  };
   questionSet?: {
-    questions: { prompt: string; options: string[]; fieldKey: string; multi: boolean }[]
-    answers?: (string | null)[]
-    confirmed?: boolean
-    formId: string
-  }
-  error?: string
+    questions: { prompt: string; options: string[]; fieldKey: string; multi: boolean; }[];
+    answers?: ( string | null )[];
+    confirmed?: boolean;
+    formId: string;
+  };
+  error?: string;
   /** Compaction summary card. */
-  summary?: boolean
-  usage?: UsageDto
-  durationMs?: number
+  summary?: boolean;
+  usage?: UsageDto;
+  durationMs?: number;
   /** Notes the harness learned from the conversation (card-only message). */
-  knowledge?: KnowledgeEntryDto[]
+  knowledge?: KnowledgeEntryDto[];
   /** A structured report card (deep-search style output). */
-  report?: ReportBlock
+  report?: ReportBlock;
   /** Client-side card (e.g. a failed request) that the server never saw. */
-  local?: boolean
+  local?: boolean;
 }
 
 /**
@@ -337,189 +361,204 @@ export interface Message {
  * threshold of its tokens came from the provider's prompt cache. `reasons` are
  * i18n keys of suspects read off the transcript (never a provider claim).
  */
-export interface CacheBreakInfo {
+export interface CacheBreakInfo
+{
   /** Cache hit percentage of that step's prompt. */
-  pct: number
-  cached: number
-  input: number
+  pct: number;
+  cached: number;
+  input: number;
   /** `cache.reason*` keys, most likely first. */
-  reasons: string[]
+  reasons: string[];
 }
 
 /** A structured report produced by a deep-search run. */
-export interface ReportBlock {
-  title: string
-  summary: string
-  sections: { heading: string; body: string }[]
-  file?: { name: string; size: string }
+export interface ReportBlock
+{
+  title: string;
+  summary: string;
+  sections: { heading: string; body: string; }[];
+  file?: { name: string; size: string; };
 }
 
-export interface Conversation {
+export interface Conversation
+{
   /** Server session id. */
-  id: string
-  workspaceId: string
-  title: string
+  id: string;
+  workspaceId: string;
+  title: string;
   /** Relative label ("5m ago"). */
-  updatedAt: string
-  updatedAtIso: string
-  createdAt: string
-  status: WorkspaceStatus
+  updatedAt: string;
+  updatedAtIso: string;
+  createdAt: string;
+  status: WorkspaceStatus;
   /** Mirrors `status === 'working'` (drives the sidebar animation). */
-  working: boolean
+  working: boolean;
   /** Set for subagent sessions (hidden from the sidebar). */
-  parentId?: string
+  parentId?: string;
   /** Parked in the workspace's "Archived" folder (hidden from the normal list). */
-  archived?: boolean
+  archived?: boolean;
   /** Kept at the top of the workspace's list. */
-  pinned?: boolean
+  pinned?: boolean;
   /** Whether `messages` was fetched from the server. */
-  loaded: boolean
-  messages: Message[]
-  modelId?: string
-  agent?: string
-  permissionMode?: PermissionModeId
-  reasoningMode?: ReasoningModeId
-  usage?: UsageDto
-  context?: ContextDto
-  activeSkills?: string[]
-  queued?: number
+  loaded: boolean;
+  messages: Message[];
+  modelId?: string;
+  agent?: string;
+  permissionMode?: PermissionModeId;
+  reasoningMode?: ReasoningModeId;
+  usage?: UsageDto;
+  context?: ContextDto;
+  activeSkills?: string[];
+  queued?: number;
   /** Follow-ups accepted by the server but not yet sent to the model. */
-  queuedMessages?: QueuedMessageDto[]
+  queuedMessages?: QueuedMessageDto[];
 }
 
-export interface Workspace {
-  id: string
-  name: string
+export interface Workspace
+{
+  id: string;
+  name: string;
   /** Absolute folder path. Empty for chat groups. */
-  path: string
-  kind: WorkspaceKind
+  path: string;
+  kind: WorkspaceKind;
   /** Icon key (see WORKSPACE_ICON_CHOICES). */
-  icon: string
+  icon: string;
   /** Default model for this workspace's conversations ('' = server default). */
-  modelId: string
-  expanded: boolean
-  order: number
-  conversations: Conversation[]
+  modelId: string;
+  expanded: boolean;
+  order: number;
+  conversations: Conversation[];
 }
 
 /** LLM activity shown as a badge / animated border on sidebar rows. */
-export type WorkspaceStatus = 'idle' | 'working' | 'done' | 'permission' | 'question' | 'error'
+export type WorkspaceStatus = 'idle' | 'working' | 'done' | 'permission' | 'question' | 'error';
 
 /** A model from `GET /api/models`. */
-export interface ModelOption {
-  id: string
-  providerId: string
-  modelId: string
-  label: string
-  provider: string
-  local: boolean
-  contextLength: number
-  maxOutput: number
-  context: string
-  connected: boolean
-  reasoning: boolean
-  vision: boolean
-  loaded?: boolean
+export interface ModelOption
+{
+  id: string;
+  providerId: string;
+  modelId: string;
+  label: string;
+  provider: string;
+  local: boolean;
+  contextLength: number;
+  maxOutput: number;
+  context: string;
+  connected: boolean;
+  reasoning: boolean;
+  vision: boolean;
+  audio: boolean;
+  video: boolean;
+  loaded?: boolean;
   /** False when the model is switched off in Settings (hidden from pickers). */
-  enabled: boolean
+  enabled: boolean;
 }
 
-export type PermissionModeId = 'read-only' | 'ask' | 'plan' | 'full'
-export interface PermissionMode {
-  id: PermissionModeId
-  label: string
-  description: string
+export type PermissionModeId = 'read-only' | 'ask' | 'plan' | 'full';
+export interface PermissionMode
+{
+  id: PermissionModeId;
+  label: string;
+  description: string;
 }
 
-export type ReasoningModeId = 'off' | 'low' | 'medium' | 'high'
-export interface ReasoningMode {
-  id: ReasoningModeId
-  label: string
-  description: string
+export type ReasoningModeId = 'off' | 'low' | 'medium' | 'high';
+export interface ReasoningMode
+{
+  id: ReasoningModeId;
+  label: string;
+  description: string;
 }
 
 /** An MCP server from `GET /api/mcp`. */
-export interface McpServer {
-  id: string
-  name: string
-  transport: 'command' | 'web'
-  command: string
-  url: string
-  hasToken: boolean
-  enabled: boolean
-  status: 'connected' | 'error' | 'stopped' | 'pending'
-  error?: string
-  tools: number
-  toolNames: string[]
+export interface McpServer
+{
+  id: string;
+  name: string;
+  transport: 'command' | 'web';
+  command: string;
+  url: string;
+  hasToken: boolean;
+  enabled: boolean;
+  status: 'connected' | 'error' | 'stopped' | 'pending';
+  error?: string;
+  tools: number;
+  toolNames: string[];
 }
 
 /** A model provider from `GET /api/providers`. */
-export interface Provider {
-  id: string
-  name: string
-  kind: 'local' | 'cloud'
-  type: 'openai' | 'anthropic'
-  baseUrl: string
-  status: 'connected' | 'disconnected' | 'error'
-  detail: string
-  enabled: boolean
-  custom: boolean
-  discovered: boolean
-  hasKey: boolean
-  models: number
+export interface Provider
+{
+  id: string;
+  name: string;
+  kind: 'local' | 'cloud';
+  type: 'openai' | 'anthropic';
+  baseUrl: string;
+  status: 'connected' | 'disconnected' | 'error';
+  detail: string;
+  enabled: boolean;
+  custom: boolean;
+  discovered: boolean;
+  hasKey: boolean;
+  models: number;
 }
 
 /** The signed-in user's profile (editable in settings). */
-export interface UserProfile {
-  name: string
-  handle: string
+export interface UserProfile
+{
+  name: string;
+  handle: string;
   /** Emoji used as the avatar (fallback when no photo is set). */
-  avatar: string
+  avatar: string;
   /** Optional uploaded photo (object URL) shown instead of the emoji. */
-  avatarImage?: string
+  avatarImage?: string;
 }
 
 /** A selectable UI language. */
-export interface Language {
-  code: string
-  label: string
+export interface Language
+{
+  code: string;
+  label: string;
 }
 
 /** One line in a side-by-side compare view. */
-export interface DiffLine {
-  oldNo?: number
-  newNo?: number
-  type: 'ctx' | 'add' | 'del'
-  text: string
+export interface DiffLine
+{
+  oldNo?: number;
+  newNo?: number;
+  type: 'ctx' | 'add' | 'del';
+  text: string;
 }
 
 /** A changed file shown in the right-side workspace panel. */
-export interface FileChange {
-  path: string
-  status: 'M' | 'A' | 'D'
-  additions?: number
-  deletions?: number
-  diff?: DiffLine[]
+export interface FileChange
+{
+  path: string;
+  status: 'M' | 'A' | 'D';
+  additions?: number;
+  deletions?: number;
+  diff?: DiffLine[];
 }
 
 // --- App constants -----------------------------------------------------------
 
-export const APP_NAME = 'Sofia Harness'
-export const APP_VERSION = '0.1.0'
+export const APP_NAME = 'Sofia Harness';
+export const APP_VERSION = '0.1.0';
 
 export const PERMISSION_MODES: PermissionMode[] = [
   { id: 'read-only', label: 'Read only', description: 'Can read files but never write or run commands.' },
   { id: 'ask', label: 'Ask before edits', description: 'Prompts before any write, edit or command.' },
   { id: 'plan', label: 'Plan', description: 'Researches and proposes a plan without applying changes.' },
   { id: 'full', label: 'Full access', description: 'Edits files and runs commands without asking.' },
-]
+];
 
 export const REASONING_MODES: ReasoningMode[] = [
   { id: 'off', label: 'Off', description: 'Answer directly, no extended thinking.' },
   { id: 'low', label: 'Low', description: 'Brief internal reasoning.' },
   { id: 'medium', label: 'Medium', description: 'Balanced reasoning depth.' },
   { id: 'high', label: 'High', description: 'Extended reasoning for hard problems.' },
-]
+];
 
 /** Icons a workspace can be assigned (keys into SofiaIcon). */
 export const WORKSPACE_ICON_CHOICES: string[] = [
@@ -529,7 +568,7 @@ export const WORKSPACE_ICON_CHOICES: string[] = [
   // Chat-group friendly marks (no folder implied).
   'chat', 'sparkles', 'bell', 'help', 'languages', 'user',
   'search', 'clock',
-]
+];
 
 /** UI languages. */
 export const LANGUAGES: Language[] = [
@@ -539,24 +578,26 @@ export const LANGUAGES: Language[] = [
   { code: 'fr', label: 'Français' },
   { code: 'zh', label: '简体中文' },
   { code: 'ja', label: '日本語' },
-]
+];
 
 // --- Permission choice mapping ------------------------------------------------
 
 /** Choices on permission cards (the server always sends these three). */
-export const LIVE_PERMISSION_CHOICES = ['Allow once', 'Allow for this session', 'Deny']
+export const LIVE_PERMISSION_CHOICES = [ 'Allow once', 'Allow for this session', 'Deny' ];
 
 /** Maps a card choice to the server decision. */
-export function permissionDecision(choice: string): 'once' | 'always' | 'reject' {
-  const normalized = choice.toLowerCase()
-  if (normalized.includes('session')) return 'always'
-  if (normalized.startsWith('deny')) return 'reject'
-  return 'once'
+export function permissionDecision ( choice: string ): 'once' | 'always' | 'reject'
+{
+  const normalized = choice.toLowerCase();
+  if ( normalized.includes( 'session' ) ) return 'always';
+  if ( normalized.startsWith( 'deny' ) ) return 'reject';
+  return 'once';
 }
 
 /** Maps a server decision back to the card choice label. */
-export function permissionChoiceForReply(reply: string): string {
-  if (reply === 'always') return 'Allow for this session'
-  if (reply === 'reject') return 'Deny'
-  return 'Allow once'
+export function permissionChoiceForReply ( reply: string ): string
+{
+  if ( reply === 'always' ) return 'Allow for this session';
+  if ( reply === 'reject' ) return 'Deny';
+  return 'Allow once';
 }

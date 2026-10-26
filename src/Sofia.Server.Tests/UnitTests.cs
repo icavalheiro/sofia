@@ -415,6 +415,44 @@ public class HistoryImageTests
     }
 }
 
+public class HistoryMediaTests
+{
+    private static List<ChatMessage> Build(ModelInfo model, string kind, string mime, string name)
+    {
+        var path = Path.GetTempFileName();
+        File.WriteAllBytes(path, [1, 2, 3]);
+        var message = new Message
+        {
+            Id = "a1", Role = "assistant", Seq = 1,
+            ToolCalls =
+            [
+                new ToolCall
+                {
+                    Id = "c1", Name = "read", Arguments = "{}", Result = "attached", Status = "success", Completed = true,
+                    Images = [new Attachment { Id = "m1", Name = name, Kind = kind, Mime = mime, Bytes = 3, StoragePath = path }],
+                },
+            ],
+        };
+        try { return HistoryBuilder.Build([message], model); }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData("audio", "audio/wav", true, false, true)]
+    [InlineData("audio", "audio/mpeg", true, false, true)]
+    [InlineData("audio", "audio/ogg", true, false, false)]
+    [InlineData("audio", "audio/wav", false, true, false)]
+    [InlineData("video", "video/mp4", false, true, true)]
+    [InlineData("video", "video/mp4", true, false, false)]
+    public void AudioAndVideoOnlyReachModelsThatAcceptThem(string kind, string mime, bool audio, bool video, bool expected)
+    {
+        var history = Build(new ModelInfo { ModelId = "some-model", Audio = audio, Video = video }, kind, mime, "clip");
+        var sent = history.SelectMany(m => m.Content).Any(c => c.MediaBase64 is not null && c.MediaKind == kind);
+        Assert.Equal(expected, sent);
+        if (!expected) Assert.Contains("clip", history.Last().TextContent);
+    }
+}
+
 public class HistorySteeringTests
 {
     [Fact]

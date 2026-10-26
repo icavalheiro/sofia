@@ -39,6 +39,10 @@ public sealed class ContentPart
     public string? Text { get; init; }
     public string? ImageBase64 { get; init; }
     public string? ImageMime { get; init; }
+    public string? MediaBase64 { get; init; }
+    public string? MediaMime { get; init; }
+    /// <summary>'audio' | 'video' for <see cref="MediaBase64"/>.</summary>
+    public string? MediaKind { get; init; }
 
     public static ContentPart FromText(string text) => new() { Text = text };
 }
@@ -73,4 +77,6 @@ public sealed record DiscoveredModel(
     int MaxOutput,
     bool Reasoning,
     bool Vision,
-    bool? Loaded);
+    bool? Loaded,
+    bool Audio = false,
+    bool Video = false);

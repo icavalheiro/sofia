@@ -208,6 +208,7 @@ const contextLabel = computed(() =>
 function iconForKind(kind: string): string {
   if (kind === 'image') return 'image'
   if (kind === 'video') return 'video'
+  if (kind === 'audio') return 'music'
   return 'file'
 }
 

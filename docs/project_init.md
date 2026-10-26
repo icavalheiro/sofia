@@ -250,6 +250,15 @@ finishes, the setting is turned off or the server stops.
   which also needs `reasoning_content` echoed back), `enable_thinking`
   (QwenCloud), thinking budgets (Anthropic) or
   `chat_template_kwargs.enable_thinking` (local runtimes).
+- Media input: the `read` tool attaches image, audio and video files (type sniffed
+  from magic bytes; 15 MB for images, 20 MB for audio/video) through the same
+  `ToolResult.Images` path as screenshots. Images go to models not known to be
+  text-only. Audio (`input_audio`, wav/mp3 only) and video (`video_url` data URL)
+  go only to OpenAI-compatible models whose `ModelInfo.Audio` / `Video` is set from
+  runtime metadata (`input_modalities`, llama.cpp `/props` `modalities.audio`) or,
+  for audio, a model-name heuristic; video is never guessed. Anything else becomes a
+  text note, because an unsupported part would fail every later request. Anthropic
+  has no audio/video input.
 
 ## Context engineering
 

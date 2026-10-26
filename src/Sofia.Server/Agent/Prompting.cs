@@ -276,8 +276,15 @@ public static class HistoryBuilder
         {
             foreach (var image in call.Images!)
             {
-                var label = $"[Image from the `{call.Name}` tool call {call.Id}: {image.Name}]";
-                if (!canSee) parts.Add(ContentPart.FromText($"{label} (the current model cannot see images; use the text snapshot instead)"));
+                var noun = image.Kind switch { "audio" => "Audio", "video" => "Video", _ => "Image" };
+                var label = $"[{noun} from the `{call.Name}` tool call {call.Id}: {image.Name}]";
+                if (image.Kind is "audio" or "video")
+                {
+                    var media = recent.Contains(call.Id) ? MediaPart(image, model) : null;
+                    if (media is not null) parts.AddRange([ContentPart.FromText(label), media]);
+                    else parts.Add(ContentPart.FromText($"{label} ({MediaNote(image, model, recent.Contains(call.Id))})"));
+                }
+                else if (!canSee) parts.Add(ContentPart.FromText($"{label} (the current model cannot see images)"));
                 else if (!recent.Contains(call.Id) || !File.Exists(image.StoragePath)) parts.Add(ContentPart.FromText($"{label} (older image, not resent)"));
                 else
                 {
@@ -287,6 +294,35 @@ public static class HistoryBuilder
             }
         }
         return parts;
+    }
+
+    private const int MaxMediaBytes = 20 * 1024 * 1024;
+
+    /// <summary>Audio and video are only sent to models that report accepting them; a wrong guess fails the whole request.</summary>
+    private static ContentPart? MediaPart(Attachment a, ModelInfo model)
+    {
+        if (a.Bytes > MaxMediaBytes || !File.Exists(a.StoragePath)) return null;
+        var supported = a.Kind switch
+        {
+            "audio" => model.Audio && IsSendableAudio(a.Mime),
+            "video" => model.Video,
+            _ => false,
+        };
+        return supported
+            ? new ContentPart { MediaBase64 = Convert.ToBase64String(File.ReadAllBytes(a.StoragePath)), MediaMime = a.Mime, MediaKind = a.Kind }
+            : null;
+    }
+
+    /// <summary>Chat APIs only accept wav and mp3 as audio input.</summary>
+    private static bool IsSendableAudio(string mime) => mime.Contains("wav") || mime.Contains("mpeg") || mime.Contains("mp3");
+
+    private static string MediaNote(Attachment a, ModelInfo model, bool recent)
+    {
+        if (!(a.Kind == "audio" ? model.Audio : model.Video)) return $"the current model cannot take {a.Kind} input";
+        if (!recent) return $"older {a.Kind}, not resent";
+        if (!File.Exists(a.StoragePath)) return $"{a.Kind} file is no longer available";
+        if (a.Bytes > MaxMediaBytes) return $"{a.Size} is over the {MaxMediaBytes / (1024 * 1024)} MB limit for {a.Kind} input";
+        return $"only wav and mp3 audio can be sent, this is {a.Mime}";
     }
 
     private static List<ContentPart> UserContent(Message m, ModelInfo model)
@@ -307,6 +343,13 @@ public static class HistoryBuilder
             if (a.Kind == "image" && sendImage && a.Bytes < 15 * 1024 * 1024)
             {
                 parts.Add(new ContentPart { ImageBase64 = Convert.ToBase64String(File.ReadAllBytes(a.StoragePath)), ImageMime = a.Mime });
+                continue;
+            }
+            if (a.Kind is "audio" or "video")
+            {
+                var media = MediaPart(a, model);
+                if (media is not null) parts.AddRange([ContentPart.FromText($"[{a.Kind}: {a.Name}]"), media]);
+                else parts.Add(ContentPart.FromText($"[attached {a.Kind}: {a.Name}, {a.Size} ({MediaNote(a, model, true)}); saved at {a.StoragePath.Replace('\\', '/')}]"));
                 continue;
             }
             if ((a.Mime.StartsWith("text/") || TextExtensions.Contains(Path.GetExtension(a.Name))) && a.Bytes < 200 * 1024)

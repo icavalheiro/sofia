@@ -3,17 +3,21 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.FileSystemGlobbing;
 using Sofia.Server.Changes;
+using Sofia.Server.Domain;
 using Sofia.Server.Infrastructure;
 
 namespace Sofia.Server.Tools;
 
-public sealed class ReadTool : ITool
+public sealed class ReadTool(Func<byte[], string, string, Attachment>? saveImage = null) : ITool
 {
     private const int DefaultLimit = 2000;
+    private const int MaxImageBytes = 15 * 1024 * 1024;
+    private const int MaxMediaBytes = 20 * 1024 * 1024;
 
     public string Name => "read";
     public string Description =>
-        "Read a text file. Returns the raw content (no line numbers). Large files are truncated; use offset/limit (1-based lines) to page. Reading a directory lists it.";
+        "Read a text file. Returns the raw content (no line numbers). Large files are truncated; use offset/limit (1-based lines) to page. Reading a directory lists it. " +
+        "Image, audio and video files (png, jpg, gif, webp, wav, mp3, ogg, flac, m4a, mp4, mov, webm, mkv, avi) are attached; you only perceive them if the model accepts that input, so say so if you cannot.";
     public ToolKind Kind => ToolKind.Read;
     public JsonObject Parameters => Schema.Object(
         ("path", Schema.String("File path, relative to the working directory or absolute."), true),
@@ -31,14 +35,22 @@ public sealed class ReadTool : ITool
         var info = new FileInfo(path);
         var sample = new byte[Math.Min(8000, info.Length)];
         await using (var fs = File.OpenRead(path)) _ = await fs.ReadAsync(sample, ct);
+        if (Sniff(sample, Path.GetExtension(path).ToLowerInvariant()) is var (kind, mime))
+        {
+            if (saveImage is null) return ToolResult.Fail($"{path} is {kind} media; it cannot be attached in this setup.");
+            var limit = kind == "image" ? MaxImageBytes : MaxMediaBytes;
+            if (info.Length > limit) return ToolResult.Fail($"{path} is {kind} of {Text.HumanSize(info.Length)}; the limit is {Text.HumanSize(limit)}. Use a shell tool (e.g. ffmpeg) to shrink or convert it.");
+            var media = saveImage(await File.ReadAllBytesAsync(path, ct), mime, Path.GetFileName(path));
+            return ToolResult.WithImages($"{char.ToUpperInvariant(kind[0])}{kind[1..]} {path} ({media.Size}, {mime}) attached. If you cannot take {kind} input, say so instead of guessing its content.", [media]);
+        }
         if (PathUtil.IsBinary(sample)) return ToolResult.Fail($"{path} is a binary file ({Text.HumanSize(info.Length)}); it cannot be read as text.");
 
         var lines = Text.NormalizeNewlines(await File.ReadAllTextAsync(path, ct)).Split('\n');
         var offset = Math.Max(1, Args.Int(args, "offset") ?? 1);
-        var limit = Math.Max(1, Args.Int(args, "limit") ?? DefaultLimit);
+        var maxLines = Math.Max(1, Args.Int(args, "limit") ?? DefaultLimit);
         if (offset > lines.Length) return ToolResult.Fail($"Offset {offset} is past the end of the file ({lines.Length} lines).");
 
-        var slice = lines.Skip(offset - 1).Take(limit).ToArray();
+        var slice = lines.Skip(offset - 1).Take(maxLines).ToArray();
         var text = string.Join('\n', slice);
         var maxChars = ctx.Config.MaxToolOutput;
         var truncatedByBytes = false;
@@ -54,6 +66,44 @@ public sealed class ReadTool : ITool
         if (lastLine < lines.Length || truncatedByBytes)
             text += $"\n\n[Showing lines {offset}-{lastLine} of {lines.Length}. Use offset={lastLine + 1} to continue.]";
         return ToolResult.Ok(text);
+    }
+
+    /// <summary>Detects image, audio and video files from magic bytes, so renamed files are still recognised.</summary>
+    private static (string Kind, string Mime)? Sniff(byte[] b, string ext)
+    {
+        bool At(int offset, string text) => b.Length >= offset + text.Length && text.Select((c, i) => b[offset + i] == c).All(x => x);
+
+        if (b.Length >= 8 && b[0] == 0x89 && At(1, "PNG")) return ("image", "image/png");
+        if (b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF) return ("image", "image/jpeg");
+        if (At(0, "GIF8")) return ("image", "image/gif");
+        if (At(0, "RIFF"))
+        {
+            if (At(8, "WEBP")) return ("image", "image/webp");
+            if (At(8, "WAVE")) return ("audio", "audio/wav");
+            if (At(8, "AVI ")) return ("video", "video/x-msvideo");
+            return null;
+        }
+        if (At(0, "ID3")) return ("audio", "audio/mpeg");
+        // A bare MPEG frame sync is also how UTF-16 text starts, so it needs a matching extension.
+        if (b.Length >= 2 && b[0] == 0xFF && (b[1] & 0xE0) == 0xE0 && ext is ".mp3" or ".mpga") return ("audio", "audio/mpeg");
+        if (At(0, "OggS")) return ext == ".ogv" ? ("video", "video/ogg") : ("audio", "audio/ogg");
+        if (At(0, "fLaC")) return ("audio", "audio/flac");
+        if (At(4, "ftyp"))
+        {
+            if (At(8, "qt  ")) return ("video", "video/quicktime");
+            return At(8, "M4A ") || ext is ".m4a" or ".m4b" ? ("audio", "audio/mp4") : ("video", "video/mp4");
+        }
+        if (b.Length >= 4 && b[0] == 0x1A && b[1] == 0x45 && b[2] == 0xDF && b[3] == 0xA3)
+        {
+            return ext switch
+            {
+                ".mka" => ("audio", "audio/x-matroska"),
+                ".weba" => ("audio", "audio/webm"),
+                ".mkv" => ("video", "video/x-matroska"),
+                _ => ("video", "video/webm"),
+            };
+        }
+        return null;
     }
 }
 

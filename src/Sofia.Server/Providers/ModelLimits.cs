@@ -105,5 +105,12 @@ public static class ModelLimits
             || n.Contains("pixtral") || n.Contains("minicpm-v") || n.Contains("moondream") || n.Contains("qwen2.5-omni") || n.Contains("omni");
     }
 
+    /// <summary>Audio input is only assumed for model families known to take it; runtime metadata adds the rest.</summary>
+    public static bool LooksAudio(string modelId)
+    {
+        var n = modelId.ToLowerInvariant();
+        return n.Contains("audio") || n.Contains("omni") || n.Contains("voxtral") || n.Contains("gemma-3n") || n.Contains("gemma3n") || n.Contains("ultravox");
+    }
+
     public static int DefaultMaxOutput(int context) => Math.Clamp(context / 4, 1024, 32_768);
 }

@@ -263,7 +263,7 @@ public static class PlatformEndpoints
                 Id = id,
                 Name = Path.GetFileName(file.FileName),
                 Mime = mime,
-                Kind = mime.StartsWith("image/") ? "image" : mime.StartsWith("video/") ? "video" : "file",
+                Kind = mime.StartsWith("image/") ? "image" : mime.StartsWith("video/") ? "video" : mime.StartsWith("audio/") ? "audio" : "file",
                 Bytes = file.Length,
                 Size = Text.HumanSize(file.Length),
                 Url = $"/api/attachments/{id}",

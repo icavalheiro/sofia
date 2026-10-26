@@ -21,6 +21,9 @@ public sealed class ModelInfo
     public bool Connected { get; set; }
     public bool Reasoning { get; set; }
     public bool Vision { get; set; }
+    /// <summary>Accepts audio input (only set from runtime metadata or a known model family; never guessed).</summary>
+    public bool Audio { get; set; }
+    public bool Video { get; set; }
     public bool? Loaded { get; set; }
     /// <summary>False when the user switched this model off in Settings.</summary>
     public bool Enabled { get; set; } = true;
@@ -278,6 +281,8 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             Connected = provider.Flavor is "ollama" or "lmstudio" or "unsloth" || (m.Loaded ?? true),
             Reasoning = m.Reasoning,
             Vision = m.Vision,
+            Audio = m.Audio || ModelLimits.LooksAudio(m.Id),
+            Video = m.Video,
             Loaded = m.Loaded,
             InputPrice = provider.Kind == "local" || SubscriptionFlavors.Contains(provider.Flavor) ? 0 : known?.InputPrice ?? 0,
             OutputPrice = provider.Kind == "local" || SubscriptionFlavors.Contains(provider.Flavor) ? 0 : known?.OutputPrice ?? 0,
@@ -350,8 +355,15 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
                 var supported = item["supported_parameters"] as JsonArray;
                 if (supported is not null) reasoning = supported.Any(p => p?.GetValue<string>() is "reasoning" or "include_reasoning");
                 var vision = known?.Vision ?? ModelLimits.LooksVision(id);
-                if (item["architecture"]?["input_modalities"] is JsonArray modalities) vision = modalities.Any(x => x?.GetValue<string>() == "image");
-                result.Add(new DiscoveredModel(id, label, ctx, Math.Min(maxOut, ctx), reasoning, vision, loaded));
+                var audio = false;
+                var video = false;
+                if (item["architecture"]?["input_modalities"] is JsonArray modalities)
+                {
+                    vision = modalities.Any(x => x?.GetValue<string>() == "image");
+                    audio = modalities.Any(x => x?.GetValue<string>() == "audio");
+                    video = modalities.Any(x => x?.GetValue<string>() == "video");
+                }
+                result.Add(new DiscoveredModel(id, label, ctx, Math.Min(maxOut, ctx), reasoning, vision, loaded, audio, video));
             }
         }
 
@@ -401,8 +413,9 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             var props = await SendJsonAsync(http, new HttpRequestMessage(HttpMethod.Get, $"{RootOf(baseUrl)}/props"), ct);
             var nctx = Int(props?["default_generation_settings"]?["n_ctx"]) ?? Int(props?["n_ctx"]);
             var vision = props?["modalities"]?["vision"] is JsonValue vv && vv.TryGetValue<bool>(out var v) && v;
+            var audio = props?["modalities"]?["audio"] is JsonValue av && av.TryGetValue<bool>(out var a) && a;
             if (nctx is null) return models;
-            return models.Select(m => m with { ContextLength = nctx.Value, MaxOutput = Math.Min(m.MaxOutput, nctx.Value), Vision = m.Vision || vision, Loaded = true }).ToList();
+            return models.Select(m => m with { ContextLength = nctx.Value, MaxOutput = Math.Min(m.MaxOutput, nctx.Value), Vision = m.Vision || vision, Audio = m.Audio || audio, Loaded = true }).ToList();
         }
         catch
         {

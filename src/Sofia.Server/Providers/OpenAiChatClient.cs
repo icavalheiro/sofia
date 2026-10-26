@@ -119,6 +119,8 @@ public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider, P
         }
     }
 
+    private static string AudioFormat(string? mime) => mime is not null && mime.Contains("wav") ? "wav" : "mp3";
+
     private static string? Str(JsonNode? node) =>
         node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
@@ -179,8 +181,8 @@ public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider, P
                 }
                 default:
                 {
-                    var hasImages = m.Content.Any(c => c.ImageBase64 is not null);
-                    if (!hasImages)
+                    var hasMedia = m.Content.Any(c => c.ImageBase64 is not null || c.MediaBase64 is not null);
+                    if (!hasMedia)
                     {
                         messages.Add(new JsonObject { ["role"] = "user", ["content"] = m.TextContent });
                         break;
@@ -194,6 +196,22 @@ public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider, P
                             {
                                 ["type"] = "image_url",
                                 ["image_url"] = new JsonObject { ["url"] = $"data:{part.ImageMime};base64,{part.ImageBase64}" },
+                            });
+                        }
+                        else if (part.MediaBase64 is not null && part.MediaKind == "audio")
+                        {
+                            parts.Add(new JsonObject
+                            {
+                                ["type"] = "input_audio",
+                                ["input_audio"] = new JsonObject { ["data"] = part.MediaBase64, ["format"] = AudioFormat(part.MediaMime) },
+                            });
+                        }
+                        else if (part.MediaBase64 is not null)
+                        {
+                            parts.Add(new JsonObject
+                            {
+                                ["type"] = "video_url",
+                                ["video_url"] = new JsonObject { ["url"] = $"data:{part.MediaMime};base64,{part.MediaBase64}" },
                             });
                         }
                         else if (!string.IsNullOrEmpty(part.Text))

@@ -112,7 +112,7 @@ interface SessionDto extends ConversationSummaryDto {
 interface AttachmentDto {
   id: string
   name: string
-  kind: 'image' | 'video' | 'file'
+  kind: 'image' | 'video' | 'audio' | 'file'
   mime: string
   size: string            // human readable
   bytes: number
@@ -129,7 +129,7 @@ interface ToolCallDto {
   error?: string
   duration: string        // '1.2s' / 'running…'
   childSessionId?: string // task tool: the subagent session
-  images?: AttachmentDto[] // browser screenshots (served from /api/attachments/{id})
+  images?: AttachmentDto[] // media the tool produced: screenshots, or images/audio/video from `read` (served from /api/attachments/{id})
 }
 
 interface MessageDto {
@@ -273,6 +273,8 @@ interface ModelDto {
   connected: boolean
   reasoning: boolean
   vision: boolean
+  audio: boolean           // accepts audio input (runtime metadata or known family)
+  video: boolean           // accepts video input (runtime metadata only)
   loaded?: boolean         // local runtimes that report it
 }
 

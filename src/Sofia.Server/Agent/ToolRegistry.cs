@@ -27,7 +27,7 @@ public sealed class ToolRegistry(
             if (!workspace.IsFolder && FolderOnly.Contains(name)) continue;
             ITool? tool = name switch
             {
-                "read" => new ReadTool(),
+                "read" => new ReadTool(SaveImage),
                 "write" => new WriteTool(),
                 "edit" => new EditTool(),
                 Agents.ShellToolToken => new ShellTool(shell),
@@ -53,7 +53,7 @@ public sealed class ToolRegistry(
 
     private static TaskTool? TaskFor(List<AgentDefinition> targets) => targets.Count > 0 ? new TaskTool(targets) : null;
 
-    /// <summary>Stores a tool-made image like an uploaded attachment, so it is served from /api/attachments/{id}.</summary>
+    /// <summary>Stores tool-made media (image, audio or video) like an uploaded attachment, so it is served from /api/attachments/{id}.</summary>
     private Attachment SaveImage(byte[] bytes, string mime, string name)
     {
         var id = Ids.New("att");
@@ -64,7 +64,7 @@ public sealed class ToolRegistry(
             Id = id,
             Name = name,
             Mime = mime,
-            Kind = "image",
+            Kind = mime.StartsWith("audio/") ? "audio" : mime.StartsWith("video/") ? "video" : "image",
             Bytes = bytes.Length,
             Size = Text.HumanSize(bytes.Length),
             Url = $"/api/attachments/{id}",

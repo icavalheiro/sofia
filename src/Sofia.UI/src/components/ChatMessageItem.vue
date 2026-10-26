@@ -93,6 +93,7 @@ const otherAtts = computed(() =>
 const ICON_FOR_KIND: Record<AttachmentKind, string> = {
   image: 'image',
   video: 'video',
+  audio: 'music',
   file: 'file',
 }
 
@@ -410,7 +411,10 @@ function closeLightbox(): void {
               </div>
               <div v-if="tc.images?.length" class="img-gallery">
                 <figure v-for="a in tc.images" :key="a.id" class="img-item">
+                  <video v-if="a.kind === 'video'" class="img-thumb img-thumb--media" :src="previewSrc(a)" controls preload="metadata" />
+                  <audio v-else-if="a.kind === 'audio'" class="img-audio" :src="previewSrc(a)" controls preload="none" />
                   <img
+                    v-else
                     class="img-thumb"
                     :src="previewSrc(a)"
                     :alt="a.name"
@@ -1532,6 +1536,16 @@ function closeLightbox(): void {
 
 .img-thumb:hover {
   border-color: var(--sofia-primary);
+}
+
+.img-thumb--media {
+  cursor: default;
+}
+
+.img-audio {
+  display: block;
+  width: 240px;
+  max-width: 100%;
 }
 
 .img-cap {

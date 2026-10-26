@@ -204,6 +204,10 @@ public sealed class AnthropicChatClient(HttpClient http, ProviderConfig provider
                             ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = part.ImageMime, ["data"] = part.ImageBase64 },
                         });
                     }
+                    else if (part.MediaBase64 is not null)
+                    {
+                        blocks.Add(new JsonObject { ["type"] = "text", ["text"] = $"[{part.MediaKind} input is not supported by this provider]" });
+                    }
                     else if (!string.IsNullOrEmpty(part.Text))
                     {
                         blocks.Add(new JsonObject { ["type"] = "text", ["text"] = part.Text });

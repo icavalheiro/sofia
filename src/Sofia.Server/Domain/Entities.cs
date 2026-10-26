@@ -106,7 +106,7 @@ public sealed class Attachment
 {
     [BsonId] public string Id { get; set; } = "";
     public string Name { get; set; } = "";
-    /// <summary>'image' | 'video' | 'file'.</summary>
+    /// <summary>'image' | 'video' | 'audio' | 'file'.</summary>
     public string Kind { get; set; } = "file";
     public string Mime { get; set; } = "application/octet-stream";
     public string Size { get; set; } = "";
@@ -128,7 +128,7 @@ public sealed class ToolCall
     public string? Error { get; set; }
     public string Duration { get; set; } = "running…";
     public string? ChildSessionId { get; set; }
-    /// <summary>Images the tool produced (browser screenshots); also shown to vision models.</summary>
+    /// <summary>Media the tool produced (browser screenshots, images, audio or video read from disk); also sent to models that accept it.</summary>
     public List<Attachment>? Images { get; set; }
 
     /// <summary>Raw JSON arguments exactly as the model produced them.</summary>
