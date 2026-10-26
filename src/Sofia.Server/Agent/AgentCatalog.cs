@@ -5,14 +5,14 @@ using Sofia.Server.Infrastructure;
 namespace Sofia.Server.Agent;
 
 /// <summary>
-/// The built-in agents plus custom ones from Markdown files (`~/.sofia/agents`, `<workspace>/.sofia/agents`, and the
-/// `.claude/agents` / `.opencode/agent(s)` layouts). Frontmatter: `name`, `description`, `mode` (primary | subagent | all,
+/// The built-in agents plus custom ones from Markdown files (`~/.sofia/agents` and `<workspace>/.sofia/agents`; other
+/// harnesses' folders are never read). Frontmatter: `name`, `description`, `mode` (primary | subagent | all,
 /// default subagent), `tools` (comma list; omitted = the default set for the mode) and `mcp` (true/false). The body is the
 /// agent's system-prompt addendum. Later roots win: project over global over built-in, so a file can override a built-in.
 /// </summary>
 public sealed partial class AgentCatalog(SofiaOptions options)
 {
-    private static readonly string[] ProjectDirs = [".sofia/agents", ".claude/agents", ".opencode/agents", ".opencode/agent"];
+    private static readonly string[] ProjectDirs = [".sofia/agents"];
 
     private static readonly Dictionary<string, string> ToolAliases = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -27,11 +27,7 @@ public sealed partial class AgentCatalog(SofiaOptions options)
 
     public IEnumerable<string> GlobalRoots()
     {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         yield return options.AgentsDir;
-        yield return Path.Combine(home, ".claude", "agents");
-        yield return Path.Combine(home, ".config", "opencode", "agents");
-        yield return Path.Combine(home, ".config", "opencode", "agent");
     }
 
     public static IEnumerable<string> ProjectRoots(string directory) => ProjectDirs.Select(rel => Path.Combine(directory, rel));

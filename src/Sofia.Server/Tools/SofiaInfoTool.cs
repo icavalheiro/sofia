@@ -49,8 +49,6 @@ public sealed class SofiaInfoTool(
             : ToolResult.Ok(text.TrimEnd()));
     }
 
-    private static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
     private static string Mark(string path) => $"{path}{(File.Exists(path) || Directory.Exists(path) ? "" : " (not created yet)")}";
 
     private static string Api(string baseUrl) =>
@@ -66,9 +64,9 @@ public sealed class SofiaInfoTool(
         sb.AppendLine(Api(baseUrl()));
         sb.AppendLine();
         sb.AppendLine("## Files you can create or edit (global)");
-        sb.AppendLine($"- Skills:   {Mark(options.SkillsDir)}/<name>/SKILL.md   (also ~/.agents/skills, ~/.claude/skills)");
-        sb.AppendLine($"- Commands: {Mark(options.CommandsDir)}/<name>.md   (also {options.PromptsDir}, ~/.claude/commands, ~/.config/opencode/command)");
-        sb.AppendLine($"- Agents:   {Mark(options.AgentsDir)}/<name>.md   (also ~/.claude/agents, ~/.config/opencode/agent)");
+        sb.AppendLine($"- Skills:   {Mark(options.SkillsDir)}/<name>/SKILL.md");
+        sb.AppendLine($"- Commands: {Mark(options.CommandsDir)}/<name>.md   (also {options.PromptsDir})");
+        sb.AppendLine($"- Agents:   {Mark(options.AgentsDir)}/<name>.md");
         sb.AppendLine($"- Instructions for every conversation: {Mark(options.GlobalAgentsFile)}");
         sb.AppendLine($"- System prompt: {Mark(Path.Combine(options.DataDir, "SYSTEM.md"))} (replaces the preamble), {Mark(Path.Combine(options.DataDir, "APPEND_SYSTEM.md"))} (appends to it)");
         sb.AppendLine();
@@ -90,8 +88,8 @@ public sealed class SofiaInfoTool(
         var sb = new StringBuilder();
         sb.AppendLine("# Skills");
         sb.AppendLine("Reusable instructions. Only name and description go into the system prompt; the `skill` tool loads the body on demand.");
-        sb.AppendLine($"Global folders (all are read): {Mark(options.SkillsDir)} (preferred), {Path.Combine(Home, ".agents", "skills")}, {Path.Combine(Home, ".claude", "skills")}");
-        sb.AppendLine("Project folders: <project>/.sofia/skills, .agents/skills, .claude/skills, .opencode/skills — a project skill overrides a global one of the same name.");
+        sb.AppendLine($"Global folder: {Mark(options.SkillsDir)}. Other harnesses' folders (.claude, .agents, .opencode…) are not read.");
+        sb.AppendLine("Project folder: <project>/.sofia/skills — a project skill overrides a global one of the same name.");
         sb.AppendLine("Layout: <folder>/<skill-name>/SKILL.md (supporting files may sit next to it).");
         sb.AppendLine();
         sb.AppendLine("SKILL.md:\n---\nname: my-skill\ndescription: One sentence saying when to use it.\n---\nMarkdown instructions…");
@@ -106,9 +104,9 @@ public sealed class SofiaInfoTool(
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Custom commands (/name)");
-        sb.AppendLine("Markdown prompt templates the user runs by typing /name [arguments] in the chat (opencode-style).");
-        sb.AppendLine($"Global folders: {Mark(options.CommandsDir)} (preferred), {options.PromptsDir}, {Path.Combine(Home, ".claude", "commands")}, {Path.Combine(Home, ".config", "opencode", "command")}");
-        sb.AppendLine("Project folders: <project>/.sofia/commands, .sofia/prompts, .claude/commands, .opencode/command — a project command overrides a global one of the same name.");
+        sb.AppendLine("Markdown prompt templates the user runs by typing /name [arguments] in the chat         .");
+                sb.AppendLine($"Global folders: {Mark(options.CommandsDir)} (preferred), {options.PromptsDir}. Other harnesses' folders are not read.");
+                sb.AppendLine("Project folders: <project>/.sofia/commands, .sofia/prompts — a project command overrides a global one of the same name.");
         sb.AppendLine("The file name is the command name; sub-folders become part of it (git/pr.md → /git/pr).");
         sb.AppendLine();
         sb.AppendLine("Format:\n---\ndescription: Shown in the / menu\nagent: plan        # optional: agent that runs it (a primary agent takes over the session, a subagent gets the work delegated)\nmodel: provider/model   # optional: switches the session to this model\nsubtask: true      # optional: delegate to a subagent instead of the main context\n---\nTemplate text.");
@@ -128,8 +126,8 @@ public sealed class SofiaInfoTool(
         var sb = new StringBuilder();
         sb.AppendLine("# Agents");
         sb.AppendLine("Custom agents are Markdown files: the body is the agent's system-prompt addendum. The user calls a subagent by typing @name in the chat; the `task` tool can delegate to it too. Primary agents are picked in the composer's agent dropdown.");
-        sb.AppendLine($"Global folders: {Mark(options.AgentsDir)} (preferred), {Path.Combine(Home, ".claude", "agents")}, {Path.Combine(Home, ".config", "opencode", "agent")}");
-        sb.AppendLine("Project folders: <project>/.sofia/agents, .claude/agents, .opencode/agent — a project agent overrides a global one (or a built-in) with the same name.");
+        sb.AppendLine($"Global folder: {Mark(options.AgentsDir)}. Other harnesses' folders are not read.");
+        sb.AppendLine("Project folder: <project>/.sofia/agents — a project agent overrides a global one (or a built-in) with the same name.");
         sb.AppendLine("The name is the file name (letters, digits, '.', '_', '-'), or the `name` field.");
         sb.AppendLine();
         sb.AppendLine("Format:\n---\ndescription: When to use this agent\nmode: subagent     # subagent (default) | primary | all\ntools: read, grep, find, ls, bash, write, edit, web_fetch, web_search, skill, task, question, notes, sofia_info\nmcp: false         # include MCP tools (default: only when `tools` is omitted)\n---\nYou are … (instructions)");

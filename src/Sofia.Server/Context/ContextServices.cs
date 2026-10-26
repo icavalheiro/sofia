@@ -39,17 +39,14 @@ public sealed class SkillInfo
 /// <summary>Discovers SKILL.md packages (progressive disclosure: only name + description go in the prompt).</summary>
 public sealed class SkillService(SofiaOptions options)
 {
-    private static readonly string[] ProjectDirs = [".sofia/skills", ".agents/skills", ".claude/skills", ".opencode/skills", ".opencode/skill"];
+    private const string ProjectDir = ".sofia/skills";
 
     public List<SkillInfo> List(string? directory)
     {
         var byName = new Dictionary<string, SkillInfo>(StringComparer.OrdinalIgnoreCase);
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        foreach (var root in new[] { options.SkillsDir, System.IO.Path.Combine(home, ".agents", "skills"), System.IO.Path.Combine(home, ".claude", "skills") })
-            Scan(root, "global", byName);
+        Scan(options.SkillsDir, "global", byName);
         if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory))
-            foreach (var rel in ProjectDirs)
-                Scan(System.IO.Path.Combine(directory, rel), "project", byName);
+            Scan(System.IO.Path.Combine(directory, ProjectDir), "project", byName);
         return byName.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
@@ -101,9 +98,9 @@ public sealed class CommandInfo
 }
 
 /// <summary>
-/// Custom /commands: Markdown prompt templates (opencode-style) plus built-ins. Files live in `~/.sofia/commands`,
-/// `~/.sofia/prompts`, `<workspace>/.sofia/commands` and the `.claude/commands` / `.opencode/command(s)` layouts; a
-/// sub-folder becomes part of the name (`git/pr.md` → `/git/pr`). Frontmatter: `description`, `agent`, `model`, `subtask`.
+/// Custom /commands: Markdown prompt templates plus built-ins. Files live in `~/.sofia/commands`,
+/// `~/.sofia/prompts`, `<workspace>/.sofia/commands` and `<workspace>/.sofia/prompts` (other harnesses' folders are
+/// never read); a sub-folder becomes part of the name (`git/pr.md` → `/git/pr`). Frontmatter: `description`, `agent`, `model`, `subtask`.
 /// Templates support `$ARGUMENTS`, `$1`…`$9`, ``!`shell`` output injection and `@file` references.
 /// </summary>
 public sealed partial class CommandService(SofiaOptions options)
@@ -113,17 +110,13 @@ public sealed partial class CommandService(SofiaOptions options)
         "Include: build/test/lint commands (and how to run a single test), the high-level architecture, code style and conventions, " +
         "and anything non-obvious. Keep it concise. If an AGENTS.md, CLAUDE.md or similar file already exists, improve it instead of replacing it. $ARGUMENTS";
 
-    private static readonly string[] ProjectDirs = [".sofia/prompts", ".sofia/commands", ".claude/commands", ".opencode/command", ".opencode/commands"];
+    private static readonly string[] ProjectDirs = [".sofia/prompts", ".sofia/commands"];
 
-    public IEnumerable<string> GlobalRoots()
-    {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        yield return options.PromptsDir;
-        yield return options.CommandsDir;
-        yield return Path.Combine(home, ".claude", "commands");
-        yield return Path.Combine(home, ".config", "opencode", "command");
-        yield return Path.Combine(home, ".config", "opencode", "commands");
-    }
+        public IEnumerable<string> GlobalRoots()
+        {
+            yield return options.PromptsDir;
+            yield return options.CommandsDir;
+        }
 
     public static IEnumerable<string> ProjectRoots(string directory) => ProjectDirs.Select(rel => Path.Combine(directory, rel));
 

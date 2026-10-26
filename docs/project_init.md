@@ -256,23 +256,20 @@ finishes, the setting is turned off or the server stops.
 - Context files: `~/.sofia/AGENTS.md`, then `AGENTS.md` (or `CLAUDE.md`) in
   every directory from the filesystem root down to the workspace.
 - `.sofia/SYSTEM.md` replaces the preamble; `APPEND_SYSTEM.md` appends to it.
-- Skills: `SKILL.md` folders under `~/.sofia/skills`, `~/.agents/skills`,
-  `~/.claude/skills` and the workspace's `.sofia/skills`, `.agents/skills`,
-  `.claude/skills`, `.opencode/skills`. Only name and description go into the
+- Skills: `SKILL.md` folders under `~/.sofia/skills` and the workspace's
+  `.sofia/skills` (other harnesses' folders such as `.claude`, `.agents` or
+  `.opencode` are never read). Only name and description go into the
   prompt; the `skill` tool loads the body. Skills activated from the UI are
   pinned into the prompt.
 - Commands: built-ins `compact` and `init`, plus custom `/commands` — Markdown
-  prompt templates (opencode-style) from `~/.sofia/commands`, `~/.sofia/prompts`,
-  `~/.claude/commands`, `~/.config/opencode/command(s)` and the workspace's
-  `.sofia/commands`, `.sofia/prompts`, `.claude/commands`, `.opencode/command(s)`
-  (project wins). Sub-folders are part of the name (`git/pr.md` → `/git/pr`).
+  prompt templates from `~/.sofia/commands`, `~/.sofia/prompts` and the
+  workspace's `.sofia/commands`, `.sofia/prompts` (project wins). Sub-folders are part of the name (`git/pr.md` → `/git/pr`).
   Frontmatter: `description`, `agent`, `model`, `subtask`. Placeholders:
   `$ARGUMENTS`, `$1`…`$9`, ``!`cmd` `` (output injected; runs only in
   full-access sessions, otherwise it stays literal) and `@file` (a workspace
   file is appended as a `<file>` block).
-- Agents: Markdown files in `~/.sofia/agents`, `~/.claude/agents`,
-  `~/.config/opencode/agent(s)` and the workspace's `.sofia/agents`,
-  `.claude/agents`, `.opencode/agent(s)` (`Agent/AgentCatalog.cs`). Frontmatter:
+- Agents: Markdown files in `~/.sofia/agents` and the workspace's
+  `.sofia/agents` (`Agent/AgentCatalog.cs`). Frontmatter:
   `description`, `mode` (`subagent` default, `primary`, `all`), `tools`
   (comma list; omitted = the mode's default set), `mcp`; the body is the system
   prompt addendum. A file may override a built-in agent.

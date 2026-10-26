@@ -350,8 +350,7 @@ conversation (model discovery, probes) fall back to one stable per-process `harn
 | `GET` | `/api/skills?directory=` | `{ id, name, description, path, content, source }[]` (the Settings → Skills tab omits `directory`, so it lists only global skills) |
 
 Agents are the built-ins (`build`, `plan`, `general`, `explore`) plus Markdown
-files in `~/.sofia/agents`, `<workspace>/.sofia/agents` (also `.claude/agents`,
-`.opencode/agent(s)`): frontmatter `description`, `mode` (`subagent` default |
+files in `~/.sofia/agents`, `<workspace>/.sofia/agents` (other harnesses' folders are not read): frontmatter `description`, `mode` (`subagent` default |
 `primary` | `all`), `tools` (comma list, e.g. `read, grep, bash`), `mcp`; the body
 is the system-prompt addendum. `primary`/`all` agents show in the agent picker
 (`PATCH /api/sessions/{id}` `{ agent }`); `subagent`/`all` ones are `task`
@@ -359,8 +358,8 @@ targets and can be called with `@name` in a prompt: the server keeps the text
 as typed and gives the model a hidden note to delegate through `task`.
 
 Commands are Markdown prompt templates in `~/.sofia/commands`,
-`~/.sofia/prompts`, `<workspace>/.sofia/commands`, `.sofia/prompts` (also
-`.claude/commands`, `.opencode/command(s)`; project overrides global) plus the
+`~/.sofia/prompts`, `<workspace>/.sofia/commands`, `.sofia/prompts` (project
+overrides global) plus the
 built-ins `compact` and `init`. Sub-folders are part of the name (`git/pr` →
 `/git/pr`). Frontmatter: `description`, `agent` (a primary agent takes over the
 session; a subagent gets the work delegated), `model` (`providerId/modelId`,
@@ -370,9 +369,8 @@ switches the session), `subtask: true` (delegate instead of running inline).
 left as text) and `@path` (a file inside the workspace is appended as a
 `<file>` block). Unknown command → `404`, unknown `agent` / `model` → `400`.
 
-Skills are `SKILL.md` folders under `~/.sofia/skills`, `~/.agents/skills`,
-`~/.claude/skills`, `<workspace>/.sofia/skills`, `.agents/skills` and
-`.claude/skills`.
+Skills are `SKILL.md` folders under `~/.sofia/skills` and
+`<workspace>/.sofia/skills`.
 
 The read-only `sofia_info` tool (topics `overview`, `skills`, `commands`,
 `agents`, `mcp`, `providers`, `config`, `context`) tells agents where all of

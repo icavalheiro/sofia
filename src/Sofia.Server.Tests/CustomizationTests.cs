@@ -30,7 +30,8 @@ public sealed class CustomizationTests : IDisposable
             "---\ndescription: Reviews diffs\ntools: Read, Grep, bash\n---\nYou review code.");
         Write(Path.Combine(_options.AgentsDir, "scribe.md"), "---\ndescription: Global scribe\nmode: primary\n---\nWrites docs.");
         Write(Path.Combine(Project, ".sofia", "agents", "scribe.md"), "---\ndescription: Project scribe\nmode: all\n---\nWrites project docs.");
-        Write(Path.Combine(Project, ".claude", "agents", "bad name.md"), "x");
+        Write(Path.Combine(Project, ".sofia", "agents", "bad name.md"), "x");
+        Write(Path.Combine(Project, ".claude", "agents", "foreign.md"), "---\ndescription: Foreign\n---\nIgnored.");
 
         var catalog = new AgentCatalog(_options);
         var reviewer = catalog.Find("reviewer", Project)!;
@@ -46,6 +47,7 @@ public sealed class CustomizationTests : IDisposable
         Assert.Equal("global", catalog.Find("scribe", null)!.Source);
 
         Assert.Null(catalog.Find("bad name", Project));
+        Assert.Null(catalog.Find("foreign", Project));
         Assert.Equal("build", catalog.Get("missing", Project).Id);
         Assert.Contains(catalog.Delegable(Project), a => a.Id == "reviewer");
         Assert.DoesNotContain(catalog.Delegable(Project, readOnlyOnly: true), a => a.Id == "reviewer");
@@ -69,13 +71,26 @@ public sealed class CustomizationTests : IDisposable
         Write(Path.Combine(_options.CommandsDir, "git", "pr.md"),
             "---\ndescription: Open a PR\nagent: plan\nmodel: p/m\nsubtask: true\n---\nOpen a PR for $ARGUMENTS");
         Write(Path.Combine(_options.PromptsDir, "old.md"), "Legacy prompt");
-        Write(Path.Combine(Project, ".opencode", "command", "old.md"), "Project override");
+        Write(Path.Combine(Project, ".sofia", "commands", "old.md"), "Project override");
 
         var commands = new CommandService(_options).List(Project);
         var pr = commands.Single(c => c.Name == "git/pr");
         Assert.Equal(("Open a PR", "plan", "p/m", true, "global"), (pr.Description, pr.Agent, pr.Model, pr.Subtask, pr.Source));
         Assert.Equal("project", commands.Single(c => c.Name == "old").Source);
         Assert.Contains(commands, c => c.Name == "compact" && c.Source == "builtin");
+    }
+
+    [Fact]
+    public void IgnoresOtherHarnessFolders()
+    {
+        Write(Path.Combine(Project, ".claude", "commands", "foreign.md"), "x");
+        Write(Path.Combine(Project, ".opencode", "command", "foreign.md"), "x");
+        Write(Path.Combine(Project, ".claude", "skills", "foreign", "SKILL.md"), "---\nname: foreign\ndescription: x\n---\nx");
+        Write(Path.Combine(Project, ".agents", "skills", "foreign2", "SKILL.md"), "---\nname: foreign2\ndescription: x\n---\nx");
+        Write(Path.Combine(Project, ".sofia", "skills", "mine", "SKILL.md"), "---\nname: mine\ndescription: x\n---\nx");
+
+        Assert.DoesNotContain(new CommandService(_options).List(Project), c => c.Name == "foreign");
+        Assert.Equal(["mine"], new SkillService(_options).List(Project).Where(s => s.Source == "project").Select(s => s.Name));
     }
 
     [Fact]
