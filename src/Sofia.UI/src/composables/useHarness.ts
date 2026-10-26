@@ -1117,6 +1117,26 @@ export function useHarness ()
     return null;
   }
 
+  /** Renames any conversation (optimistic); returns an error or null. */
+  async function renameConversation ( conversationId: string, title: string ): Promise<string | null>
+  {
+    const conv = findConversation( conversationId );
+    const next = title.trim();
+    if ( !conv || !next || next === conv.title ) return null;
+    const previous = conv.title;
+    conv.title = next;
+    try
+    {
+      await api<SessionDto>( 'PATCH', `/api/sessions/${ conversationId }`, { title: next } );
+      return null;
+    } catch ( e )
+    {
+      conv.title = previous;
+      state.error = errorText( e );
+      return state.error;
+    }
+  }
+
   /** Pins a conversation to the top of its list, or releases it. */
   async function pinConversation ( conversationId: string, pinned: boolean ): Promise<string | null>
   {
@@ -1637,6 +1657,7 @@ export function useHarness ()
     openConversation,
     archiveConversation,
     pinConversation,
+    renameConversation,
     reorderConversations,
     reorderWorkspaces,
     restoreConversation,

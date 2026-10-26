@@ -23,6 +23,7 @@ const {
   newConversationIn,
   archiveConversation,
   pinConversation,
+  renameConversation,
   reorderConversations,
   reorderWorkspaces,
   restoreConversation,
@@ -225,6 +226,31 @@ function onWorkspaceDrop(target: Ws, event: DragEvent): void {
   endDrag()
   playSound('select')
   void reorderWorkspaces(ids)
+}
+
+/** Inline rename: clicking the already-open conversation edits its title. */
+const editingId = ref<string | null>(null)
+const editText = ref('')
+
+function onConvClick(ws: Ws, c: Conv): void {
+  if (editingId.value === c.id) return
+  if (c.id === state.activeConversationId) {
+    editingId.value = c.id
+    editText.value = c.title
+    void nextTick(() => {
+      const el = document.querySelector<HTMLInputElement>('.conv-edit')
+      el?.focus()
+      el?.select()
+    })
+    return
+  }
+  void selectConversation(ws.id, c.id)
+}
+
+function commitRename(c: Conv): void {
+  if (editingId.value !== c.id) return
+  editingId.value = null
+  void renameConversation(c.id, editText.value)
 }
 
 /** Opens a row. Enter on one of the row's own buttons must not also select it. */
@@ -491,7 +517,7 @@ useShortcut('session.next', () => stepSession(1))
               :draggable="depth === 0"
               role="button"
               tabindex="0"
-              @click="selectConversation(ws.id, c.id)"
+              @click="onConvClick(ws, c)"
               @keydown.enter="openRow(ws, c, $event)"
               @dragstart="depth === 0 && onDragStart('conversation', c.id, $event)"
               @dragover="depth === 0 && onDragOver('conversation', c.id, canDropConversation(ws, c), $event)"
@@ -512,7 +538,18 @@ useShortcut('session.next', () => stepSession(1))
                 </span>
                 <SofiaIcon v-else class="conv-icon" :name="depth > 0 ? 'bot' : 'chat'" :size="'0.875rem'" />
               </span>
-              <span class="conv-title sofia-truncate">{{ c.title }}</span>
+              <input
+                v-if="editingId === c.id"
+                v-model="editText"
+                class="conv-edit"
+                type="text"
+                :aria-label="c.title"
+                @click.stop
+                @keydown.enter.stop.prevent="commitRename(c)"
+                @keydown.esc.stop.prevent="editingId = null"
+                @blur="commitRename(c)"
+              />
+              <span v-else class="conv-title sofia-truncate">{{ c.title }}</span>
               <span class="conv-trail">
                 <SofiaIcon v-if="c.pinned" class="conv-pin" name="pin" :size="'0.75rem'" />
                 <span class="conv-actions">
@@ -1081,6 +1118,18 @@ useShortcut('session.next', () => stepSession(1))
 .conv-icon {
   flex-shrink: 0;
   opacity: 0.75;
+}
+
+.conv-edit {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid #a9744f;
+  border-radius: 4px;
+  padding: 0 0.25rem;
+  outline: none;
 }
 
 .conv-title {
