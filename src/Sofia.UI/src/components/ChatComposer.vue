@@ -340,7 +340,7 @@ watch(
   (text) => {
     nextTick(autoResize)
     if (mentionOpen.value) nextTick(updateMention)
-    if (text.startsWith('/') && !state.isReplying) {
+    if (/^\/\S*$/.test(text) && !state.isReplying) {
       paletteOpen.value = true
       void loadCommands()
     } else if (paletteOpen.value) {
@@ -447,11 +447,31 @@ async function loadCommands(): Promise<void> {
   }
 }
 
-async function executeCommand(command: CommandDto): Promise<void> {
-  const rest = state.composerText.replace(/^\/\S*/, '').trim()
+/** Picking a command only inserts "/name " so the user can add arguments before sending. */
+function executeCommand(command: CommandDto): void {
+  const rest = state.composerText.replace(/^\/\S*\s*/, '')
+  state.composerText = `/${command.name} ${rest}`
   closePalette()
-  await runCommand(command.name, rest)
+  nextTick(() => {
+    const el = textarea.value
+    if (el) {
+      el.focus()
+      el.selectionStart = el.selectionEnd = el.value.length
+    }
+    autoResize()
+  })
+}
+
+/** Sends "/name args" as the command it stands for; null when the text is not a known command. */
+async function trySendCommand(): Promise<boolean> {
+  const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(state.composerText.trim())
+  if (!match) return false
+  await loadCommands()
+  const command = commands.value.find((c) => c.name.toLowerCase() === match[1].toLowerCase())
+  if (!command) return false
+  await runCommand(command.name, (match[2] ?? '').trim())
   nextTick(autoResize)
+  return true
 }
 
 async function submit(): Promise<void> {
@@ -470,6 +490,7 @@ async function submit(): Promise<void> {
     }
     return
   }
+  if (await trySendCommand()) return
   await sendMessage()
   nextTick(autoResize)
 }
@@ -525,7 +546,7 @@ function onKeydown(event: KeyboardEvent): void {
       event.preventDefault()
       const chosen = filteredCommands.value[paletteIndex.value]
       if (chosen) {
-        void executeCommand(chosen)
+        executeCommand(chosen)
         return
       }
     }
