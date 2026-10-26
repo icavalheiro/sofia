@@ -502,6 +502,8 @@ export interface Provider
   discovered: boolean;
   hasKey: boolean;
   models: number;
+  /** Earlier reasoning is resent with the history (effective value). */
+  preserveThinking: boolean;
 }
 
 /** The signed-in user's profile (editable in settings). */

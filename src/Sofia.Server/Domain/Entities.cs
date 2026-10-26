@@ -268,6 +268,8 @@ public sealed class ProviderConfig
     public string? PresetId { get; set; }
     /// <summary>Runtime flavour used for request quirks ('unsloth', 'ollama', 'llamacpp', 'vllm', 'lmstudio', 'openai', 'openrouter', …).</summary>
     public string Flavor { get; set; } = "openai";
+    /// <summary>Resend earlier reasoning with the history (OpenAI-compatible `reasoning_content`). Null = flavor default.</summary>
+    public bool? PreserveThinking { get; set; }
     /// <summary>Manually declared models (used when the endpoint cannot list them).</summary>
     public List<string> Models { get; set; } = [];
     /// <summary>Last context window a runtime reported per model (runtimes omit it while a model is unloaded).</summary>

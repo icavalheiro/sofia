@@ -14,6 +14,10 @@ public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider, P
     // Thinking models on these flavors reject a follow-up request that drops the earlier reasoning_content.
     private static readonly HashSet<string> ReasoningEchoFlavors = ["deepseek", "opencode-go"];
 
+    /// <summary>Whether earlier reasoning is resent: the provider setting, else the flavor default.</summary>
+    public static bool PreservesThinking(ProviderConfig provider) =>
+        provider.PreserveThinking ?? ReasoningEchoFlavors.Contains(provider.Flavor);
+
     public async IAsyncEnumerable<StreamEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken ct)
     {
         var body = BuildBody(request);
@@ -162,7 +166,7 @@ public sealed class OpenAiChatClient(HttpClient http, ProviderConfig provider, P
                     var obj = new JsonObject { ["role"] = "assistant" };
                     var text = m.TextContent;
                     obj["content"] = string.IsNullOrEmpty(text) ? null : text;
-                    if (!string.IsNullOrEmpty(m.Reasoning) && ReasoningEchoFlavors.Contains(provider.Flavor)) obj["reasoning_content"] = m.Reasoning;
+                    if (!string.IsNullOrEmpty(m.Reasoning) && PreservesThinking(provider)) obj["reasoning_content"] = m.Reasoning;
                     if (m.ToolCalls.Count > 0)
                     {
                         obj["tool_calls"] = new JsonArray(m.ToolCalls.Select(tc => (JsonNode)new JsonObject

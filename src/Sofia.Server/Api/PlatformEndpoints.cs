@@ -14,7 +14,7 @@ using Sofia.Server.Vcs;
 namespace Sofia.Server.Api;
 
 public sealed record CreateProviderRequest(string Name, string? Type, string BaseUrl, string? ApiKey, List<string>? Models, string? PresetId);
-public sealed record UpdateProviderRequest(bool? Enabled, string? ApiKey, string? BaseUrl, string? Name);
+public sealed record UpdateProviderRequest(bool? Enabled, string? ApiKey, string? BaseUrl, string? Name, bool? PreserveThinking = null);
 public sealed record ProbeRequest(string? Type, string BaseUrl, string? ApiKey);
 public sealed record CopilotPollRequest(string DeviceCode);
 public sealed record SetModelEnabledRequest(string? Id, List<string>? Ids, bool Enabled);
@@ -132,6 +132,7 @@ public static class PlatformEndpoints
             if (body.ApiKey is { } key) config.ApiKey = string.IsNullOrWhiteSpace(key) ? null : key.Trim();
             if (!string.IsNullOrWhiteSpace(body.BaseUrl)) config.BaseUrl = body.BaseUrl.Trim().TrimEnd('/');
             if (!string.IsNullOrWhiteSpace(body.Name)) config.Name = body.Name.Trim();
+            if (body.PreserveThinking is { } preserve) config.PreserveThinking = preserve;
             db.Providers.Update(config);
             await providers.RefreshAsync(discover: false, ct);
             return Results.Ok(providers.Provider(id));

@@ -48,6 +48,8 @@ public sealed class ProviderView
     public bool Discovered { get; set; }
     public bool HasKey { get; set; }
     public int Models { get; set; }
+    /// <summary>Effective setting: earlier reasoning is resent with the history.</summary>
+    public bool PreserveThinking { get; set; }
 }
 
 public sealed record ProviderPreset(string Id, string Name, string Type, string BaseUrl, string? EnvKey, string Flavor, string? Auth = null, string? Note = null);
@@ -541,6 +543,7 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
                     Discovered = p.Discovered,
                     HasKey = !string.IsNullOrWhiteSpace(p.ResolveKey()),
                     Models = s?.Models.Count ?? 0,
+                    PreserveThinking = OpenAiChatClient.PreservesThinking(p),
                 };
             }).OrderBy(p => p.Kind == "local" ? 0 : 1).ThenBy(p => p.Name).ToList();
         }

@@ -161,6 +161,20 @@ public class ProviderBodyTests
     }
 
     [Fact]
+    public void PreserveThinkingOverridesFlavorDefault()
+    {
+        ChatRequest Req() => new()
+        {
+            Model = "m",
+            Messages = [ChatMessage.UserText("hi"), new ChatMessage { Role = "assistant", Reasoning = "r", ToolCalls = [new ToolCallSpec("c1", "read", "{}")] }],
+        };
+        var on = new OpenAiChatClient(new HttpClient(), new ProviderConfig { Flavor = "unsloth", PreserveThinking = true }).BuildBody(Req());
+        Assert.Equal("r", on["messages"]![1]!["reasoning_content"]!.GetValue<string>());
+        var off = new OpenAiChatClient(new HttpClient(), new ProviderConfig { Flavor = "deepseek", PreserveThinking = false }).BuildBody(Req());
+        Assert.Null(off["messages"]![1]!["reasoning_content"]);
+    }
+
+    [Fact]
     public void QwenCloudBodySendsEnableThinking()
     {
         var body = new OpenAiChatClient(new HttpClient(), new ProviderConfig { Flavor = "qwencloud" })

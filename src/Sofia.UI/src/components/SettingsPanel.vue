@@ -199,6 +199,18 @@ async function toggleProvider(p: Provider): Promise<void> {
   }
 }
 
+async function togglePreserveThinking(p: Provider): Promise<void> {
+  if (providerBusy.value) return
+  providerBusy.value = p.id
+  try {
+    replaceProvider(await api<Provider>('PATCH', `/api/providers/${p.id}`, { preserveThinking: !p.preserveThinking }))
+  } catch (e) {
+    catalogError.value = failure(e)
+  } finally {
+    providerBusy.value = null
+  }
+}
+
 async function removeProvider(p: Provider): Promise<void> {
   if (providerBusy.value) return
   providerBusy.value = p.id
@@ -1078,6 +1090,17 @@ onBeforeUnmount(stopEvents)
                       @click="toggleProvider(p)"
                     >
                       {{ p.enabled ? 'Disable' : 'Enable' }}
+                    </button>
+                    <button
+                      v-if="p.type === 'openai'"
+                      class="mini-btn"
+                      type="button"
+                      :aria-pressed="p.preserveThinking"
+                      title="Resend earlier reasoning (reasoning_content) with the history"
+                      :disabled="providerBusy === p.id"
+                      @click="togglePreserveThinking(p)"
+                    >
+                      Preserve thinking: {{ p.preserveThinking ? 'on' : 'off' }}
                     </button>
                     <button
                       v-if="p.custom"
