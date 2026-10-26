@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
 
 import { useHarness } from '@/composables/useHarness'
 import { useShortcut } from '@/composables/useShortcuts'
@@ -38,6 +38,9 @@ const { t } = useI18n()
 const fileInput = ref<HTMLInputElement | null>(null)
 const root = ref<HTMLElement | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
+// Popup list bodies ("/" palette and "@" agents); used to keep the active row visible.
+const mentionList = ref<HTMLElement | null>(null)
+const paletteList = ref<HTMLElement | null>(null)
 const modelPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
 const permissionPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
 const reasoningPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
@@ -365,7 +368,18 @@ const filteredMentions = computed(() => {
 const mentionVisible = computed(() => mentionOpen.value && filteredMentions.value.length > 0)
 watch(mentionQuery, () => {
   mentionIndex.value = 0
+  scrollActiveItemIntoView(mentionList, 0)
 })
+
+/** Keeps the highlighted row of a popup list inside its scroll viewport. */
+function scrollActiveItemIntoView(list: Ref<HTMLElement | null>, index: number): void {
+  void nextTick(() => {
+    list.value?.querySelectorAll('.cmd-item')[index]?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
+watch(mentionIndex, (next) => scrollActiveItemIntoView(mentionList, next))
+watch(paletteIndex, (next) => scrollActiveItemIntoView(paletteList, next))
 
 function closeMention(): void {
   mentionOpen.value = false
@@ -386,6 +400,9 @@ function updateMention(): void {
   mentionRange = { start: caret - match[2].length - 1, end: caret }
   mentionQuery.value = match[2]
   mentionOpen.value = true
+  // Re-opening the popup must start from the first row (the watcher above only
+  // fires when the query text itself changes).
+  if (!wasOpen) mentionIndex.value = 0
   // Agents are files the user (or an LLM) may have just added: re-read them when the popup opens.
   if (!wasOpen) void refreshAgents()
 }
@@ -575,7 +592,7 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
 
       <div class="input-box">
         <!-- "@" agent mentions: lists the subagents the request can be handed to. -->
-        <div v-if="mentionVisible" class="cmd-palette" role="listbox" aria-label="Agents">
+        <div v-if="mentionVisible" ref="mentionList" class="cmd-palette" role="listbox" aria-label="Agents">
           <button
             v-for="(a, i) in filteredMentions"
             :key="a.id"
@@ -595,7 +612,7 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
         </div>
 
         <!-- SOF-14: "/" command palette popover, anchored above the input. -->
-        <div v-if="paletteOpen && !mentionVisible" class="cmd-palette" role="listbox" aria-label="Server commands">
+        <div v-if="paletteOpen && !mentionVisible" ref="paletteList" class="cmd-palette" role="listbox" aria-label="Server commands">
           <p v-if="commandsLoading && !commands.length" class="cmd-note">Loading commands…</p>
           <p v-else-if="!filteredCommands.length" class="cmd-note">
             No server commands{{ paletteQuery ? ` matching “${paletteQuery}”` : ' on this server' }}.

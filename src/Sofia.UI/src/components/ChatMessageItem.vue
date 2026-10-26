@@ -26,7 +26,7 @@ const props = defineProps<{
   cacheBreak?: CacheBreakInfo | null
 }>()
 const { t } = useI18n()
-const { resolvePermissionRequest, answerFormQuestion, confirmFormQuestions, revertMessage, retryMessage, openConversation } =
+const { resolvePermissionRequest, answerFormQuestion, confirmFormQuestions, revertMessage, branchMessage, retryMessage, openConversation } =
   useHarness()
 
 // Reasoning is "live" while this message is still streaming and the model has
@@ -180,6 +180,14 @@ const retrying = ref(false)
 const retryConfirmOpen = ref(false)
 const retryConfirmBtn = ref<HTMLButtonElement | null>(null)
 const revertError = ref<string | null>(null)
+const branching = ref(false)
+
+async function branchOut(): Promise<void> {
+  if (branching.value || props.message.local) return
+  branching.value = true
+  revertError.value = await branchMessage(props.message.id)
+  branching.value = false
+}
 
 async function confirmRevert(): Promise<void> {
   if (reverting.value || props.message.local) return
@@ -699,8 +707,19 @@ function closeLightbox(): void {
         </div>
       </div>
 
-      <!-- Message actions, bottom-right: Retry for failed messages, Revert otherwise. -->
+      <!-- Message actions, bottom-right: Branch out, plus Retry for failed messages or Revert otherwise. -->
       <div v-if="!pending && (failed || !message.local)" class="msg-actions">
+        <button
+          v-if="!message.local"
+          class="msg-revert msg-revert--branch"
+          type="button"
+          title="Branch out: copies the conversation up to this message into a new one"
+          :disabled="branching"
+          @click="branchOut"
+        >
+          <SofiaIcon name="branch" :size="'0.8rem'" />
+          <span>{{ branching ? 'Branching…' : 'Branch out' }}</span>
+        </button>
         <button
           v-if="failed"
           class="msg-revert msg-revert--retry"
@@ -842,6 +861,7 @@ function closeLightbox(): void {
 .msg-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 0.35rem;
   margin-top: 0.3rem;
 }
 
@@ -877,6 +897,10 @@ function closeLightbox(): void {
 
 .msg-revert--retry {
   color: var(--sofia-text-muted);
+}
+
+.msg-revert--branch:hover:not(:disabled) {
+  color: var(--sofia-primary);
 }
 
 .msg-revert--retry:hover:not(:disabled) {

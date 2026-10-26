@@ -156,6 +156,18 @@ public sealed class AgentLoopTests : IDisposable
         Assert.Equal("added", diff[0].GetProperty("status").GetString());
         Assert.Equal("hello.txt", diff[0].GetProperty("file").GetString());
 
+        // Branching at the first tool-calling reply copies the history up to there, snapshots included.
+        var toolMessageId = messages.First(m => m.TryGetProperty("toolCalls", out _)).GetProperty("id").GetString();
+        var branch = await Post(http, $"/api/sessions/{sessionId}/branch", new { messageId = toolMessageId });
+        var branchId = branch.GetProperty("id").GetString()!;
+        Assert.NotEqual(sessionId, branchId);
+        Assert.Equal("create hello.txt (branch)", branch.GetProperty("title").GetString());
+        var branchMessages = branch.GetProperty("messages").EnumerateArray().ToList();
+        Assert.Equal(messages.IndexOf(messages.First(m => m.TryGetProperty("toolCalls", out _))) + 1, branchMessages.Count);
+        Assert.DoesNotContain(branchMessages, m => messages.Any(o => o.GetProperty("id").GetString() == m.GetProperty("id").GetString()));
+        var branchDiff = await http.GetFromJsonAsync<JsonElement>($"/api/sessions/{branchId}/diff");
+        Assert.Equal("hello.txt", branchDiff[0].GetProperty("file").GetString());
+
         // Reverting the prompt removes the created file and the transcript from that point on.
         var userId = messages.First(m => m.GetProperty("role").GetString() == "user").GetProperty("id").GetString();
         var revert = await Post(http, $"/api/sessions/{sessionId}/revert", new { messageId = userId });
@@ -300,6 +312,41 @@ public sealed class AgentLoopTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
         tree = await http.GetFromJsonAsync<JsonElement>("/api/workspaces");
         Assert.Equal(0, tree.EnumerateArray().First(w => w.GetProperty("id").GetString() == wsId).GetProperty("conversations").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task ReordersWorkspacesAndConversations()
+    {
+        var http = _factory.CreateClient();
+        var folder = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var folderId = folder.GetProperty("id").GetString()!;
+        var chatA = await Post(http, "/api/workspaces", new { kind = "chat", name = "A" });
+        var chatB = await Post(http, "/api/workspaces", new { kind = "chat", name = "B" });
+        var chatAId = chatA.GetProperty("id").GetString()!;
+        var chatBId = chatB.GetProperty("id").GetString()!;
+
+        // The tree order is manual: whatever the client sends comes back from GET.
+        var reordered = await http.PutAsJsonAsync("/api/workspaces/order", new { ids = new[] { chatBId, chatAId, folderId } });
+        Assert.Equal(HttpStatusCode.NoContent, reordered.StatusCode);
+        var tree = (await http.GetFromJsonAsync<JsonElement>("/api/workspaces")).EnumerateArray().ToList();
+        Assert.Equal([chatBId, chatAId, folderId], tree.Select(w => w.GetProperty("id").GetString()));
+
+        // Ids the server does not know are ignored instead of dropping the tree.
+        await http.PutAsJsonAsync("/api/workspaces/order", new { ids = new[] { folderId, chatAId, chatBId, "ws_missing" } });
+        tree = (await http.GetFromJsonAsync<JsonElement>("/api/workspaces")).EnumerateArray().ToList();
+        Assert.Equal([folderId, chatAId, chatBId], tree.Select(w => w.GetProperty("id").GetString()));
+
+        // Conversations keep their own manual order inside a workspace.
+        var second = await Post(http, $"/api/workspaces/{folderId}/sessions", new { title = "second" });
+        var secondId = second.GetProperty("id").GetString()!;
+        var firstId = tree.First(w => w.GetProperty("id").GetString() == folderId)
+            .GetProperty("conversations")[0].GetProperty("id").GetString()!;
+        var sessions = await http.PutAsJsonAsync($"/api/workspaces/{folderId}/sessions/order", new { ids = new[] { secondId, firstId } });
+        Assert.Equal(HttpStatusCode.NoContent, sessions.StatusCode);
+        tree = (await http.GetFromJsonAsync<JsonElement>("/api/workspaces")).EnumerateArray().ToList();
+        var convIds = tree.First(w => w.GetProperty("id").GetString() == folderId).GetProperty("conversations")
+            .EnumerateArray().Select(c => c.GetProperty("id").GetString()).ToList();
+        Assert.Equal([secondId, firstId], convIds);
     }
 
     [Fact]

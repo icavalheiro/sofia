@@ -18,7 +18,7 @@ namespace Sofia.Server.Api;
 public sealed record CreateWorkspaceRequest(string? Kind, string? Path, string? Name, string? Icon, string? ModelId);
 public sealed record UpdateWorkspaceRequest(string? Name, string? Icon, string? ModelId, bool? Expanded, int? Order);
 public sealed record CreateSessionRequest(string? Title);
-public sealed record ReorderSessionsRequest(List<string>? Ids);
+public sealed record ReorderRequest(List<string>? Ids);
 public sealed record UpdateSessionRequest(string? Title, string? ModelId, string? Agent, string? PermissionMode, string? ReasoningMode);
 public sealed record CommandRequest(string Name, string? Arguments);
 public sealed record RevertRequest(string MessageId);
@@ -127,7 +127,13 @@ public static class SessionEndpoints
             return Results.Ok(store.CreateSession(workspace, body?.Title, template));
         });
 
-        api.MapPut("/workspaces/{id}/sessions/order", (string id, ReorderSessionsRequest body, SofiaDb db, SessionStore store) =>
+        api.MapPut("/workspaces/order", (ReorderRequest body, SessionStore store) =>
+        {
+            store.ReorderWorkspaces(body.Ids ?? []);
+            return Results.NoContent();
+        });
+
+        api.MapPut("/workspaces/{id}/sessions/order", (string id, ReorderRequest body, SofiaDb db, SessionStore store) =>
         {
             _ = db.Workspaces.FindById(id) ?? throw new NotFoundException("Workspace not found.");
             store.Reorder(id, body.Ids ?? []);
@@ -211,6 +217,12 @@ public static class SessionEndpoints
         {
             var (removed, restored) = agents.Revert(id, body.MessageId);
             return Results.Ok(new { removed, restoredFiles = restored });
+        });
+
+        api.MapPost("/sessions/{id}/branch", (string id, RevertRequest body, AgentService agents, SofiaDb db) =>
+        {
+            var branch = agents.Branch(id, body.MessageId);
+            return Results.Ok(WithMessages(branch, db.SessionMessages(branch.Id)));
         });
 
         api.MapPost("/sessions/{id}/permissions/{requestId}", (string id, string requestId, PermissionReplyRequest body, AgentService agents) =>

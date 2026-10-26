@@ -1,18 +1,18 @@
 <p align="center">
   <img src="brand/logo.png" alt="Sofia logo" width="200">
 </p>
+<p align="center">
+  <img src="https://img.shields.io/badge/C%23-blue.svg" alt="C#" />
+  <img src="https://img.shields.io/badge/LiteDB-green.svg" alt="LiteDB" />
+  <img src="https://img.shields.io/badge/TypeScript-blue.svg" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vue-blue.svg" alt="Vue" />
+  <img src="https://img.shields.io/badge/Vite-cyan.svg" alt="Vite" />
+  <img src="https://img.shields.io/badge/Brasil-009879?style=for-the-badge&logo=brazil" alt="Brazil Flag" />
+</p>
 
 <h1 align="center">Sofia</h1>
 
-Sofia is a local AI harness for everyday work: an ASP.NET agent server and a
-carefully designed web interface. It is built from scratch — no other harness
-underneath — following the design of [pi.dev](https://pi.dev) and extending
-it with everything the interface offers: workspaces and chat groups, a rich
-transcript (reasoning, tool, permission, question and summary cards),
-permission and reasoning modes, steering and queued follow-ups, parallel
-subagents, MCP servers, change tracking with per-message revert, git
-worktrees, one-click open in the native terminal, live metrics and context usage, six UI
-languages.
+Sofia is a local AI harness—an ASP.NET Core agent server and a Vue web interface, built from scratch (following [pi.dev](https://pi.dev)). It provides a comprehensive environment for AI development, featuring workspaces, parallel subagents, MCP support, change tracking, and local model discovery (Ollama, Unsloth, etc.).
 
 ## How it fits together
 

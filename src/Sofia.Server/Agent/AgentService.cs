@@ -272,6 +272,15 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         return (removed, restored);
     }
 
+    public Session Branch(string sessionId, string messageId)
+    {
+        var (session, workspace) = Load(sessionId);
+        if (IsActive(sessionId)) throw new ConflictException("Stop the running reply before branching.");
+        var target = Db.Messages.FindById(messageId);
+        if (target is null || target.SessionId != sessionId) throw new NotFoundException("Message not found in this session.");
+        return Store.BranchSession(session, workspace, target);
+    }
+
     public Dictionary<string, string> Statuses()
     {
         var result = new Dictionary<string, string>();

@@ -24,6 +24,7 @@ const {
   archiveConversation,
   pinConversation,
   reorderConversations,
+  reorderWorkspaces,
   restoreConversation,
   deleteConversation,
 } = useHarness()
@@ -127,45 +128,103 @@ async function togglePin(conv: Conv): Promise<void> {
 }
 
 // --- drag to reorder (mouse) --------------------------------------------------
+// Workspace rows and conversation rows share one drag state. A row only moves
+// inside its own section: folders with folders, chat groups with chat groups,
+// pinned conversations with pinned conversations.
 
-const dragId = ref<string | null>(null)
-/** Row under the pointer and which half of it: the dragged row lands before or after it. */
-const dropTarget = ref<{ id: string; after: boolean } | null>(null)
+type DragKind = 'workspace' | 'conversation'
 
-function onDragStart(c: Conv, event: DragEvent): void {
-  dragId.value = c.id
+/** Row being dragged, and the row under the pointer (plus the half it lands in). */
+const dragging = ref<{ kind: DragKind; id: string } | null>(null)
+const dropTarget = ref<{ kind: DragKind; id: string; after: boolean } | null>(null)
+
+function onDragStart(kind: DragKind, id: string, event: DragEvent): void {
+  dragging.value = { kind, id }
   if (!event.dataTransfer) return
   event.dataTransfer.effectAllowed = 'move'
-  event.dataTransfer.setData('text/plain', c.id)
+  event.dataTransfer.setData('text/plain', id)
 }
 
-function canDropOn(ws: Ws, target: Conv): boolean {
-  const dragged = dragId.value ? visibleConvs(ws).find((c) => c.id === dragId.value) : undefined
-  return !!dragged && dragged.id !== target.id && !!dragged.pinned === !!target.pinned
-}
-
-function onDragOver(ws: Ws, c: Conv, event: DragEvent): void {
-  if (!canDropOn(ws, c)) return
+/** Marks the hovered row as a drop target when a drag of the same kind can land on it. */
+function onDragOver(kind: DragKind, id: string, allowed: boolean, event: DragEvent): void {
+  if (!allowed) return
   event.preventDefault()
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  dropTarget.value = { id: c.id, after: event.clientY > rect.top + rect.height / 2 }
+  dropTarget.value = { kind, id, after: event.clientY > rect.top + rect.height / 2 }
 }
 
-function onDrop(ws: Ws, c: Conv, event: DragEvent): void {
-  if (!canDropOn(ws, c)) return
+/** Clears the marker when the pointer leaves the row (child elements fire `dragleave` too). */
+function onDragLeave(kind: DragKind, id: string, event: DragEvent): void {
+  const row = event.currentTarget as HTMLElement | null
+  if (row && event.relatedTarget instanceof Node && row.contains(event.relatedTarget)) return
+  if (dropTarget.value?.kind === kind && dropTarget.value.id === id) dropTarget.value = null
+}
+
+/** `'before'` / `'after'` for the row the dragged one would land next to (drives the CSS indicator). */
+function dropSide(kind: DragKind, id: string): 'before' | 'after' | null {
+  const target = dropTarget.value
+  if (!target || target.kind !== kind || target.id !== id) return null
+  return target.after ? 'after' : 'before'
+}
+
+/** Moves `draggedId` next to `targetId`, keeping every other id in place. */
+function moveId(ids: string[], draggedId: string, targetId: string, after: boolean): string[] {
+  const next = ids.filter((id) => id !== draggedId)
+  const at = next.indexOf(targetId)
+  next.splice(at < 0 ? next.length : at + (after ? 1 : 0), 0, draggedId)
+  return next
+}
+
+function endDrag(): void {
+  dragging.value = null
+  dropTarget.value = null
+}
+
+// -- conversations
+
+function canDropConversation(ws: Ws, target: Conv): boolean {
+  if (dragging.value?.kind !== 'conversation' || dragging.value.id === target.id) return false
+  const dragged = visibleConvs(ws).find((c) => c.id === dragging.value?.id)
+  return !!dragged && !!dragged.pinned === !!target.pinned
+}
+
+function onConversationDrop(ws: Ws, c: Conv, event: DragEvent): void {
+  if (!canDropConversation(ws, c)) return
   event.preventDefault()
+  const draggedId = dragging.value!.id
   const after = dropTarget.value?.after ?? false
-  const ids = visibleConvs(ws).map((x) => x.id).filter((id) => id !== dragId.value)
-  ids.splice(ids.indexOf(c.id) + (after ? 1 : 0), 0, dragId.value as string)
+  const ids = moveId(visibleConvs(ws).map((x) => x.id), draggedId, c.id, after)
   endDrag()
   playSound('select')
   void reorderConversations(ws.id, ids)
 }
 
-function endDrag(): void {
-  dragId.value = null
-  dropTarget.value = null
+// -- workspaces / chat groups
+
+/** A workspace only moves inside its own section (folders with folders, chat groups with chat groups). */
+function canDropWorkspace(target: Ws): boolean {
+  if (dragging.value?.kind !== 'workspace' || dragging.value.id === target.id) return false
+  const dragged = state.workspaces.find((w) => w.id === dragging.value?.id)
+  return !!dragged && dragged.kind === target.kind
+}
+
+function onWorkspaceDrop(target: Ws, event: DragEvent): void {
+  if (!canDropWorkspace(target)) return
+  event.preventDefault()
+  const draggedId = dragging.value!.id
+  const after = dropTarget.value?.after ?? false
+  const intoChats = target.kind === 'chat'
+  const folders = folderWorkspaces.value.map((w) => w.id)
+  const chats = chatGroups.value.map((w) => w.id)
+  // The tree is stored globally: workspace folders first, then the chat groups.
+  const ids = [
+    ...(intoChats ? folders : moveId(folders, draggedId, target.id, after)),
+    ...(intoChats ? moveId(chats, draggedId, target.id, after) : chats),
+  ]
+  endDrag()
+  playSound('select')
+  void reorderWorkspaces(ids)
 }
 
 /** Opens a row. Enter on one of the row's own buttons must not also select it. */
@@ -362,11 +421,23 @@ useShortcut('session.next', () => stepSession(1))
         <div v-for="ws in section.items" :key="ws.id" class="workspace">
           <div
             class="ws-row"
-            :class="{ 'ws-row--active': ws.id === activeWorkspace?.id, 'ws-row--working': wsStatus(ws) === 'working' && !ws.expanded }"
+            :class="{
+              'ws-row--active': ws.id === activeWorkspace?.id,
+              'ws-row--working': wsStatus(ws) === 'working' && !ws.expanded,
+              'ws-row--dragging': dragging?.kind === 'workspace' && dragging.id === ws.id,
+              'row--drop-before': dropSide('workspace', ws.id) === 'before',
+              'row--drop-after': dropSide('workspace', ws.id) === 'after',
+            }"
+            :draggable="true"
             role="button"
             tabindex="0"
             @click="playSound('click'); toggleWorkspace(ws.id)"
             @keydown.enter="toggleWorkspace(ws.id)"
+            @dragstart="onDragStart('workspace', ws.id, $event)"
+            @dragover="onDragOver('workspace', ws.id, canDropWorkspace(ws), $event)"
+            @dragleave="onDragLeave('workspace', ws.id, $event)"
+            @drop="onWorkspaceDrop(ws, $event)"
+            @dragend="endDrag"
           >
             <SofiaIcon class="ws-caret" :name="ws.expanded ? 'chevronDown' : 'chevronRight'" />
             <!-- The workspace's state replaces the folder icon; hovering shows the row actions instead. -->
@@ -412,9 +483,9 @@ useShortcut('session.next', () => stepSession(1))
                 'conv-row--active': c.id === state.activeConversationId,
                 'conv-row--working': convStatus(c) === 'working',
                 'conv-row--sub': depth > 0,
-                'conv-row--dragging': c.id === dragId,
-                'conv-row--drop-before': dropTarget?.id === c.id && !dropTarget.after,
-                'conv-row--drop-after': dropTarget?.id === c.id && dropTarget.after,
+                'conv-row--dragging': dragging?.kind === 'conversation' && dragging.id === c.id,
+                'row--drop-before': dropSide('conversation', c.id) === 'before',
+                'row--drop-after': dropSide('conversation', c.id) === 'after',
               }"
               :style="depth > 0 ? { marginLeft: `${depth * 0.875}rem`, width: `calc(100% - ${depth * 0.875}rem)` } : undefined"
               :draggable="depth === 0"
@@ -422,10 +493,10 @@ useShortcut('session.next', () => stepSession(1))
               tabindex="0"
               @click="selectConversation(ws.id, c.id)"
               @keydown.enter="openRow(ws, c, $event)"
-              @dragstart="depth === 0 && onDragStart(c, $event)"
-              @dragover="depth === 0 && onDragOver(ws, c, $event)"
-              @dragleave="dropTarget?.id === c.id && (dropTarget = null)"
-              @drop="depth === 0 && onDrop(ws, c, $event)"
+              @dragstart="depth === 0 && onDragStart('conversation', c.id, $event)"
+              @dragover="depth === 0 && onDragOver('conversation', c.id, canDropConversation(ws, c), $event)"
+              @dragleave="depth === 0 && onDragLeave('conversation', c.id, $event)"
+              @drop="depth === 0 && onConversationDrop(ws, c, $event)"
               @dragend="endDrag"
             >
               <!-- The conversation's state replaces the chat icon; hovering shows the row actions instead. -->
@@ -1116,16 +1187,17 @@ useShortcut('session.next', () => stepSession(1))
   opacity: 0;
 }
 
-/* Drag to reorder. */
+/* Drag to reorder (workspaces and conversations). */
+.ws-row--dragging,
 .conv-row--dragging {
   opacity: 0.4;
 }
 
-.conv-row--drop-before {
+.row--drop-before {
   box-shadow: 0 -2px 0 0 var(--sofia-primary);
 }
 
-.conv-row--drop-after {
+.row--drop-after {
   box-shadow: 0 2px 0 0 var(--sofia-primary);
 }
 

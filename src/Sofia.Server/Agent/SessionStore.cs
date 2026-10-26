@@ -77,6 +77,63 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
         return session;
     }
 
+    /// <summary>
+    /// Forks a conversation: a new session with a copy of the history up to and including
+    /// <paramref name="target"/> (subagent conversations and file snapshots travel with it).
+    /// The source is left untouched; workspace files are shared, not forked.
+    /// </summary>
+    public Session BranchSession(Session source, Workspace workspace, Message target)
+    {
+        var branch = CreateSession(workspace, $"{source.Title} (branch)", source);
+        branch.ActiveSkills = [.. source.ActiveSkills];
+        branch.AllowedTools = [.. source.AllowedTools];
+        var copied = CopyHistory(source.Id, branch, target.Seq);
+        foreach (var m in copied) if (m.Usage is { } usage) branch.Usage.Add(usage);
+        branch.KnowledgeSeq = copied.Count == 0 ? 0 : copied.Max(m => m.Seq);
+        SaveSession(branch);
+        return branch;
+    }
+
+    private List<Message> CopyHistory(string fromId, Session to, long maxSeq)
+    {
+        var copies = new List<Message>();
+        var newIds = new Dictionary<string, Message>();
+        foreach (var m in db.SessionMessages(fromId).Where(m => m.Seq <= maxSeq))
+        {
+            var oldId = m.Id;
+            m.Id = Ids.New("msg");
+            m.SessionId = to.Id;
+            m.Seq = db.NextSeq();
+            foreach (var call in m.ToolCalls ?? [])
+                if (call.ChildSessionId is { } childId && db.Sessions.FindById(childId) is { } child)
+                    call.ChildSessionId = CloneChild(child, to).Id;
+            db.Messages.Insert(m);
+            copies.Add(m);
+            newIds[oldId] = m;
+        }
+        foreach (var snapshot in db.Snapshots.Find(s => s.SessionId == fromId).ToList())
+        {
+            if (!newIds.TryGetValue(snapshot.MessageId, out var message)) continue;
+            snapshot.Id = Ids.New("snp");
+            snapshot.SessionId = to.Id;
+            snapshot.MessageId = message.Id;
+            snapshot.MessageSeq = message.Seq;
+            db.Snapshots.Insert(snapshot);
+        }
+        return copies;
+    }
+
+    private Session CloneChild(Session child, Session parent)
+    {
+        var workspace = db.Workspaces.FindById(child.WorkspaceId) ?? throw new NotFoundException("Workspace not found.");
+        var clone = CreateSession(workspace, child.Title, child, parent.Id, child.Agent);
+        clone.Usage = child.Usage.Clone();
+        clone.Context.Used = 0;
+        CopyHistory(child.Id, clone, long.MaxValue);
+        SaveSession(clone);
+        return clone;
+    }
+
     public void SaveSession(Session session, bool publish = true)
     {
         db.Sessions.Update(session);
@@ -112,6 +169,29 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
             if (session is null || session.WorkspaceId != workspaceId || session.Order == i + 1) continue;
             session.Order = i + 1;
             db.Sessions.Update(session);
+        }
+    }
+
+    /// <summary>
+    /// Stores the manual order of the sidebar tree (first id = top). The UI sends
+    /// the folder workspaces first and the chat groups after them; workspaces the
+    /// client does not know (created meanwhile by another tab) keep their place at
+    /// the end instead of being lost.
+    /// </summary>
+    public void ReorderWorkspaces(IReadOnlyList<string> ids)
+    {
+        var all = db.Workspaces.FindAll().OrderBy(w => w.Order).ThenBy(w => w.CreatedAt).ToList();
+        var byId = all.ToDictionary(w => w.Id);
+        var ordered = ids.Select(id => byId.GetValueOrDefault(id)).OfType<Workspace>().ToList();
+        var known = ordered.Select(w => w.Id).ToHashSet();
+        ordered.AddRange(all.Where(w => !known.Contains(w.Id)));
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var workspace = ordered[i];
+            if (workspace.Order == i + 1) continue;
+            workspace.Order = i + 1;
+            db.Workspaces.Update(workspace);
+            PublishWorkspace(workspace);
         }
     }
 

@@ -1003,6 +1003,26 @@ export function useHarness() {
     return null
   }
 
+  /**
+   * Stores the manual order of the sidebar tree (`orderedIds`: the workspace
+   * folder section first, then the chat groups — first id = top of its section).
+   */
+  async function reorderWorkspaces(orderedIds: string[]): Promise<string | null> {
+    const byId = new Map(state.workspaces.map((w) => [w.id, w]))
+    orderedIds.forEach((id, index) => {
+      const ws = byId.get(id)
+      if (ws) ws.order = index + 1
+    })
+    sortWorkspaces()
+    try {
+      await api('PUT', '/api/workspaces/order', { ids: orderedIds })
+    } catch (e) {
+      state.error = errorText(e)
+      return state.error
+    }
+    return null
+  }
+
   /** Brings an archived conversation back into its workspace's list. */
   async function restoreConversation(conversationId: string): Promise<string | null> {
     try {
@@ -1245,6 +1265,23 @@ export function useHarness() {
     return error
   }
 
+  /**
+   * Forks the conversation at `messageId` into a new one (history up to and
+   * including that message) and opens it. Returns an error message or null.
+   */
+  async function branchMessage(messageId: string): Promise<string | null> {
+    const conv = activeConversation.value
+    if (!conv) return 'No active conversation.'
+    if (state.isReplying) return 'Stop the running reply before branching.'
+    try {
+      const s = await api<SessionDto>('POST', `/api/sessions/${conv.id}/branch`, { messageId })
+      await openConversation(s.id)
+      return null
+    } catch (e) {
+      return errorText(e)
+    }
+  }
+
   /** Server-side revert to before `messageId`; drops the removed messages locally. */
   async function revertTo(conv: Conversation, messageId: string): Promise<string | null> {
     try {
@@ -1371,6 +1408,7 @@ export function useHarness() {
     archiveConversation,
     pinConversation,
     reorderConversations,
+    reorderWorkspaces,
     restoreConversation,
     deleteConversation,
     toggleWorkspace,
@@ -1391,6 +1429,7 @@ export function useHarness() {
     runCommand,
     cancelReply,
     revertMessage,
+    branchMessage,
     retryMessage,
     resolvePermissionRequest,
     answerFormQuestion,

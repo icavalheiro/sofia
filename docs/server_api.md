@@ -205,12 +205,14 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `POST` | `/api/sessions/{id}/unarchive` | – | `SessionDto` (`archived` cleared) |
 | `POST` | `/api/sessions/{id}/pin` | – | `SessionDto` (`pinned: true`; first among the pinned) |
 | `POST` | `/api/sessions/{id}/unpin` | – | `SessionDto` (`pinned` cleared) |
+| `PUT` | `/api/workspaces/order` | `{ ids: string[] }` | `204` (manual order of the sidebar tree: first id = top, workspace folders first and chat groups after them; ids the server does not know are ignored and the workspaces it knows but the client omitted keep their place at the end) |
 | `PUT` | `/api/workspaces/{id}/sessions/order` | `{ ids: string[] }` | `204` (manual order, first id = top; lists are sorted pinned first, then by this order, then by recency) |
 | `POST` | `/api/sessions/{id}/prompt` | `PromptRequest` | `{ messageId }` |
 | `POST` | `/api/sessions/{id}/command` | `{ name, arguments? }` | `{ messageId }` |
 | `POST` | `/api/sessions/{id}/abort` | – | `204` |
 | `POST` | `/api/sessions/{id}/compact` | – | `204` (summary arrives as a `message.created` with `summary: true`) |
 | `POST` | `/api/sessions/{id}/revert` | `{ messageId }` | `{ removed: string[], restoredFiles: string[] }` |
+| `POST` | `/api/sessions/{id}/branch` | `{ messageId }` | `SessionDto` with `messages` (new session in the same workspace titled "<title> (branch)", holding a copy of the history up to and including `messageId`; subagent conversations and file snapshots are copied too, workspace files are not forked; `409` while a reply is running; the new session also arrives as `session.created`) |
 | `POST` | `/api/sessions/{id}/permissions/{requestId}` | `{ decision: 'once' \| 'always' \| 'reject' }` | `204` |
 | `POST` | `/api/sessions/{id}/questions/{formId}` | `{ answers: (string \| string[] \| null)[] }` | `204` |
 | `GET` | `/api/sessions/{id}/diff` | – | `FileDiffDto[]` (files changed by this session) |
