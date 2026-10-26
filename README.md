@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/TypeScript-blue.svg" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Vue-blue.svg" alt="Vue" />
   <img src="https://img.shields.io/badge/Vite-cyan.svg" alt="Vite" />
-  <img src="https://img.shields.io/badge/Brasil-009879?style=for-the-badge&logo=brazil" alt="Brazil Flag" />
+  <img src="https://flagcdn.com/br.svg" alt="Brazil" height="28" />
 </p>
 
 <h1 align="center">Sofia</h1>
