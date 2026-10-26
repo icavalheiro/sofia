@@ -7,7 +7,10 @@
   <img src="https://img.shields.io/badge/TypeScript-blue.svg" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Vue-blue.svg" alt="Vue" />
   <img src="https://img.shields.io/badge/Vite-cyan.svg" alt="Vite" />
-  <img src="https://flagcdn.com/br.svg" alt="Brazil" height="28" />
+</p>
+<p align="center">
+  <img src="https://flagcdn.com/br.svg" alt="Brazil" height="28" /><br/>
+  Made in Brazil.
 </p>
 
 <h1 align="center">Sofia</h1>
