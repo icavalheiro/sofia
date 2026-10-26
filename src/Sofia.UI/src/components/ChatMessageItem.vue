@@ -1288,6 +1288,8 @@ function closeLightbox(): void {
   flex-direction: column;
   gap: 0.4rem;
   max-width: 74ch;
+  width: 100%;
+  margin-inline: auto;
 }
 
 .compact-notice {
