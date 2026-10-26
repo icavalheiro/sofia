@@ -127,7 +127,7 @@ interface ToolCallDto {
   input?: string          // pretty JSON arguments
   output?: string
   error?: string
-  duration: string        // '1.2s' / 'running…'
+  duration: string        // largest unit that has started: '873ms' / '1.2s' / '2.25m' / '1.05h', or 'running…'
   childSessionId?: string // task tool: the subagent session
   images?: AttachmentDto[] // media the tool produced: screenshots, or images/audio/video from `read` (served from /api/attachments/{id})
 }

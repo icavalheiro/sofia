@@ -171,9 +171,18 @@ function compactTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`
 }
 
+/** Elapsed time in the largest unit that has started: 12.4s, 2.25m, 1.05h. */
+function formatDuration(ms: number): string {
+  const hours = ms / 3_600_000
+  if (hours >= 1) return `${hours.toFixed(2)}h`
+  const minutes = ms / 60_000
+  if (minutes >= 1) return `${minutes.toFixed(2)}m`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
 const costLabel = computed(() => `$${metrics.sessionCost.toFixed(4)}`)
 const tpsLabel = computed(() => `${metrics.tokensPerSec} tok/s`)
-const durationLabel = computed(() => `${(metrics.durationMs / 1000).toFixed(1)}s`)
+const durationLabel = computed(() => formatDuration(metrics.durationMs))
 
 // Usage.input is the whole prompt (cached + uncached), so hit % = cacheRead / input.
 // The metric never disappears: before the first request it reads 0% like the other

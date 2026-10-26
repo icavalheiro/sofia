@@ -1,8 +1,10 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Sofia.Server.Agent;
 using Sofia.Server.Changes;
 using Sofia.Server.Context;
 using Sofia.Server.Domain;
+using Sofia.Server.Infrastructure;
 using Sofia.Server.Mcp;
 using Sofia.Server.Providers;
 using Sofia.Server.Tools;
@@ -564,5 +566,40 @@ public class ParsingTests
     {
         var args = Args.Parse("Sure: {\"path\": \"a.txt\"} done");
         Assert.Equal("a.txt", Args.Required(args, "path"));
+    }
+}
+
+public class TextDurationTests
+{
+    [Theory]
+    [InlineData(0L, "0ms")]
+    [InlineData(873L, "873ms")]
+    [InlineData(999L, "999ms")]
+    [InlineData(1000L, "1.0s")]
+    [InlineData(12_400L, "12.4s")]
+    [InlineData(59_900L, "59.9s")]
+    [InlineData(60_000L, "1.00m")]
+    [InlineData(135_000L, "2.25m")]
+    [InlineData(3_540_000L, "59.00m")]
+    [InlineData(3_600_000L, "1.00h")]
+    [InlineData(3_780_000L, "1.05h")]
+    public void FormatsElapsedInLargestUnitStarted(long ms, string expected) =>
+        Assert.Equal(expected, Text.Duration(TimeSpan.FromMilliseconds(ms)));
+
+    [Fact]
+    public void UsesInvariantDecimalSeparatorWhateverTheHostCulture()
+    {
+        var previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("pt-BR");
+            Assert.Equal("1.0s", Text.Duration(TimeSpan.FromSeconds(1)));
+            Assert.Equal("2.25m", Text.Duration(TimeSpan.FromSeconds(135)));
+            Assert.Equal("1.05h", Text.Duration(TimeSpan.FromSeconds(3780)));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
     }
 }

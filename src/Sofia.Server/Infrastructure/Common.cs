@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -104,8 +105,21 @@ public static class Text
         return line.Length > max ? line[..max] + "…" : line;
     }
 
-    public static string Duration(TimeSpan elapsed) =>
-        elapsed.TotalMilliseconds < 1000 ? $"{(int)elapsed.TotalMilliseconds}ms" : $"{elapsed.TotalSeconds:0.0}s";
+    /// <summary>
+    /// Elapsed time in the largest unit that has started: 873ms, 12.4s, 2.25m, 1.05h.
+    /// Always invariant-culture: the string is sent to the UI as-is.
+    /// </summary>
+    public static string Duration(TimeSpan elapsed)
+    {
+        if (elapsed.TotalMinutes < 1)
+            return elapsed.TotalMilliseconds < 1000
+                ? $"{(int)elapsed.TotalMilliseconds}ms"
+                : Fmt(elapsed.TotalSeconds, "0.0") + "s";
+        if (elapsed.TotalHours < 1) return Fmt(elapsed.TotalMinutes, "0.00") + "m";
+        return Fmt(elapsed.TotalHours, "0.00") + "h";
+
+        static string Fmt(double value, string format) => value.ToString(format, CultureInfo.InvariantCulture);
+    }
 
     public static string NormalizeNewlines(string value) => value.Replace("\r\n", "\n");
 
