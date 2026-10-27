@@ -420,6 +420,16 @@ scratchpad (`scope: 'chat'`, `sessionId` = the chat, or its parent for subagents
 that is **not** returned by `GET /api/knowledge`, never injected into the prompt
 and removed together with the session.
 
+### Memory tool
+
+Agents also have a `memory` tool: a per-workspace key/value store (no HTTP
+endpoint, no event, not injected into the prompt). Actions: `list` (default),
+`get` (`key`), `set` (`key`, `value`; an empty value deletes the key). Keys are
+≤ 100 characters of `[A-Za-z0-9._:/-]`, values ≤ 20 000 characters, ≤ 200 keys per
+workspace; violations come back as a tool error. Entries are shared by all chats
+and subagents of the workspace and removed with it. Allowed in every permission
+mode (`ToolKind.Read`).
+
 | Method | Path | Response |
 | --- | --- | --- |
 | `GET` | `/api/knowledge?workspaceId=&agent=` | `KnowledgeNote[]`, newest first. `workspaceId` keeps that workspace's notes plus all agent notes; `agent` keeps that agent's notes plus all workspace notes |

@@ -23,6 +23,7 @@ public sealed partial class AgentCatalog(SofiaOptions options)
         ["browser"] = "browser", ["playwright"] = "browser",
         ["question"] = "question", ["askuserquestion"] = "question", ["task"] = "task", ["agent"] = "task",
         ["skill"] = "skill", ["sofia_info"] = "sofia_info", ["sofia"] = "sofia_info", ["notes"] = "notes", ["note"] = "notes",
+        ["memory"] = "memory", ["mem"] = "memory",
     };
 
     public IEnumerable<string> GlobalRoots()

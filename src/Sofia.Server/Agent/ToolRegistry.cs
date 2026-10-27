@@ -42,6 +42,7 @@ public sealed class ToolRegistry(
                 "task:explore" => TaskFor(agents.Delegable(dir, readOnlyOnly: true)),
                 "skill" => new SkillTool(skills),
                 "notes" => new NotesTool(knowledge),
+                "memory" => new MemoryTool(db),
                 "sofia_info" => new SofiaInfoTool(options, db, mcp, skills, commands, agents, BaseUrl),
                 _ => null,
             };

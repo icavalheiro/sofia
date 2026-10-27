@@ -34,6 +34,9 @@ public sealed class SofiaDb : IDisposable
         Config = _db.GetCollection<ServerConfig>("config");
         Knowledge = _db.GetCollection<KnowledgeNote>("knowledge");
 
+        Memory = _db.GetCollection<MemoryEntry>("memory");
+
+        Memory.EnsureIndex(x => x.WorkspaceId);
         Knowledge.EnsureIndex(x => x.WorkspaceId);
         Knowledge.EnsureIndex(x => x.Agent);
         Sessions.EnsureIndex(x => x.WorkspaceId);
@@ -55,6 +58,7 @@ public sealed class SofiaDb : IDisposable
     public ILiteCollection<AccessToken> Tokens { get; }
     public ILiteCollection<ServerConfig> Config { get; }
     public ILiteCollection<KnowledgeNote> Knowledge { get; }
+    public ILiteCollection<MemoryEntry> Memory { get; }
 
     /// <summary>Global monotonic message sequence (order inside a session follows it).</summary>
     public long NextSeq()
@@ -68,6 +72,9 @@ public sealed class SofiaDb : IDisposable
 
     public List<Message> SessionMessages(string sessionId) =>
         Messages.Find(m => m.SessionId == sessionId).OrderBy(m => m.Seq).ToList();
+
+    /// <summary>Removes every `memory` entry of a workspace; call it when the workspace is deleted.</summary>
+    public int DeleteWorkspaceMemory(string workspaceId) => Memory.DeleteMany(m => m.WorkspaceId == workspaceId);
 
     public void DeleteSession(string sessionId)
     {

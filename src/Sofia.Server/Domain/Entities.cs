@@ -181,6 +181,17 @@ public sealed class QuestionSetCard
     public string FormId { get; set; } = "";
 }
 
+/// <summary>One key/value pair of a workspace's `memory` store; never injected into the system prompt.</summary>
+public sealed class MemoryEntry
+{
+    [BsonId] public string Id { get; set; } = Infrastructure.Ids.New("mem");
+    public string WorkspaceId { get; set; } = "";
+    public string Key { get; set; } = "";
+    public string Value { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public static class KnowledgeScope
 {
     /// <summary>Facts about one workspace (project conventions, commands, decisions).</summary>

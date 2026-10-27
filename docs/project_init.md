@@ -25,7 +25,7 @@ src/Sofia.Server/
 ├── Providers/                 # OpenAI-compatible + Anthropic streaming clients,
 │                              #   discovery, model catalog, limits/pricing table
 ├── Tools/                     # read, write, edit, ls, find, grep, bash/powershell,
-│                              #   web_fetch, web_search, browser, question, task, skill, notes, sofia_info
+│                              #   web_fetch, web_search, browser, question, task, skill, notes, memory, sofia_info
 ├── Browser/BrowserService.cs  # headless Chromium (Playwright), per-conversation contexts, screencast
 ├── Agent/                     # AgentService, SessionRun (the loop), prompts,
 │                              #   history, tool registry, store, maintenance
@@ -246,6 +246,17 @@ injected into the prompt, hidden from `/api/knowledge`, deleted with the
 session). Subagents read and write the chat notes of the session that spawned
 them. The tool is `ToolKind.Read`: it only touches Sofia's database, so it is
 allowed in every permission mode and in plan/read-only sessions.
+
+The `memory` tool (`Tools/MemoryTool.cs`, in every built-in agent's tool set;
+custom agents list `memory`, alias `mem`) is a per-workspace key/value store over
+the LiteDB `memory` collection (`MemoryEntry`: workspace, key, value, timestamps).
+Actions `list` (default: keys with size and a short preview), `get` (`key`) and
+`set` (`key`, `value`; an empty value deletes the key). Keys ≤ 100 characters of
+`[A-Za-z0-9._:/-]`, values ≤ 20 000 characters, ≤ 200 keys per workspace. Every
+chat and subagent of the workspace shares it. It is **never** injected into the
+system prompt (that would break the frozen per-conversation prompt); the model
+discovers keys with `list`. `ToolKind.Read`, so it works in every permission mode.
+`SofiaDb.DeleteWorkspaceMemory` drops a workspace's entries when it is deleted.
 
 ## Keeping the screen awake
 
