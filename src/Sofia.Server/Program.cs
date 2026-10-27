@@ -27,6 +27,7 @@ if (string.IsNullOrWhiteSpace(options.UiPath))
 {
     var candidates = new[]
     {
+        Path.Combine(AppContext.BaseDirectory, "wwwroot"),
         Path.Combine(builder.Environment.ContentRootPath, "wwwroot"),
         Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "Sofia.UI", "dist")),
     };
