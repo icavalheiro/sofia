@@ -20,6 +20,8 @@ export interface SettingsState {
     autoUpdate: boolean
     telemetry: boolean
     soundEffects: boolean
+    /** Master volume for sound effects, integer 0–100. */
+    soundVolume: number
   }
   appearance: {
     accent: 'brown' | 'beige' | 'slate' | 'custom'
@@ -40,6 +42,7 @@ function defaultState(): SettingsState {
       autoUpdate: false,
       telemetry: false,
       soundEffects: true,
+      soundVolume: 60,
     },
     appearance: {
       accent: 'brown',

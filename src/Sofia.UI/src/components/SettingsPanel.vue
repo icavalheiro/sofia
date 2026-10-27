@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import { useHarness } from '@/composables/useHarness'
 import { useSettings } from '@/composables/useSettings'
+import { SOUND_KEYS, useSound } from '@/composables/useSound'
 import {
   SHORTCUT_GROUPS,
   comboFromEvent,
@@ -40,6 +41,33 @@ const { shortcuts, control, bindingOf, conflictFor, setBinding, resetBinding, re
   useShortcuts()
 
 const { t } = useI18n()
+const { playSound } = useSound()
+
+// --- sound preview ------------------------------------------------------------------
+const previewing = ref(false)
+let previewTimer: ReturnType<typeof setTimeout> | null = null
+
+function previewSounds(): void {
+  if (previewing.value || !settings.general.soundEffects) return
+  previewing.value = true
+  let i = 0
+  const step = (): void => {
+    const key = SOUND_KEYS[i]
+    if (!key || !settings.general.soundEffects) {
+      previewing.value = false
+      previewTimer = null
+      return
+    }
+    playSound(key)
+    i += 1
+    previewTimer = setTimeout(step, 420)
+  }
+  step()
+}
+
+onBeforeUnmount(() => {
+  if (previewTimer) clearTimeout(previewTimer)
+})
 
 type TabId = SettingsTabId
 const tab = ref<TabId>('general')
@@ -742,6 +770,37 @@ onBeforeUnmount(stopEvents)
                   @click="settings.general.soundEffects = !settings.general.soundEffects"
                 ><span class="knob" /></button>
               </label>
+              <label class="row vol-row" :class="{ 'vol-row--off': !settings.general.soundEffects }">
+                <span class="row-text">
+                  <span class="row-title">Volume</span>
+                  <span class="row-sub">Loudness of sound effects.</span>
+                </span>
+                <span class="vol-control">
+                  <input
+                    v-model.number="settings.general.soundVolume"
+                    class="vol-slider"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    aria-label="Sound effects volume"
+                    :disabled="!settings.general.soundEffects"
+                  >
+                  <span class="vol-value" aria-hidden="true">{{ settings.general.soundVolume }}%</span>
+                </span>
+              </label>
+              <div class="row" :class="{ 'vol-row--off': !settings.general.soundEffects }">
+                <span class="row-text">
+                  <span class="row-title">Preview sounds</span>
+                  <span class="row-sub">Plays every effect in order.</span>
+                </span>
+                <button
+                  class="mini-btn"
+                  type="button"
+                  :disabled="previewing || !settings.general.soundEffects"
+                  @click="previewSounds"
+                >{{ previewing ? 'Playing…' : 'Preview' }}</button>
+              </div>
             </div>
 
             <!-- Sofia.Server configuration (GET / PATCH /api/config). -->
@@ -2113,6 +2172,34 @@ onBeforeUnmount(stopEvents)
 .mini-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.vol-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.vol-slider {
+  width: 180px;
+  accent-color: var(--sofia-primary);
+  cursor: pointer;
+}
+
+.vol-slider:disabled {
+  cursor: not-allowed;
+}
+
+.vol-value {
+  min-width: 2.6rem;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--sofia-text-dim, var(--sofia-text-faint));
+  font-variant-numeric: tabular-nums;
+}
+
+.vol-row--off {
+  opacity: 0.55;
 }
 
 .icon-mini {
