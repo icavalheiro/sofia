@@ -23,7 +23,8 @@ public static class NativeTerminal
     /// <summary>Launches a terminal in <paramref name="path"/> (or its folder when it is a file).</summary>
     public static void Open(string path)
     {
-        var dir = Directory.Exists(path) ? path : Path.GetDirectoryName(Path.GetFullPath(path));
+        var full = Path.GetFullPath(path);
+        var dir = Directory.Exists(full) ? full : Path.GetDirectoryName(full);
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) throw new ArgumentException($"Folder not found: {path}");
 
         var psi = Build(dir) ?? throw new ArgumentException("No terminal emulator was found on this machine.");

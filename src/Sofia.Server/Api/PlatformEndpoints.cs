@@ -286,20 +286,22 @@ public static class PlatformEndpoints
         api.MapPost("/open", (OpenRequest body, HttpContext http) =>
         {
             if (!AccessMiddleware.IsLoopback(AccessMiddleware.ClientAddress(http))) return Results.Json(new { error = "Only available locally." }, statusCode: 403);
-            if (!Directory.Exists(body.Path) && !File.Exists(body.Path)) throw new ArgumentException($"Path not found: {body.Path}");
+            if (string.IsNullOrWhiteSpace(body.Path) || body.Path.Contains('\0') || !Path.IsPathRooted(body.Path))
+                throw new ArgumentException("An absolute path is required.");
+            var target = Path.GetFullPath(body.Path);
+            if (!Directory.Exists(target) && !File.Exists(target)) throw new ArgumentException($"Path not found: {target}");
             if (body.App == "terminal")
             {
-                NativeTerminal.Open(body.Path);
+                NativeTerminal.Open(target);
                 return Results.NoContent();
             }
-            var psi = body.App == "vscode"
-                ? OperatingSystem.IsWindows()
-                    ? new ProcessStartInfo("cmd.exe", ["/c", "code", body.Path])
-                    : new ProcessStartInfo("code", [body.Path])
-                : OperatingSystem.IsWindows() ? new ProcessStartInfo("explorer.exe", [body.Path])
-                : OperatingSystem.IsMacOS() ? new ProcessStartInfo("open", [body.Path])
-                : new ProcessStartInfo("xdg-open", [body.Path]);
-            psi.UseShellExecute = false;
+            // Arguments go through ArgumentList (no shell); VS Code on Windows is launched via its code.cmd shim, never `cmd /c`.
+            var codeExe = body.App == "vscode" ? ProcessRunner.FindOnPath(OperatingSystem.IsWindows() ? "code.cmd" : "code") : null;
+            if (body.App == "vscode" && codeExe is null) throw new ArgumentException("VS Code ('code') was not found on PATH.");
+            var psi = body.App == "vscode" ? new ProcessStartInfo(codeExe!, ["--", target])
+                : OperatingSystem.IsWindows() ? new ProcessStartInfo("explorer.exe", [target])
+                : OperatingSystem.IsMacOS() ? new ProcessStartInfo("open", [target])
+                : new ProcessStartInfo("xdg-open", [target]);            psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
             Process.Start(psi)?.Dispose();
             return Results.NoContent();
