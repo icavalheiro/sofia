@@ -253,6 +253,11 @@ async function retry(): Promise<void> {
 // Notes the harness learned from the conversation. The user can read them and
 // delete any; the server then strikes the entry through a `message.updated`.
 const knowledgeOpen = ref(false)
+const contextOpen = ref(false)
+/** Strip the leading bullet marker the server puts on each context note. */
+function contextLine(note: string): string {
+  return note.replace(/^\s*[-*]\s+/, '')
+}
 const knowledgeError = ref<string | null>(null)
 const deletingNote = ref<string | null>(null)
 const liveNotes = computed(() => (props.message.knowledge ?? []).filter((k) => !k.deleted).length)
@@ -591,6 +596,21 @@ function closeLightbox(): void {
           </li>
         </ul>
         <p v-if="knowledgeError" class="knowledge-error">{{ knowledgeError }}</p>
+      </div>
+
+      <!-- Context updates the server attached to a user message (collapsed by default). -->
+      <div v-if="message.role === 'user' && message.contextNotes?.length" class="context-card">
+        <div class="context-head">
+          <SofiaIcon name="sparkles" :size="'0.85rem'" />
+          <span>{{ t('contextUpdates.title') }}</span>
+          <span class="context-count">{{ message.contextNotes.length }}</span>
+          <button class="context-toggle" type="button" :aria-expanded="contextOpen" @click="contextOpen = !contextOpen">
+            {{ contextOpen ? t('contextUpdates.hide') : t('contextUpdates.view') }}
+          </button>
+        </div>
+        <ul v-if="contextOpen" class="context-list">
+          <li v-for="(note, i) in message.contextNotes" :key="i" class="context-note">{{ contextLine(note) }}</li>
+        </ul>
       </div>
 
       <!-- Structured report produced by a deep-search run (with its file). -->
@@ -1361,6 +1381,62 @@ button.compact-notice {
   line-height: 1.55;
   color: var(--sofia-text-muted);
   white-space: normal;
+}
+
+/* --- context updates ---------------------------------------------------------- */
+.context-card {
+  max-width: 74ch;
+  padding: 0.45rem 0.75rem;
+  border: 1px dashed var(--sofia-border-strong);
+  border-radius: 10px;
+  background: var(--sofia-surface-2, var(--sofia-surface));
+}
+
+.context-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sofia-text-muted);
+}
+
+.context-count {
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--sofia-surface-3);
+  letter-spacing: 0;
+}
+
+.context-toggle {
+  margin-left: auto;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--sofia-border-strong);
+  border-radius: 7px;
+  background: var(--sofia-surface);
+  color: var(--sofia-text-muted);
+  font-size: 0.6875rem;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.context-toggle:hover {
+  border-color: var(--sofia-primary);
+  color: var(--sofia-primary);
+}
+
+.context-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.45rem 0 0;
+  padding: 0 0 0 1.1rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--sofia-text);
 }
 
 /* --- knowledge notes ---------------------------------------------------------- */

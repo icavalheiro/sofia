@@ -86,6 +86,14 @@ public sealed class Session
     public List<string> ActiveSkills { get; set; } = [];
     /// <summary>Highest message sequence already reviewed for knowledge notes.</summary>
     [JsonIgnore] public long KnowledgeSeq { get; set; }
+    /// <summary>System prompt written once for the whole conversation (persisted, never exposed).</summary>
+    [JsonIgnore] public string? FrozenPrompt { get; set; }
+    /// <summary>Agent id the frozen prompt was built for.</summary>
+    [JsonIgnore] public string? FrozenAgent { get; set; }
+    /// <summary>SHA-256 of the tool schemas the frozen prompt was built for.</summary>
+    [JsonIgnore] public string? FrozenTools { get; set; }
+    /// <summary>Volatile facts baked into the frozen prompt (or already delivered as context updates).</summary>
+    [JsonIgnore] public Dictionary<string, string>? PromptFacts { get; set; }
     [BsonIgnore] public int Queued { get; set; }
     /// <summary>Prompts accepted while a run is busy but not yet sent to the model (steer first, then queued). Replaced, never mutated.</summary>
     [BsonIgnore] public List<QueuedMessage> QueuedMessages { get; set; } = [];
@@ -268,6 +276,8 @@ public sealed class Message
     public RetryNotice? Retry { get; set; }
     public Usage? Usage { get; set; }
     public long? DurationMs { get; set; }
+    /// <summary>Changes since the frozen system prompt was written, one line each; replayed to the model as &lt;context_updates&gt;.</summary>
+    public List<string>? ContextNotes { get; set; }
 
     /// <summary>Monotonic order within the session.</summary>
     [JsonIgnore] public long Seq { get; set; }

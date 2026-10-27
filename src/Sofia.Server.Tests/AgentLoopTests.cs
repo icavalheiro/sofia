@@ -299,15 +299,91 @@ public sealed class AgentLoopTests : IDisposable
         Assert.Equal(prompts[0], prompts[1]);
         Assert.DoesNotContain(NoteText, prompts[1]);
 
-        // The next turn picks the note up, so nothing is lost by freezing the prompt for a turn.
+        // The next turn keeps the very same system prompt; the note reaches the model as a context update instead.
         await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "PREFIXBETA and again", modelId, permissionMode = "full" });
         await WaitFor(http, sessionId, s => Count(s, m => m.GetProperty("role").GetString() == "user") >= 2
             && Count(s, m => m.GetProperty("role").GetString() == "assistant" && m.TryGetProperty("text", out var t) && t.GetString() == "Noted") >= 2);
 
         var secondTurn = ConversationSystems("PREFIXBETA");
         Assert.Equal(2, secondTurn.Count);
-        Assert.All(secondTurn, p => Assert.Contains(NoteText, p, StringComparison.Ordinal));
+        Assert.All(secondTurn, p => Assert.DoesNotContain(NoteText, p, StringComparison.Ordinal));
+        Assert.Equal(prompts[0], secondTurn[0]);
         Assert.Equal(secondTurn[0], secondTurn[1]);
+    }
+
+    [Fact]
+    public async Task SystemPromptStaysIdenticalForTheWholeConversationAndChangesArriveAsContextUpdates()
+    {
+        var http = _factory.CreateClient();
+        var provider = await Post(http, "/api/providers", new { name = "Fake", type = "openai", baseUrl = "http://fake.llm/v1", apiKey = "test" });
+        var modelId = $"{provider.GetProperty("id").GetString()}/fake-model";
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        // Turn 1 saves a workspace note, turn 2 and 3 answer.
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "PREFIXALPHA save the test command", modelId, permissionMode = "full" });
+        await WaitFor(http, sessionId, s => Count(s, m => m.GetProperty("role").GetString() == "assistant" && m.TryGetProperty("text", out var t) && t.GetString() == "Noted") >= 1);
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "PREFIXBETA second turn", modelId, permissionMode = "full" });
+        await WaitFor(http, sessionId, s => Count(s, m => m.GetProperty("role").GetString() == "assistant" && m.TryGetProperty("text", out var t) && t.GetString() == "Noted") >= 2);
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "PREFIXBETA third turn", modelId, permissionMode = "full" });
+        await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle"
+            && Count(s, m => m.GetProperty("role").GetString() == "assistant" && m.TryGetProperty("text", out var t) && t.GetString() == "Noted") >= 3);
+
+        var bodies = FakeLlmHandler.Bodies
+            .Where(b => b.Contains("PREFIXALPHA", StringComparison.Ordinal) && !b.Contains("curate a small knowledge base", StringComparison.Ordinal))
+            .Where(b => SystemOf(b).Contains(_project.Replace('\\', '/'), StringComparison.Ordinal))
+            .ToList();
+        var systems = bodies.Select(SystemOf).ToList();
+        Assert.True(systems.Count >= 6, $"expected 2 steps for each of 3 turns, got {systems.Count}");
+        Assert.All(systems, s => Assert.Equal(systems[0], s));
+        Assert.DoesNotContain(NoteText, systems[0], StringComparison.Ordinal);
+
+        // Turn 1 has no update; turn 2 carries the note; turn 3 replays it once and adds nothing.
+        var turn1 = bodies.Where(b => !b.Contains("PREFIXBETA", StringComparison.Ordinal)).ToList();
+        Assert.All(turn1, b => Assert.DoesNotContain("<context_updates>", UserTexts(b), StringComparison.Ordinal));
+        var turn2 = bodies.Where(b => b.Contains("second turn", StringComparison.Ordinal) && !b.Contains("third turn", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(turn2);
+        Assert.All(turn2, b =>
+        {
+            var users = UserTexts(b);
+            Assert.Contains("<context_updates>", users, StringComparison.Ordinal);
+            Assert.Contains(NoteText, users, StringComparison.Ordinal);
+        });
+        var turn3 = bodies.Where(b => b.Contains("third turn", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(turn3);
+        Assert.All(turn3, b =>
+        {
+            var users = UserTexts(b);
+            Assert.Equal(1, CountOccurrences(users, "<context_updates>"));
+            Assert.Equal(1, CountOccurrences(users, NoteText));
+        });
+    }
+
+    private static string SystemOf(string body) =>
+        JsonDocument.Parse(body).RootElement.GetProperty("messages").EnumerateArray()
+            .First(m => m.GetProperty("role").GetString() == "system").GetProperty("content").GetString()!;
+
+    /// <summary>The text of every user message of a request body, decoded (the raw body escapes angle brackets).</summary>
+    private static string UserTexts(string body)
+    {
+        var sb = new StringBuilder();
+        foreach (var m in JsonDocument.Parse(body).RootElement.GetProperty("messages").EnumerateArray())
+        {
+            if (m.GetProperty("role").GetString() != "user") continue;
+            var content = m.GetProperty("content");
+            if (content.ValueKind == JsonValueKind.String) sb.AppendLine(content.GetString());
+            else if (content.ValueKind == JsonValueKind.Array)
+                foreach (var part in content.EnumerateArray())
+                    if (part.TryGetProperty("text", out var t)) sb.AppendLine(t.GetString());
+        }
+        return sb.ToString();
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(value, StringComparison.Ordinal); i >= 0; i = text.IndexOf(value, i + value.Length, StringComparison.Ordinal)) count++;
+        return count;
     }
 
     [Fact]

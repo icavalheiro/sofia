@@ -161,9 +161,14 @@ interface MessageDto {
   compaction?: { status: 'running'|'done'|'failed'|'skipped', auto: boolean, before: number, after?: number, error?: string, result?: string }  // system notice card: compaction progress/result (token counts are estimates)
   retry?: { attempt: number, attempts: number, error?: string }  // transient provider failure being retried (499/408/429/5xx, dropped socket, timeout, empty stream): set while the next attempt runs, cleared by the attempt that succeeds. `attempts` is 4 (one try + three retries); when they run out the failure becomes `error` and the session goes to `status: 'error'`
   knowledge?: KnowledgeEntryDto[]  // card-only message: notes learned from the conversation
+  contextNotes?: string[] // user messages only: one line per change (notes, branch, date, mode, language, context files, skills) noticed since the conversation's system prompt was frozen; replayed to the model inside a `<context_updates>` block appended to that user turn
   usage?: UsageDto
   durationMs?: number
 }
+
+// The frozen system prompt (Session.FrozenPrompt / FrozenAgent / FrozenTools) and the
+// volatile facts it was built from (Session.PromptFacts) are persisted but server-side
+// only ([JsonIgnore]): they never appear in SessionDto, MessageDto, exports or SignalR events.
 
 interface KnowledgeEntryDto {
   id: string

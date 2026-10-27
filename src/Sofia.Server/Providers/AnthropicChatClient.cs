@@ -234,6 +234,14 @@ public sealed class AnthropicChatClient(HttpClient http, ProviderConfig provider
             }
         }
 
+        // Rolling breakpoint: cache the growing transcript up to its last block (Anthropic allows four breakpoints; we use
+        // two, this one and the one on `system`). Thinking blocks cannot carry cache_control.
+        if (messages.Count > 0 && messages[^1] is JsonObject lastMessage && lastMessage["content"] is JsonArray lastBlocks
+            && lastBlocks.Count > 0 && lastBlocks[^1] is JsonObject lastBlock && lastBlock["type"]?.GetValue<string>() is not "thinking")
+        {
+            lastBlock["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
+        }
+
         var body = new JsonObject
         {
             ["model"] = request.Model,

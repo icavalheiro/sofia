@@ -73,17 +73,37 @@ One `SessionRun` per active session, owned by `AgentService`:
    calls as `message.updated`; `session.metrics` is published about 4 times a
    second.
 3. The request prefix — system prompt (`SystemPromptBuilder`) and tool schemas
-   — is built once per **turn**, on its first step, and reused by every later
-   step of that turn (`SessionRun.TurnPromptAsync`). Providers cache on the
-   longest common prefix, so anything changing inside it mid-run (a note saved
-   through `notes`, a workspace note learned by a background review, a branch
-   switch, midnight, an MCP server connecting) would invalidate every cached
-   token of the conversation for that step and all later ones. Notes are still
-   current: the model saw the save in its tool result during the turn, and the
-   next turn's prompt includes it. A session whose **agent** changed mid-run is
-   the one exception — the prefix is rebuilt so the tool set can never stay
-   wider than the new agent allows. The permission gate is unaffected: it reads
-   `Session.PermissionMode` live at each call.
+   — is built once and **frozen for the whole conversation**. The prompt is
+   persisted on the session (`FrozenPrompt`, `FrozenAgent`, `FrozenTools` = a
+   fingerprint of the tool schemas, plus `PromptFacts`, the volatile facts baked
+   into it); all are `[JsonIgnore]`, server-side only. Every step of every turn
+   reuses that string byte-for-byte (`SessionRun.TurnContextAsync`). Providers
+   cache on the longest common prefix, so anything changing inside it (a note
+   saved through `notes`, a background-review note, a branch switch, midnight,
+   a permission-mode or language change, an edited AGENTS.md, a skill toggle)
+   would invalidate every cached token of the conversation.
+   Instead, at the start of each turn the current facts are diffed against
+   `PromptFacts` (`ContextUpdates.Build`) and the changes are attached to the
+   **newest user message** as `Message.ContextNotes`. `HistoryBuilder` renders
+   them as a `<context_updates>` block appended inside that user turn, after the
+   user's own text. They are persisted and replayed identically in every later
+   turn, so the transcript stays append-only and the cached prefix never moves.
+   Bounds: a changed context file is embedded in full when it is at most 4000
+   characters, otherwise the update is a one-line notice with its path; at most
+   12 lines per update, ~12 000 characters for the block. Within a turn the
+   system string and the delta are cached, so a note saved mid-run changes
+   neither (the model saw the save in its tool result).
+   The prefix is **re-frozen only when it is doomed anyway**: the session's
+   agent changed, or the tool-schema fingerprint changed (MCP server up/down,
+   delegable agents, shell). That rebuild resets the facts and emits no delta.
+   A permission-mode switch does not re-freeze: the gate reads
+   `Session.PermissionMode` live at each call, and the change is also sent as a
+   context update. Existing or branched sessions have no frozen prompt and
+   freeze once on their next turn.
+   Anthropic carries two cache breakpoints (of the four allowed): one on
+   `system` and a rolling one on the last content block of the last message, so
+   the growing transcript is cached too. OpenAI-compatible and local runtimes
+   reuse the common prefix on their own.
 4. Tool calls run in parallel when every call in the step is read-only,
    network or `task` (so several subagents run at once); otherwise they run in
    order. Each call is authorized by the permission gate first. The tool set
@@ -203,9 +223,13 @@ or secrets are refused, and duplicates of existing notes are dropped.
 Notes live in the `knowledge` LiteDB collection. `SystemPromptBuilder` injects
 them in a `<knowledge>` block: the running agent's notes plus the workspace's, the
 newest that fit a 3000-character budget per scope. That block is part of the
-request prefix frozen for a turn (see the agent loop above), so a note saved
-during a run reaches the prompt at the start of the next one; inside the run the
-model already saw it in the tool result, and `notes` `list` reads live. The chat
+request prefix frozen for the whole conversation (see the agent loop above), so
+the block is written once and never rewritten: a note saved or deleted later
+reaches a running conversation as a line in the `<context_updates>` block of the
+next user message (`Message.ContextNotes`), and only new conversations (or a
+re-freeze on agent/tool-set change) read the fresh `<knowledge>` block. Inside
+the run the model already saw a save in its tool result, and `notes` `list`
+reads live. The chat
 gets a card-only message (`Message.Knowledge`) listing the new notes; the user can
 expand it and delete a note (`DELETE /api/knowledge/{id}`), which strikes it on the
 card.

@@ -156,7 +156,12 @@ public sealed class SessionRun : IToolHost
                     _ = await CompactAsync(auto: false, ct);
                     continue;
                 }
-                AddUserMessage(next);
+                // A new turn: re-read the live facts once (frozen prompt reused, changes become context notes).
+                _turnPrompt = null;
+                var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), ct);
+                AddUserMessage(next, contextNotes: notes);
+                // Only after the message is persisted: a crash replays the change once more instead of losing it.
+                CommitFacts();
                 await RunTurnAsync(ct);
             }
         }
@@ -227,7 +232,7 @@ public sealed class SessionRun : IToolHost
         PublishMetrics(0);
     }
 
-    private void AddUserMessage(PendingPrompt prompt, bool steered = false)
+    private void AddUserMessage(PendingPrompt prompt, bool steered = false, List<string>? contextNotes = null)
     {
         _s.Store.AddMessage(Session, new Message
         {
@@ -237,6 +242,7 @@ public sealed class SessionRun : IToolHost
             Expanded = prompt.Expanded,
             Attachments = prompt.Attachments.Count > 0 ? prompt.Attachments : null,
             Steered = steered,
+            ContextNotes = contextNotes,
         });
     }
 
@@ -276,20 +282,19 @@ public sealed class SessionRun : IToolHost
 
     private async Task RunTurnAsync(CancellationToken ct)
     {
-        // The request prefix (system prompt + tool schemas) is rebuilt only at the start of a turn. Providers cache on
-        // the longest common prefix, so anything that changed inside it — a note saved through `notes`, a workspace
-        // note learned by a background review, a branch switch, midnight, an MCP server connecting mid-run — would
-        // invalidate every cached token of the conversation for this step and all later ones. History stays append-only
-        // within a run (see `HistoryBuilder`), so a frozen prefix is what keeps each step hitting the cache. Whatever
-        // changed is picked up by the first step of the next turn.
-        _turnPrompt = null;
+        // The request prefix (system prompt + tool schemas) is frozen for the whole CONVERSATION, not just the turn: it is
+        // written once and stored on the session. Providers cache on the longest common prefix, so one changed character
+        // would re-bill every token. Whatever changed since (notes, branch, date, mode, language, context files, skills)
+        // arrives as <context_updates> on the newest user message (see `TurnContextAsync`), appended where it never
+        // invalidates the cache. Only an agent or tool-set change re-freezes, and then the prefix is doomed anyway.
+        // History stays append-only within a run (see `HistoryBuilder`).
         for (var step = 0; step < MaxSteps; step++)
         {
             ct.ThrowIfCancellationRequested();
             var (provider, model) = ResolveModel();
             var config = _s.Db.GetConfig();
             Session.Context.Limit = model.ContextLength;
-            var (system, tools) = await TurnPromptAsync(config, ct);
+            var (system, tools, _) = await TurnContextAsync(config, ct);
             var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model);
             var estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments)));
 
@@ -344,26 +349,60 @@ public sealed class SessionRun : IToolHost
         throw new InvalidOperationException($"Stopped after {MaxSteps} steps without a final answer.");
     }
 
-    private (string System, List<ITool> Tools, string Agent)? _turnPrompt;
+    private (string System, List<ITool> Tools, List<string>? Delta, string Agent)? _turnPrompt;
+    private Dictionary<string, string>? _pendingFacts;
 
     /// <summary>
-    /// The system prompt and tool set of the current turn, built on its first step and reused by every later step so the
-    /// request prefix never changes while the provider's prompt cache is warm. Cleared by <c>RunTurnAsync</c>, and
-    /// rebuilt if the session's agent changed meanwhile, so a mid-run agent switch cannot leave a wider tool set live.
+    /// The system prompt, tool set and context delta of the current turn. The prompt is frozen on the session for the whole
+    /// conversation; it is rebuilt (and the delta dropped) only when the agent or the tool-schema fingerprint changed.
+    /// Otherwise the live facts are diffed against <see cref="Session.PromptFacts"/>. The result is cached in
+    /// <c>_turnPrompt</c> (reset by <c>RunAsync</c> at turn start) so every step reuses the same system string and delta.
     /// </summary>
-    private async Task<(string System, List<ITool> Tools)> TurnPromptAsync(ServerConfig config, CancellationToken ct)
+    private async Task<(string System, List<ITool> Tools, List<string>? Delta)> TurnContextAsync(ServerConfig config, CancellationToken ct)
     {
-        if (_turnPrompt is { } cached && cached.Agent == Session.Agent) return (cached.System, cached.Tools);
+        if (_turnPrompt is { } cached && cached.Agent == Session.Agent) return (cached.System, cached.Tools, cached.Delta);
         var agent = _s.AgentCatalog.Get(Session.Agent, Workspace.IsFolder ? Workspace.Path : null);
         var tools = _s.Tools.For(agent, Workspace);
         // Subagents never ask the user or spawn further subagents.
         if (Session.ParentId is not null) tools.RemoveAll(t => t.Kind is ToolKind.Agent or ToolKind.Interactive);
-        var system = await BuildSystemPromptAsync(agent, tools, config, ct);
-        _turnPrompt = (system, tools, agent.Id);
-        return (system, tools);
+        var fingerprint = Text.Sha256(string.Join("\n", tools.Select(t => t.Name + "\u0000" + Text.FirstLine(t.Description, 400))));
+
+        var (snapshot, overrides, shell) = await PromptSnapshotAsync(agent, config, ct);
+        string system;
+        List<string>? delta = null;
+        if (Session.FrozenPrompt is null || Session.FrozenAgent != Session.Agent || Session.FrozenTools != fingerprint)
+        {
+            system = SystemPromptBuilder.Build(agent, Workspace, Session, tools, snapshot.ContextFiles, snapshot.Skills, overrides, shell,
+                snapshot.Branch, snapshot.Notes);
+            Session.FrozenPrompt = system;
+            Session.FrozenAgent = Session.Agent;
+            Session.FrozenTools = fingerprint;
+            Session.PromptFacts = snapshot.Facts;
+            _pendingFacts = null;
+            _s.Store.SaveSession(Session);
+        }
+        else
+        {
+            system = Session.FrozenPrompt;
+            delta = ContextUpdates.Build(Session.PromptFacts, snapshot);
+            // Advanced only after the user message carrying the delta is persisted (see CommitFacts).
+            _pendingFacts = delta is null ? null : snapshot.Facts;
+        }
+        _turnPrompt = (system, tools, delta, Session.Agent);
+        return (system, tools, delta);
     }
 
-    private async Task<string> BuildSystemPromptAsync(AgentDefinition agent, List<ITool> tools, ServerConfig config, CancellationToken ct)
+    /// <summary>Marks the pending context delta as delivered; called after the user message holding it was stored.</summary>
+    private void CommitFacts()
+    {
+        if (_pendingFacts is null) return;
+        Session.PromptFacts = _pendingFacts;
+        _pendingFacts = null;
+        _s.Store.SaveSession(Session);
+    }
+
+    private async Task<(PromptSnapshot Snapshot, (string? Replace, string? Append) Overrides, ShellSpec Shell)> PromptSnapshotAsync(
+        AgentDefinition agent, ServerConfig config, CancellationToken ct)
     {
         var dir = Workspace.IsFolder ? Workspace.Path : null;
         string? branch = null;
@@ -379,9 +418,13 @@ public sealed class SessionRun : IToolHost
                 // Git is optional.
             }
         }
-        return SystemPromptBuilder.Build(agent, Workspace, Session, tools, _s.ContextFiles.Load(dir), _s.Skills.List(dir),
-            _s.ContextFiles.SystemOverrides(dir), ProcessRunner.ResolveShell(config.Shell), branch,
-            _s.Knowledge.ForPrompt(Workspace.Id, Session.Agent));
+        var skills = _s.Skills.List(dir);
+        var active = skills.Where(s => Session.ActiveSkills.Contains(s.Id)).ToList();
+        var overrides = _s.ContextFiles.SystemOverrides(dir);
+        var shell = ProcessRunner.ResolveShell(config.Shell);
+        var snapshot = ContextUpdates.Snapshot(_s.ContextFiles.Load(dir), skills, active, _s.Knowledge.ForPrompt(Workspace.Id, Session.Agent),
+            branch, Session.PermissionMode, Session.Language, shell.Name, overrides);
+        return (snapshot, overrides, shell);
     }
 
     // --- streaming -------------------------------------------------------------

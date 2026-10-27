@@ -56,7 +56,7 @@ public static class SystemPromptBuilder
     };
 
     /// <summary>The answer language is the UI language unless the user explicitly asks for another one.</summary>
-    private static string LanguageGuideline(string? code)
+    internal static string LanguageGuideline(string? code)
     {
         if (string.IsNullOrWhiteSpace(code)) return "- Reply in the language the user writes in.";
         var name = LanguageNames.GetValueOrDefault(code.Trim(), code.Trim());
@@ -191,6 +191,124 @@ public static class SystemPromptBuilder
         tools.FirstOrDefault(t => t.Kind == ToolKind.Execute)?.Name ?? shell.Name;
 }
 
+public sealed record PromptSnapshot(Dictionary<string, string> Facts, IReadOnlyList<ContextFile> ContextFiles,
+    IReadOnlyList<SkillInfo> Skills, IReadOnlyList<SkillInfo> ActiveSkills,
+    IReadOnlyList<KnowledgeNote> Notes, string? Branch, string Mode, string? Language, string Shell);
+
+/// <summary>
+/// Diffs the volatile facts baked into a frozen system prompt against the live ones. The result is persisted on the
+/// next user message (<see cref="Message.ContextNotes"/>), so the transcript stays append-only and the cached prefix
+/// is never rewritten.
+/// </summary>
+public static class ContextUpdates
+{
+    public const int MaxInlineContextFileChars = 4_000;
+    public const int MaxDeltaLines = 12;
+    private const int MaxBlockChars = 12_000;
+
+    /// <summary>The standing sentence that closes the rendered block.</summary>
+    public const string Footer = "The harness keeps its system prompt frozen for the whole conversation; these are the changes since it was written — they win over the older blocks where they conflict.";
+
+    /// <summary>Builds a snapshot, computing its fact table from the live values.</summary>
+    public static PromptSnapshot Snapshot(IReadOnlyList<ContextFile> contextFiles, IReadOnlyList<SkillInfo> skills,
+        IReadOnlyList<SkillInfo> activeSkills, IReadOnlyList<KnowledgeNote> notes, string? branch, string mode, string? language,
+        string shell, (string? Replace, string? Append) overrides, DateTime? now = null)
+    {
+        var facts = new Dictionary<string, string>
+        {
+            ["mode"] = mode,
+            ["lang"] = language ?? "",
+            ["shell"] = shell,
+            ["branch"] = branch ?? "",
+            ["date"] = (now ?? DateTime.Now).ToString("yyyy-MM-dd"),
+            ["overrides"] = Text.Sha256((overrides.Replace ?? "") + "\u0000" + (overrides.Append ?? "")),
+            ["skills"] = Text.Sha256(RenderSkills(skills)),
+        };
+        foreach (var f in contextFiles) facts["ctx:" + NormalizePath(f.Path)] = Text.Sha256(f.Content);
+        foreach (var s in activeSkills) facts["active:" + s.Id] = Text.Sha256(s.Content);
+        foreach (var n in notes) facts["note:" + n.Id] = Text.Sha256(n.Text);
+        return new PromptSnapshot(facts, contextFiles, skills, activeSkills, notes, branch, mode, language, shell);
+    }
+
+    private static string NormalizePath(string path) => path.Replace('\\', '/');
+
+    private static string RenderSkills(IReadOnlyList<SkillInfo> skills) =>
+        string.Join("\n", skills.Select(s => $"- {s.Name}: {Text.FirstLine(s.Description, 200)}"));
+
+    private static string ModeLine(string mode) => mode switch
+    {
+        "plan" => "- " + Agents.Get("plan").Addendum,
+        "read-only" => "- The session is now read-only: tools that modify files or run commands are blocked. Explain what you would change instead.",
+        _ => "- The session is no longer in plan or read-only mode; normal permissions apply.",
+    };
+
+    /// <summary>Lines describing what changed since <paramref name="frozen"/>, or null when nothing did (or nothing was frozen).</summary>
+    public static List<string>? Build(IReadOnlyDictionary<string, string>? frozen, PromptSnapshot current)
+    {
+        if (frozen is null) return null;
+        var now = current.Facts;
+        string Old(string key) => frozen.GetValueOrDefault(key, "");
+        string Cur(string key) => now.GetValueOrDefault(key, "");
+        var lines = new List<string>();
+
+        // Knowledge notes: added (new or edited), then removed.
+        foreach (var n in current.Notes)
+        {
+            if (Old("note:" + n.Id) != Cur("note:" + n.Id))
+                lines.Add($"- New note since the conversation started: \"{n.Text}\"");
+        }
+        var removed = frozen.Keys.Count(k => k.StartsWith("note:", StringComparison.Ordinal) && !now.ContainsKey(k));
+        if (removed > 0)
+            lines.Add(removed == 1
+                ? "- A knowledge note listed earlier was removed; disregard it if it no longer matches the notes above."
+                : $"- {removed} knowledge notes listed earlier were removed; disregard any that no longer match the notes above.");
+
+        if (Old("mode") != Cur("mode")) lines.Add(ModeLine(current.Mode));
+        if (Old("lang") != Cur("lang")) lines.Add(SystemPromptBuilder.LanguageGuideline(current.Language));
+        if (Old("shell") != Cur("shell")) lines.Add($"- The shell is now {current.Shell}.");
+        if (Old("branch") != Cur("branch"))
+            lines.Add(string.IsNullOrEmpty(current.Branch) ? "- The workspace is no longer on a git branch." : $"- The git branch is now `{current.Branch}`.");
+        if (Old("date") != Cur("date")) lines.Add($"- Today is {Cur("date")} {DateTime.Parse(Cur("date"), System.Globalization.CultureInfo.InvariantCulture):dddd}.");
+
+        if (Old("skills") != Cur("skills"))
+            lines.Add("- The available skills changed; the list is now:\n" + (current.Skills.Count == 0 ? "(none)" : RenderSkills(current.Skills)));
+        foreach (var s in current.ActiveSkills)
+        {
+            if (Old("active:" + s.Id) != Cur("active:" + s.Id))
+                lines.Add($"<skill name=\"{s.Name}\">\n{s.Content.Trim()}\n</skill>");
+        }
+        foreach (var key in frozen.Keys.Where(k => k.StartsWith("active:", StringComparison.Ordinal) && !now.ContainsKey(k)))
+            lines.Add($"- The skill `{key["active:".Length..]}` is no longer active; stop following its instructions.");
+
+        foreach (var f in current.ContextFiles)
+        {
+            var path = NormalizePath(f.Path);
+            if (Old("ctx:" + path) == Cur("ctx:" + path)) continue;
+            lines.Add(f.Content.Length <= MaxInlineContextFileChars
+                ? $"<project_instructions path=\"{path}\">\n{f.Content.Trim()}\n</project_instructions>"
+                : $"- The project instructions at {path} changed; read that file if this task depends on them.");
+        }
+        foreach (var key in frozen.Keys.Where(k => k.StartsWith("ctx:", StringComparison.Ordinal) && !now.ContainsKey(k)))
+            lines.Add($"- The project instructions at {key["ctx:".Length..]} were removed; they no longer apply.");
+
+        if (Old("overrides") != Cur("overrides"))
+            lines.Add("- The system prompt override files (SYSTEM.md / APPEND_SYSTEM.md) changed; read them if this task depends on them.");
+
+        if (lines.Count == 0) return null;
+
+        var kept = new List<string>();
+        var chars = 0;
+        foreach (var line in lines)
+        {
+            if (kept.Count >= MaxDeltaLines || (kept.Count > 0 && chars + line.Length > MaxBlockChars)) break;
+            kept.Add(line);
+            chars += line.Length;
+        }
+        if (kept.Count < lines.Count) kept.Add($"- …and {lines.Count - kept.Count} more changes.");
+        return kept;
+    }
+}
+
 public static class HistoryBuilder
 {
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -232,6 +350,11 @@ public static class HistoryBuilder
                     continue;
                 }
                 result.Add(new ChatMessage { Role = "user", Content = UserContent(m, model) });
+                if (m.ContextNotes is { Count: > 0 })
+                {
+                    result[^1].Content.Add(ContentPart.FromText(
+                        $"\n\n<context_updates>\n{string.Join("\n", m.ContextNotes)}\n{ContextUpdates.Footer}\n</context_updates>"));
+                }
                 continue;
             }
 

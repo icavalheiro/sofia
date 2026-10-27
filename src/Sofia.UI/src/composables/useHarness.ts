@@ -148,6 +148,7 @@ function mapMessage ( m: MessageDto ): Message
     model: m.model,
     reasoning: m.reasoning,
     reasoningMode: m.reasoningMode,
+    contextNotes: m.contextNotes?.length ? [ ...m.contextNotes ] : undefined,
     attachments: m.attachments?.map( mapAttachment ),
     toolCalls: m.toolCalls?.map( ( t ) => ( { ...t, images: t.images?.map( mapAttachment ) } ) ),
     permission: m.permission

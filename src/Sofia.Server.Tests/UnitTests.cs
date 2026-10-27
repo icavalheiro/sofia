@@ -403,6 +403,41 @@ public class ProviderBodyTests
         Assert.Equal("text", last[1]!["type"]!.GetValue<string>());
         Assert.Null(body["thinking"]);
     }
+
+    [Fact]
+    public void AnthropicBodyCachesTheGrowingTranscriptWithARollingBreakpoint()
+    {
+        var body = new AnthropicChatClient(new HttpClient(), new ProviderConfig()).BuildBody(Request());
+        var messages = body["messages"]!.AsArray();
+        var lastMessage = messages[^1]!["content"]!.AsArray();
+        Assert.Equal("ephemeral", lastMessage[^1]!["cache_control"]!["type"]!.GetValue<string>());
+        // Only the last block is marked; earlier blocks of that message are not.
+        Assert.All(lastMessage.Take(lastMessage.Count - 1), b => Assert.Null(b!["cache_control"]));
+        Assert.All(messages.Take(messages.Count - 1), m => Assert.All(m!["content"]!.AsArray(), b => Assert.Null(b!["cache_control"])));
+        if (body["system"] is JsonArray system)
+            Assert.Equal("ephemeral", system[0]!["cache_control"]!["type"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void ContextUpdatesInlinesSmallFileChangesAndSummarisesLargeOnes()
+    {
+        PromptSnapshot Snap(string content) => ContextUpdates.Snapshot([new ContextFile("repo/AGENTS.md", content)], [], [], [], null, "ask", "en", "pwsh", (null, null),
+            new DateTime(2026, 10, 27));
+        var frozen = Snap("old rules").Facts;
+
+        Assert.Null(ContextUpdates.Build(frozen, Snap("old rules")));
+        Assert.Null(ContextUpdates.Build(null, Snap("new rules")));
+
+        var small = ContextUpdates.Build(frozen, Snap("new rules"))!;
+        var inlined = Assert.Single(small);
+        Assert.Contains("<project_instructions path=\"repo/AGENTS.md\">", inlined);
+        Assert.Contains("new rules", inlined);
+
+        var large = ContextUpdates.Build(frozen, Snap(new string('x', ContextUpdates.MaxInlineContextFileChars + 1)))!;
+        var notice = Assert.Single(large);
+        Assert.Contains("repo/AGENTS.md", notice);
+        Assert.DoesNotContain("xxxx", notice);
+    }
 }
 
 public class HistoryImageTests

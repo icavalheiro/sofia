@@ -90,6 +90,8 @@ export interface MessageDto
   model?: string;
   reasoning?: string;
   reasoningMode?: ReasoningModeId;
+  /** Context updates (one bullet line each) the server attached to a user message. */
+  contextNotes?: string[];
   attachments?: AttachmentDto[];
   toolCalls?: ToolCallDto[];
   permission?: {
@@ -352,6 +354,8 @@ export interface Message
   createdAt: string;
   /** Clock label derived from `createdAt`. */
   time: string;
+  /** Context updates the server attached to this user message. */
+  contextNotes?: string[];
   attachments?: Attachment[];
   model?: string;
   reasoning?: string;
