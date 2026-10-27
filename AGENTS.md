@@ -11,7 +11,9 @@ pi.dev (minimal prompt, small core tool set, AGENTS.md context, skills,
 steer/follow-up, compaction), extended with workspaces, permission modes,
 questions, parallel subagents, MCP, change tracking/revert, local runtime
 auto-discovery and OpenAI/Anthropic compatibility.
-Desktop packaging (server + UI in one app) is out of scope for now.
+Per-platform self-contained `.zip` releases (win-x64, linux-x64, osx-arm64,
+osx-x64) are built by `.github/workflows/release.yml` on `v*` tags; a
+single-click desktop installer / app window is still out of scope.
 
 - API contract: `docs/server_api.md` (keep it in sync with both sides).
 - Server architecture: `docs/project_init.md`.
@@ -53,6 +55,7 @@ dotnet build Sofia.slnx
 dotnet test Sofia.slnx
 dotnet run --project src/Sofia.Server     # http://127.0.0.1:5199, serves src/Sofia.UI/dist when built
 dotnet publish src/Sofia.Server -c Release -o out   # also builds Sofia.UI into out/wwwroot (-p:BuildUiOnPublish=false to skip)
+dotnet publish src/Sofia.Server -c Release -r win-x64 --self-contained true -p:InvariantGlobalization=true -o out   # per-platform release build (RIDs: win-x64, linux-x64, osx-arm64, osx-x64)
 
 cd src/Sofia.UI
 npm install

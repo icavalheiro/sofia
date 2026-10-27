@@ -31,6 +31,55 @@ Sofia.UI (Vue 3.5 + Vite + TypeScript) ──REST + SignalR
 Local model runtimes are discovered automatically, together with each model's
 context window.
 
+## Download and run
+
+Grab the zip for your OS from the
+[latest release](https://github.com/icavalheiro/sofia/releases/latest). Builds
+are self-contained: no .NET install needed.
+
+| OS | Asset |
+| --- | --- |
+| Windows (x64) | `sofia-<version>-win-x64.zip` |
+| Linux (x64) | `sofia-<version>-linux-x64.zip` |
+| macOS Apple Silicon | `sofia-<version>-osx-arm64.zip` |
+| macOS Intel | `sofia-<version>-osx-x64.zip` |
+
+Verify (optional): download `SHA256SUMS` next to the zips and run
+`sha256sum -c SHA256SUMS --ignore-missing` (macOS: `shasum -a 256 -c SHA256SUMS --ignore-missing`).
+
+```powershell
+# Windows
+Expand-Archive sofia-<version>-win-x64.zip .
+.\sofia-<version>-win-x64\Sofia.Server.exe
+```
+
+```bash
+# Linux / macOS
+unzip sofia-<version>-<rid>.zip
+./sofia-<version>-<rid>/Sofia.Server
+```
+
+Then open http://127.0.0.1:5199. No pairing code is needed on the same machine.
+Data lives in `~/.sofia`.
+
+Environment variables the server reads:
+
+- `SOFIA_HOME` — data folder (default `~/.sofia`).
+- `SOFIA_URLS` — listen address; set it to expose the server (remote clients must pair).
+- `SOFIA_LOCAL_ENDPOINTS` — extra local model runtimes to discover.
+- Provider keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`,
+  `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`,
+  `XAI_API_KEY`, `OPENCODE_API_KEY`, `QWENCLOUD_API_KEY` (or set keys in Settings).
+
+Optional dependencies: `git`, `ripgrep` and a browser are not required; without
+them the related features degrade. The browser tool may download Chromium once
+on first use.
+
+Unsigned builds: on Windows, SmartScreen may warn ("More info" → "Run anyway").
+On macOS, if Gatekeeper blocks it run
+`xattr -dr com.apple.quarantine sofia-<version>-osx-arm64`, and
+`chmod +x Sofia.Server` if the executable bit was lost.
+
 ## Run with Docker
 
 The easiest way to try Sofia is the Docker image, which bundles the server and
@@ -47,8 +96,9 @@ UI asks for a pairing code: paste the `code` printed by the second command
 volume; put the folders the agent should work on in `./workspaces` (mounted at
 `/workspaces`, override with `SOFIA_WORKSPACES`). Host runtimes such as Ollama
 are reachable at `host.docker.internal` (see `SOFIA_LOCAL_ENDPOINTS` in
-`docker-compose.yml`). An installable desktop version, with no Docker or
-manual setup, is planned for the future.
+`docker-compose.yml`). Per-platform self-contained builds ship with every
+release tag (see above); a single-click installer / app window remains future
+work.
 
 ## Quickstart
 
@@ -68,6 +118,12 @@ Sofia.UI (`npm ci` when `node_modules` is missing, then `npm run build`) and
 ships it as `out/wwwroot`, so the published server serves the UI on the same
 URL. Skip the UI build with `-p:BuildUiOnPublish=false` (Node.js is required
 otherwise).
+
+Self-contained build for one platform (what releases ship):
+
+```bash
+dotnet publish src/Sofia.Server -c Release -r win-x64 --self-contained true -p:InvariantGlobalization=true
+```
 
 Checks:
 

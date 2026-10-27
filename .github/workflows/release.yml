@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/Sofia.UI/package-lock.json
+      - name: Build UI
+        working-directory: src/Sofia.UI
+        run: |
+          npm ci
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: src/Sofia.UI/dist
+          if-no-files-found: error
+
+  package:
+    needs: ui
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64, linux-x64, osx-arm64, osx-x64]
+    env:
+      RID: ${{ matrix.rid }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui-dist
+      - name: Version
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Publish
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          dotnet publish src/Sofia.Server/Sofia.Server.csproj -c Release -r "$RID" --self-contained true \
+            -p:Version="$VERSION" -p:InvariantGlobalization=true -p:BuildUiOnPublish=false \
+            -o "stage/sofia-$VERSION-$RID"
+          mkdir -p "stage/sofia-$VERSION-$RID/wwwroot"
+          cp -a ui-dist/. "stage/sofia-$VERSION-$RID/wwwroot/"
+      - name: Fix exec bits
+        if: matrix.rid != 'win-x64'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          chmod +x "stage/sofia-$VERSION-$RID/Sofia.Server"
+          find "stage/sofia-$VERSION-$RID/.playwright/node" -name node -exec chmod +x {} +
+      - name: Assert layout
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          d="stage/sofia-$VERSION-$RID"
+          test -f "$d/wwwroot/index.html"
+          test -f "$d/appsettings.json"
+          if [ "$RID" = "win-x64" ]; then test -f "$d/Sofia.Server.exe"; else test -f "$d/Sofia.Server"; fi
+          case "$RID" in
+            osx-arm64) triple=darwin-arm64 ;;
+            osx-x64) triple=darwin-x64 ;;
+            *) triple="$RID" ;;
+          esac
+          found="$(ls "$d/.playwright/node")"
+          echo "playwright drivers: $found"
+          [ "$found" = "$triple" ]
+      - name: Zip
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          mkdir -p dist
+          (cd stage && zip -r -X "../dist/sofia-$VERSION-$RID.zip" "sofia-$VERSION-$RID")
+      - name: Smoke (linux-x64)
+        if: matrix.rid == 'linux-x64'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          tmp="$(mktemp -d)"
+          unzip -q "dist/sofia-$VERSION-$RID.zip" -d "$tmp"
+          SOFIA_HOME="$(mktemp -d)" "$tmp/sofia-$VERSION-$RID/Sofia.Server" &
+          pid=$!
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5199/api/health -o health.json; then ok=1; break; fi
+            sleep 1
+          done
+          [ "$ok" = 1 ] || { echo "server did not start"; kill $pid || true; exit 1; }
+          cat health.json
+          grep -q "\"version\":\"$VERSION\"" health.json
+          curl -fsS http://127.0.0.1:5199/ | grep -q '<div id="app"'
+          kill $pid || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.rid }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        run: cd dist && sha256sum ./*.zip > SHA256SUMS && cat SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes $flags dist/*.zip dist/SHA256SUMS
