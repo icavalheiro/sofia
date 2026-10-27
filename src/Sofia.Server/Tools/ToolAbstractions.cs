@@ -96,19 +96,12 @@ public static class Args
         }
     }
 
-    // Models sometimes emit duplicate keys ({"limit":80,"limit":0}); JsonNode.Parse throws ArgumentException for
-    // those, so the last value wins instead of failing the whole call.
+    // Models sometimes emit duplicate keys ({"limit":80,"limit":0}). JsonNode.Parse defers the duplicate check to the
+    // first property access (ArgumentException), so the tree is always copied from a JsonDocument: last value wins.
     private static JsonNode? ParseLenient(string raw)
     {
-        try
-        {
-            return JsonNode.Parse(raw);
-        }
-        catch (ArgumentException)
-        {
-            using var doc = JsonDocument.Parse(raw);
-            return Copy(doc.RootElement);
-        }
+        using var doc = JsonDocument.Parse(raw);
+        return Copy(doc.RootElement);
 
         static JsonNode? Copy(JsonElement e)
         {

@@ -602,6 +602,15 @@ public class ParsingTests
         var args = Args.Parse("Sure: {\"path\": \"a.txt\"} done");
         Assert.Equal("a.txt", Args.Required(args, "path"));
     }
+
+    [Fact]
+    public void DuplicateKeysKeepTheLastValueWithoutThrowing()
+    {
+        var args = Args.Parse("{\"path\":\"a.txt\",\"limit\":80,\"limit\":0}");
+        Assert.Equal(0, Args.Int(args, "limit"));
+        Assert.Equal("a.txt", Args.Required(args, "path"));
+        Assert.Equal("{\"path\":\"a.txt\",\"limit\":0}", args.ToJsonString());
+    }
 }
 
 public class TextDurationTests
