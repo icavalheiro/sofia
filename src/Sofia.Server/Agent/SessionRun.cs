@@ -56,7 +56,6 @@ public sealed class RunServices(
 /// </summary>
 public sealed class SessionRun : IToolHost
 {
-    private const int MaxSteps = 150;
     public static readonly List<string> PermissionChoices = ["Allow once", "Allow for this session", "Deny"];
 
     private readonly RunServices _s;
@@ -288,7 +287,7 @@ public sealed class SessionRun : IToolHost
         // arrives as <context_updates> on the newest user message (see `TurnContextAsync`), appended where it never
         // invalidates the cache. Only an agent or tool-set change re-freezes, and then the prefix is doomed anyway.
         // History stays append-only within a run (see `HistoryBuilder`).
-        for (var step = 0; step < MaxSteps; step++)
+        while (true)
         {
             ct.ThrowIfCancellationRequested();
             var (provider, model) = ResolveModel();
@@ -346,7 +345,6 @@ public sealed class SessionRun : IToolHost
             await ExecuteToolsAsync(assistant, calls, tools, ct);
             InjectSteering();
         }
-        throw new InvalidOperationException($"Stopped after {MaxSteps} steps without a final answer.");
     }
 
     private (string System, List<ITool> Tools, List<string>? Delta, string Agent)? _turnPrompt;
