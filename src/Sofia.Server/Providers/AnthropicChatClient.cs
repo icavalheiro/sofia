@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Sofia.Server.Domain;
+using Sofia.Server.Tools;
 
 namespace Sofia.Server.Providers;
 
@@ -73,65 +74,65 @@ public sealed class AnthropicChatClient(HttpClient http, ProviderConfig provider
                 switch (type)
                 {
                     case "message_start":
-                    {
-                        var u = node["message"]?["usage"];
-                        usage.Input = Long(u?["input_tokens"]);
-                        usage.CacheRead = Long(u?["cache_read_input_tokens"]);
-                        usage.CacheWrite = Long(u?["cache_creation_input_tokens"]);
-                        usage.Output = Long(u?["output_tokens"]);
-                        break;
-                    }
+                        {
+                            var u = node["message"]?["usage"];
+                            usage.Input = Long(u?["input_tokens"]);
+                            usage.CacheRead = Long(u?["cache_read_input_tokens"]);
+                            usage.CacheWrite = Long(u?["cache_creation_input_tokens"]);
+                            usage.Output = Long(u?["output_tokens"]);
+                            break;
+                        }
                     case "content_block_start":
-                    {
-                        var index = node["index"]?.GetValue<int>() ?? 0;
-                        var block = node["content_block"];
-                        var kind = block?["type"]?.GetValue<string>() ?? "text";
-                        blockKinds[index] = kind;
-                        if (kind == "tool_use")
                         {
-                            toolIndexes[index] = toolIndex;
-                            yield return new ToolCallStarted(toolIndex++, block?["id"]?.GetValue<string>() ?? Guid.NewGuid().ToString("N"),
-                                block?["name"]?.GetValue<string>() ?? "unknown");
+                            var index = node["index"]?.GetValue<int>() ?? 0;
+                            var block = node["content_block"];
+                            var kind = block?["type"]?.GetValue<string>() ?? "text";
+                            blockKinds[index] = kind;
+                            if (kind == "tool_use")
+                            {
+                                toolIndexes[index] = toolIndex;
+                                yield return new ToolCallStarted(toolIndex++, block?["id"]?.GetValue<string>() ?? Guid.NewGuid().ToString("N"),
+                                    block?["name"]?.GetValue<string>() ?? "unknown");
+                            }
+                            else if (kind == "text" && block?["text"]?.GetValue<string>() is { Length: > 0 } t)
+                            {
+                                yield return new TextDelta(t);
+                            }
+                            break;
                         }
-                        else if (kind == "text" && block?["text"]?.GetValue<string>() is { Length: > 0 } t)
-                        {
-                            yield return new TextDelta(t);
-                        }
-                        break;
-                    }
                     case "content_block_delta":
-                    {
-                        var index = node["index"]?.GetValue<int>() ?? 0;
-                        var delta = node["delta"];
-                        switch (delta?["type"]?.GetValue<string>())
                         {
-                            case "text_delta":
-                                yield return new TextDelta(delta["text"]?.GetValue<string>() ?? "");
-                                break;
-                            case "thinking_delta":
-                                yield return new ReasoningDelta(delta["thinking"]?.GetValue<string>() ?? "");
-                                break;
-                            case "signature_delta":
-                                yield return new ReasoningSignature(delta["signature"]?.GetValue<string>() ?? "");
-                                break;
-                            case "input_json_delta":
-                                if (toolIndexes.TryGetValue(index, out var ti))
-                                    yield return new ToolCallArgumentsDelta(ti, delta["partial_json"]?.GetValue<string>() ?? "");
-                                break;
+                            var index = node["index"]?.GetValue<int>() ?? 0;
+                            var delta = node["delta"];
+                            switch (delta?["type"]?.GetValue<string>())
+                            {
+                                case "text_delta":
+                                    yield return new TextDelta(delta["text"]?.GetValue<string>() ?? "");
+                                    break;
+                                case "thinking_delta":
+                                    yield return new ReasoningDelta(delta["thinking"]?.GetValue<string>() ?? "");
+                                    break;
+                                case "signature_delta":
+                                    yield return new ReasoningSignature(delta["signature"]?.GetValue<string>() ?? "");
+                                    break;
+                                case "input_json_delta":
+                                    if (toolIndexes.TryGetValue(index, out var ti))
+                                        yield return new ToolCallArgumentsDelta(ti, delta["partial_json"]?.GetValue<string>() ?? "");
+                                    break;
+                            }
+                            break;
                         }
-                        break;
-                    }
                     case "message_delta":
-                    {
-                        var u = node["usage"];
-                        if (u?["output_tokens"] is not null) usage.Output = Long(u["output_tokens"]);
-                        if (u?["input_tokens"] is not null) usage.Input = Long(u["input_tokens"]);
-                        if (u?["cache_read_input_tokens"] is not null) usage.CacheRead = Long(u["cache_read_input_tokens"]);
-                        if (u?["cache_creation_input_tokens"] is not null) usage.CacheWrite = Long(u["cache_creation_input_tokens"]);
-                        var stop = node["delta"]?["stop_reason"]?.GetValue<string>();
-                        if (!string.IsNullOrEmpty(stop)) finish = stop == "tool_use" ? "tool_calls" : stop;
-                        break;
-                    }
+                        {
+                            var u = node["usage"];
+                            if (u?["output_tokens"] is not null) usage.Output = Long(u["output_tokens"]);
+                            if (u?["input_tokens"] is not null) usage.Input = Long(u["input_tokens"]);
+                            if (u?["cache_read_input_tokens"] is not null) usage.CacheRead = Long(u["cache_read_input_tokens"]);
+                            if (u?["cache_creation_input_tokens"] is not null) usage.CacheWrite = Long(u["cache_creation_input_tokens"]);
+                            var stop = node["delta"]?["stop_reason"]?.GetValue<string>();
+                            if (!string.IsNullOrEmpty(stop)) finish = stop == "tool_use" ? "tool_calls" : stop;
+                            break;
+                        }
                     case "error":
                         throw new ProviderException($"{provider.Name}: {node["error"]?["message"]?.GetValue<string>() ?? data}");
                 }
@@ -177,9 +178,9 @@ public sealed class AnthropicChatClient(HttpClient http, ProviderConfig provider
                     JsonNode? input;
                     try
                     {
-                        input = JsonNode.Parse(string.IsNullOrWhiteSpace(tc.Arguments) ? "{}" : tc.Arguments);
+                        input = Args.Parse(tc.Arguments);
                     }
-                    catch (JsonException)
+                    catch (ToolArgumentException)
                     {
                         input = new JsonObject();
                     }

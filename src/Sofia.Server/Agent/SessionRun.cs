@@ -493,14 +493,14 @@ public sealed class SessionRun : IToolHost
                     lock (assistant) assistant.ReasoningSignature = (assistant.ReasoningSignature ?? "") + sig.Signature;
                     break;
                 case ToolCallStarted started:
-                {
-                    firstToken ??= stepClock.Elapsed;
-                    var call = new ToolCall { Id = started.Id, Name = started.Name, Summary = started.Name };
-                    builders[started.Index] = (call, new StringBuilder());
-                    lock (assistant) (assistant.ToolCalls ??= []).Add(call);
-                    _s.Store.UpdateMessage(Session, assistant, persist: false);
-                    break;
-                }
+                    {
+                        firstToken ??= stepClock.Elapsed;
+                        var call = new ToolCall { Id = started.Id, Name = started.Name, Summary = started.Name };
+                        builders[started.Index] = (call, new StringBuilder());
+                        lock (assistant) (assistant.ToolCalls ??= []).Add(call);
+                        _s.Store.UpdateMessage(Session, assistant, persist: false);
+                        break;
+                    }
                 case ToolCallArgumentsDelta delta:
                     if (builders.TryGetValue(delta.Index, out var builder))
                     {
@@ -534,6 +534,8 @@ public sealed class SessionRun : IToolHost
                 try
                 {
                     var parsed = Args.Parse(call.Arguments);
+                    // Re-serialise so duplicate keys never reach the history replayed to providers.
+                    call.Arguments = parsed.ToJsonString();
                     call.Input = parsed.ToJsonString(Json.Indented);
                     if (byName.TryGetValue(call.Name, out var tool))
                     {
