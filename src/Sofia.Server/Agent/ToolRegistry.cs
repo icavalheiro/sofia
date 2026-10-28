@@ -13,7 +13,7 @@ namespace Sofia.Server.Agent;
 /// <summary>Builds the tool set for an agent in a workspace.</summary>
 public sealed class ToolRegistry(
     SofiaDb db, SofiaOptions options, McpManager mcp, SkillService skills, CommandService commands, AgentCatalog agents,
-    IHttpClientFactory httpFactory, IServer server, BrowserService browser, KnowledgeService knowledge)
+    IHttpClientFactory httpFactory, IServer server, BrowserService browser, KnowledgeService knowledge, ProcessManager processes)
 {
     private static readonly HashSet<string> FolderOnly = ["read", "write", "edit", Agents.ShellToolToken, "grep", "find", "ls", "task", "task:explore"];
 
@@ -37,6 +37,7 @@ public sealed class ToolRegistry(
                 "web_fetch" => new WebFetchTool(httpFactory),
                 "web_search" => new WebSearchTool(httpFactory),
                 "browser" => new BrowserTool(browser, SaveImage),
+                "processes" => new ProcessesTool(processes, shell),
                 "question" => new QuestionTool(),
                 "task" => TaskFor(agents.Delegable(dir)),
                 "task:explore" => TaskFor(agents.Delegable(dir, readOnlyOnly: true)),

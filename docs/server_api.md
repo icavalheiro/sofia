@@ -468,6 +468,16 @@ interface McpServerDto {
 }
 ```
 
+## Background processes
+
+Long-running commands (dev servers, watchers) started by the agent's processes
+tool (actions start, list, output, kill). They are killed with their
+conversation and on server shutdown.
+
+- `GET /api/processes?sessionId=` → `[{id, command, cwd, sessionId, pid, status (running|exited|killed), exitCode, startedAt, endedAt}]`
+- `GET /api/processes/{id}/output?tail=200` → `{info, output}`
+- `POST /api/processes/{id}/kill` → the updated process (404 if unknown)
+
 ## Live browser
 
 Each conversation can own one headless Chromium (system Chrome/Edge, else a

@@ -77,6 +77,9 @@ builder.Services.AddSingleton<ContextFiles>();
 builder.Services.AddSingleton<PairingService>();
 builder.Services.AddSingleton<McpManager>();
 builder.Services.AddSingleton<BrowserService>();
+builder.Services.AddSingleton<ProcessManager>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessManager>());
+builder.Services.AddSingleton<IEventHandler, ProcessCleanupHandler>();
 builder.Services.AddSingleton<IEventHandler, BrowserCleanupHandler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<McpManager>());
 builder.Services.AddSingleton<ToolRegistry>();
@@ -124,6 +127,7 @@ if (options.UiPath.Length > 0)
 app.MapSessionApi();
 app.MapPlatformApi();
 app.MapBrowserApi();
+app.MapProcessApi();
 app.MapHub<SofiaHub>("/hubs/events");
 app.MapFallback("/api/{**rest}", () => Results.Json(new { error = "Not found." }, statusCode: 404));
 if (options.UiPath.Length > 0)

@@ -4,7 +4,7 @@
 // tree (`/api/vcs/diff`), reloaded whenever a tool call finishes —
 // plus quick actions on the workspace folder (open in the file manager /
 // VS Code, terminal, copy path).
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import type { FileChange, FileDiffDto } from '@/types'
 import { fileDiffToChange } from '@/services/diff'
@@ -117,6 +117,47 @@ watch(
   },
 )
 
+// Background processes started by the agent (dev servers, watchers): listed and killable.
+interface BackgroundProcess {
+  id: string
+  command: string
+  pid: number | null
+  status: 'running' | 'exited' | 'killed'
+  exitCode: number | null
+  sessionId: string | null
+}
+const processes = ref<BackgroundProcess[]>([])
+let processTimer: number | undefined
+
+async function loadProcesses(): Promise<void> {
+  try {
+    processes.value = await api<BackgroundProcess[]>('GET', '/api/processes')
+  } catch {
+    processes.value = []
+  }
+}
+
+async function killProcess(p: BackgroundProcess): Promise<void> {
+  try {
+    await api('POST', `/api/processes/${p.id}/kill`)
+  } catch (e) {
+    notify(e instanceof Error ? e.message : String(e))
+  }
+  await loadProcesses()
+}
+
+watch(
+  () => props.open,
+  (open) => {
+    window.clearInterval(processTimer)
+    if (!open) return
+    void loadProcesses()
+    processTimer = window.setInterval(() => void loadProcesses(), 3000)
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => window.clearInterval(processTimer))
+
 const lastAction = ref('')
 
 // Fullscreen two-column compare popup for a clicked file.
@@ -208,6 +249,18 @@ async function copyPath(): Promise<void> {
               <span class="rp-add">+{{ f.additions ?? 0 }}</span>
               <span class="rp-del">-{{ f.deletions ?? 0 }}</span>
             </span>
+          </button>
+        </div>
+      </section>
+
+      <section class="rp-section">
+        <div class="rp-section-label">Background processes · {{ processes.filter((p) => p.status === 'running').length }}</div>
+        <p v-if="!processes.length" class="rp-note">None running.</p>
+        <div v-for="p in processes" :key="p.id" class="rp-file" :title="p.command">
+          <span class="rp-badge">{{ p.status }}</span>
+          <span class="rp-file-path sofia-truncate">{{ p.command }}</span>
+          <button v-if="p.status === 'running'" class="rp-refresh" type="button" :aria-label="'Kill ' + p.id" title="Kill" @click="killProcess(p)">
+            <SofiaIcon name="stop" :size="'0.9rem'" />
           </button>
         </div>
       </section>

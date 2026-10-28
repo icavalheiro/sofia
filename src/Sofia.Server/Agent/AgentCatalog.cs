@@ -22,7 +22,7 @@ public sealed partial class AgentCatalog(SofiaOptions options)
         ["web_fetch"] = "web_fetch", ["webfetch"] = "web_fetch", ["web_search"] = "web_search", ["websearch"] = "web_search",
         ["browser"] = "browser", ["playwright"] = "browser",
         ["question"] = "question", ["askuserquestion"] = "question", ["task"] = "task", ["agent"] = "task",
-        ["skill"] = "skill", ["sofia_info"] = "sofia_info", ["sofia"] = "sofia_info", ["notes"] = "notes", ["note"] = "notes",
+        ["processes"] = "processes", ["process"] = "processes", ["jobs"] = "processes", ["skill"] = "skill", ["sofia_info"] = "sofia_info", ["sofia"] = "sofia_info", ["notes"] = "notes", ["note"] = "notes",
         ["memory"] = "memory", ["mem"] = "memory",
     };
 

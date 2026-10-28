@@ -28,12 +28,12 @@ public static class Agents
     public static readonly AgentDefinition[] All =
     [
         new("build", "Build", "Default agent: reads, edits, runs commands and delegates to subagents.", "primary",
-            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "question", "task", "skill", "notes", "memory", "sofia_info"], true, null),
+            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "question", "task", "skill", "notes", "memory", "sofia_info"], true, null),
         new("plan", "Plan", "Research-only: explores with read-only tools and proposes a plan without changing files.", "primary",
             ["read", "grep", "find", "ls", "web_fetch", "web_search", "question", "task:explore", "skill", "notes", "memory", "sofia_info"], true,
             "You are in PLAN mode. Investigate with read-only tools, then present a concrete, step-by-step plan. Do not modify files or run commands that change state."),
         new("general", "General", "Subagent for multi-step tasks that may edit files and run commands.", "subagent",
-            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "skill", "notes", "memory", "sofia_info"], true,
+            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "skill", "notes", "memory", "sofia_info"], true,
             "You are a subagent. Complete the task autonomously, then reply with a concise report of what you did and found. The user cannot answer questions."),
         new("explore", "Explore", "Read-only subagent for fast codebase research.", "subagent",
             ["read", "grep", "find", "ls", "web_fetch", "web_search", "skill", "notes", "memory", "sofia_info"], false,
