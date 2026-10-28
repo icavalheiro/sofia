@@ -272,7 +272,7 @@ public sealed class LsTool : ITool
 public sealed class FindTool : ITool
 {
     public string Name => "find";
-    public string Description => "Find files by glob pattern (e.g. `**/*.cs`, `src/**/test_*.py`). Ignores .git, node_modules, bin, obj and similar.";
+    public string Description => "Find files by glob pattern (e.g. `**/*.cs`, `src/**/test_*.py`). Automatically skips dependency/build/cache folders (.git, node_modules, bin, obj, target, vendor, venv, __pycache__, dist, build and similar); to look inside one, pass it explicitly as `path`.";
     public ToolKind Kind => ToolKind.Read;
     public JsonObject Parameters => Schema.Object(
         ("pattern", Schema.String("Glob pattern relative to the search directory."), true),

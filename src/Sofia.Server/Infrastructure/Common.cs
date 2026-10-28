@@ -157,7 +157,21 @@ public static class PathUtil
 
     public static readonly HashSet<string> IgnoredDirs = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".git", "node_modules", "bin", "obj", "dist", "target", ".vs", ".idea", "__pycache__", ".venv", "venv", ".next", ".nuxt", "coverage",
+        // VCS / IDE
+        ".git", ".hg", ".svn", ".vs", ".idea", ".vscode",
+        // C# / .NET
+        "bin", "obj", "packages", ".nuget",
+        // Node / web
+        "node_modules", "bower_components", "jspm_packages", ".npm", ".yarn", ".pnpm-store", ".next", ".nuxt", ".svelte-kit", ".angular",
+        ".turbo", ".parcel-cache", ".cache", ".output", ".vite", "dist", "build", "out", "coverage", ".nyc_output",
+        // Python
+        "__pycache__", ".venv", "venv", "env", ".tox", ".nox", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".ipynb_checkpoints", "site-packages", ".eggs",
+        // PHP / Ruby
+        "vendor", ".bundle", ".sass-cache",
+        // Rust / Java / Kotlin / Scala / Go-adjacent
+        "target", ".gradle", ".m2", ".bloop", ".metals", ".stack-work",
+        // Others (Dart, Elixir, Swift, Terraform, Unity, etc.)
+        ".dart_tool", ".pub-cache", "_build", "deps", ".build", "DerivedData", "Pods", ".terraform", ".serverless", "Library", "Temp",
     };
 
     public static bool IsBinary(ReadOnlySpan<byte> sample)
