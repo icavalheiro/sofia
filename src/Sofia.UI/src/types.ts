@@ -222,7 +222,7 @@ export interface ProviderPresetDto
 {
   id: string;
   name: string;
-  type: 'openai' | 'anthropic';
+  type: 'openai' | 'openai-responses' | 'anthropic';
   baseUrl: string;
   envKey?: string;
   /** 'github-device' = sign in through the GitHub device flow instead of pasting a key. */
@@ -537,7 +537,7 @@ export interface Provider
   id: string;
   name: string;
   kind: 'local' | 'cloud';
-  type: 'openai' | 'anthropic';
+  type: 'openai' | 'openai-responses' | 'anthropic';
   baseUrl: string;
   status: 'connected' | 'disconnected' | 'error';
   detail: string;

@@ -606,8 +606,14 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             return new AnthropicChatClient(http, OpenCodeGo.ForAnthropic(provider));
         if (provider.Type == "anthropic") return new AnthropicChatClient(http, provider);
         ProviderAuthResolver? auth = provider.Flavor == "copilot" ? ct => _copilot.ResolveAsync(provider, ct) : null;
+        if (provider.Type == "openai-responses"
+            || (provider.Flavor == "copilot" && modelId is not null && ResponsesOnlyModels.ContainsKey(modelId)))
+            return new OpenAiResponsesClient(http, provider, auth);
         return new OpenAiChatClient(http, provider, auth);
     }
+
+    /// <summary>Copilot model ids that are only served on <c>/responses</c>, filled while parsing the catalog.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> ResponsesOnlyModels = new();
 
     /// <summary>Copilot's catalog mixes chat models with embeddings, hidden picks and Responses-only models.</summary>
     internal static List<DiscoveredModel> ParseCopilotModels(JsonNode? json)
@@ -621,8 +627,16 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             if (caps?["type"]?.GetValue<string>() is { } type && type != "chat") continue;
             if (item["model_picker_enabled"] is JsonValue picker && picker.TryGetValue<bool>(out var shown) && !shown) continue;
             if (caps?["supports"]?["tool_calls"] is JsonValue tools && tools.TryGetValue<bool>(out var canTool) && !canTool) continue;
-            if (item["supported_endpoints"] is JsonArray endpoints
-                && !endpoints.Any(e => e?.GetValue<string>() == "/chat/completions")) continue;
+            if (item["supported_endpoints"] is JsonArray endpoints)
+            {
+                var names = endpoints.Select(e => e?.GetValue<string>()).ToList();
+                if (!names.Contains("/chat/completions"))
+                {
+                    if (!names.Contains("/responses")) continue;
+                    ResponsesOnlyModels[id] = true;
+                }
+                else ResponsesOnlyModels.TryRemove(id, out _);
+            }
 
             var known = ModelLimits.Known(id);
             var ctx = Int(caps?["limits"]?["max_context_window_tokens"]) ?? known?.Context ?? 128_000;

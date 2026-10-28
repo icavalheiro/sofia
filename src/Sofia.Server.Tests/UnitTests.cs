@@ -373,8 +373,8 @@ public class ProviderBodyTests
         ] }
         """);
         var models = ProviderService.ParseCopilotModels(json);
-        var model = Assert.Single(models);
-        Assert.Equal("gpt-6-sol", model.Id);
+        Assert.Equal(["gpt-6-sol", "codex-only"], models.Select(m => m.Id));
+        var model = models[0];
         Assert.Equal(400_000, model.ContextLength);
         Assert.Equal(64_000, model.MaxOutput);
         Assert.True(model.Vision);

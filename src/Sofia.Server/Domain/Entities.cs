@@ -311,7 +311,7 @@ public sealed class ProviderConfig
 {
     [BsonId] public string Id { get; set; } = "";
     public string Name { get; set; } = "";
-    /// <summary>'openai' | 'anthropic' — the wire protocol.</summary>
+    /// <summary>'openai' | 'openai-responses' | 'anthropic' — the wire protocol.</summary>
     public string Type { get; set; } = "openai";
     /// <summary>'local' | 'cloud'.</summary>
     public string Kind { get; set; } = "cloud";

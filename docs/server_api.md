@@ -1,4 +1,4 @@
-﻿# Sofia.Server API
+# Sofia.Server API
 
 `src/Sofia.Server` is Sofia's own harness backend (ASP.NET Core, .NET 10,
 minimal APIs, LiteDB, SignalR). `src/Sofia.UI` is its only client. This file is
@@ -290,7 +290,7 @@ interface ProviderDto {
   id: string
   name: string
   kind: 'local' | 'cloud'
-  type: 'openai' | 'anthropic'
+  type: 'openai' | 'openai-responses' | 'anthropic'
   baseUrl: string
   status: 'connected' | 'disconnected' | 'error'
   detail: string
@@ -302,7 +302,7 @@ interface ProviderDto {
 }
 
 interface ProviderPresetDto {
-  id: string; name: string; type: 'openai' | 'anthropic'; baseUrl: string; envKey?: string
+  id: string; name: string; type: 'openai' | 'openai-responses' | 'anthropic'; baseUrl: string; envKey?: string
   auth?: 'github-device'   // sign in through the GitHub device flow instead of pasting a key
   note?: string
 }

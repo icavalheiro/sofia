@@ -262,7 +262,7 @@ const presets = ref<ProviderPresetDto[]>([])
 const presetId = ref<string | null>(null)
 const newProvider = reactive({
   name: '',
-  type: 'openai' as 'openai' | 'anthropic',
+  type: 'openai' as 'openai' | 'openai-responses' | 'anthropic',
   baseUrl: '',
   apiKey: '',
 })
@@ -1024,7 +1024,7 @@ onBeforeUnmount(stopEvents)
                   </button>
                   <button class="integ-item" type="button" @click="pickPreset('')">
                     <SofiaIcon name="plus" :size="'0.85rem'" />
-                    <span class="sofia-truncate">Custom (OpenAI-compatible / Anthropic)</span>
+                    <span class="sofia-truncate">Custom (OpenAI-compatible / Responses / Anthropic)</span>
                   </button>
                 </div>
                 <div v-else class="integ-picked">
@@ -1064,6 +1064,12 @@ onBeforeUnmount(stopEvents)
                       type="button"
                       @click="newProvider.type = 'openai'"
                     >{{ t('settings.models.openai') }}</button>
+                    <button
+                      class="seg-btn"
+                      :class="{ 'seg-btn--active': newProvider.type === 'openai-responses' }"
+                      type="button"
+                      @click="newProvider.type = 'openai-responses'"
+                    >{{ t('settings.models.openaiResponses') }}</button>
                     <button
                       class="seg-btn"
                       :class="{ 'seg-btn--active': newProvider.type === 'anthropic' }"

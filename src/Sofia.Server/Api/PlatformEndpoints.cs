@@ -112,7 +112,7 @@ public static class PlatformEndpoints
         {
             if (string.IsNullOrWhiteSpace(body.BaseUrl)) throw new ArgumentException("Base URL is required.");
             var preset = ProviderService.Presets.FirstOrDefault(p => p.Id == body.PresetId);
-            var type = body.Type == "anthropic" ? "anthropic" : preset?.Type ?? "openai";
+            var type = body.Type is "anthropic" or "openai-responses" ? body.Type : preset?.Type ?? "openai";
             var id = preset is not null && db.Providers.FindById(preset.Id) is null ? preset.Id : Ids.New("prv");
             var config = new ProviderConfig
             {
@@ -172,7 +172,7 @@ public static class PlatformEndpoints
         {
             try
             {
-                var models = await providers.ProbeAsync(body.Type == "anthropic" ? "anthropic" : "openai", body.BaseUrl.Trim(), body.ApiKey, ct);
+                var models = await providers.ProbeAsync(body.Type is "anthropic" or "openai-responses" ? body.Type : "openai", body.BaseUrl.Trim(), body.ApiKey, ct);
                 return Results.Ok(new { models });
             }
             catch (Exception ex) when (ex is ProviderException or HttpRequestException or TaskCanceledException)
