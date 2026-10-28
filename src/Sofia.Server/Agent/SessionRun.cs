@@ -285,16 +285,23 @@ public sealed class SessionRun : IToolHost
     /// on first use and keeps it until the root run ends, so the runtime never switches context between conversations.
     /// Waiting conversations are served subagents first, then sessions.
     /// </summary>
-    private async Task AcquireModelAsync(ModelInfo model, CancellationToken ct)
+    private async Task<IDisposable?> AcquireModelAsync(ModelInfo model, CancellationToken ct)
     {
-        if (!_s.Providers.IsSingleClient(model.Id)) return;
+        if (!_s.Providers.IsSingleClient(model.Id)) return null;
         var waited = false;
         await _s.Gate.AcquireAsync(model.Id, Root.Session.Id, Session.ParentId is not null, ct, () =>
         {
             waited = true;
             _s.Store.SetStatus(Session, SessionStatus.Waiting);
         });
+        // The lease above is per root conversation; the slot serialises the actual streams inside it.
+        var lease = await _s.Gate.AcquireSlotAsync(model.Id, Session.Id, ct, () =>
+        {
+            waited = true;
+            _s.Store.SetStatus(Session, SessionStatus.Waiting);
+        });
         if (waited) _s.Store.SetStatus(Session, SessionStatus.Working);
+        return lease;
     }
 
     private string ModelLabel() => _s.Providers.Resolve(Session.ModelId)?.Model.Label ?? Session.ModelId;
@@ -517,7 +524,7 @@ public sealed class SessionRun : IToolHost
     private async Task<(List<ToolCall> Calls, string Finish, bool Produced)> StreamOnceAsync(ProviderConfig provider, ModelInfo model, ChatRequest request,
         Message assistant, List<ITool> tools, int estimatedInput, CancellationToken ct)
     {
-        await AcquireModelAsync(model, ct);
+        using var slot = await AcquireModelAsync(model, ct);
         var client = _s.Providers.CreateClient(provider, model.ModelId);
         var builders = new SortedDictionary<int, (ToolCall Call, StringBuilder Args)>();
         var stepClock = Stopwatch.StartNew();
@@ -1016,7 +1023,7 @@ public sealed class SessionRun : IToolHost
     private async Task<(int After, string Summary)?> CompactCoreAsync(bool auto, CancellationToken ct)
     {
         var (provider, model) = ResolveModel();
-        await AcquireModelAsync(model, ct);
+        using var slot = await AcquireModelAsync(model, ct);
         var messages = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).OrderBy(m => m.Seq).ToList();
         var previous = messages.Where(m => m.Summary == true).ToList();
         var conversation = messages.Where(m => m.Summary != true).ToList();

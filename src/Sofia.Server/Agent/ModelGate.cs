@@ -57,6 +57,98 @@ public sealed class ModelGate
         }
     }
 
+    private sealed class SlotWaiter(string session, long seq)
+    {
+        public string Session { get; } = session;
+        public long Seq { get; } = seq;
+        public TaskCompletionSource Tcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed class SlotState
+    {
+        public bool Busy;
+        public string? Last;
+        public readonly List<SlotWaiter> Waiting = [];
+    }
+
+    private readonly Dictionary<string, SlotState> _slots = [];
+
+    /// <summary>
+    /// Request-level slot: a single-client runtime has one decoding slot, so even the session and subagents of one root
+    /// conversation must stream one at a time (interleaving them makes the server re-process the context every switch).
+    /// The session that streamed last goes first when it asks again, so a conversation keeps its warm context.
+    /// Dispose the returned lease when the stream ends.
+    /// </summary>
+    public async Task<IDisposable> AcquireSlotAsync(string modelId, string session, CancellationToken ct, Action? onWait = null)
+    {
+        SlotWaiter waiter;
+        lock (_gate)
+        {
+            if (!_slots.TryGetValue(modelId, out var state)) _slots[modelId] = state = new SlotState();
+            if (!state.Busy)
+            {
+                state.Busy = true;
+                state.Last = session;
+                return new SlotLease(this, modelId);
+            }
+            waiter = new SlotWaiter(session, ++_seq);
+            state.Waiting.Add(waiter);
+        }
+
+        onWait?.Invoke();
+        try
+        {
+            await using var _ = ct.Register(() => waiter.Tcs.TrySetCanceled(ct));
+            await waiter.Tcs.Task;
+        }
+        catch
+        {
+            lock (_gate)
+            {
+                if (_slots.TryGetValue(modelId, out var state))
+                {
+                    state.Waiting.Remove(waiter);
+                    // Granted at the same moment it was cancelled: pass the slot on.
+                    if (waiter.Tcs.Task.IsCompletedSuccessfully) NextSlot(state);
+                }
+            }
+            throw;
+        }
+        return new SlotLease(this, modelId);
+    }
+
+    private void ReleaseSlot(string modelId)
+    {
+        lock (_gate)
+        {
+            if (_slots.TryGetValue(modelId, out var state)) NextSlot(state);
+        }
+    }
+
+    private static void NextSlot(SlotState state)
+    {
+        state.Waiting.RemoveAll(w => w.Tcs.Task.IsCompleted);
+        var next = state.Waiting.OrderBy(w => w.Session == state.Last ? 0 : 1).ThenBy(w => w.Seq).FirstOrDefault();
+        if (next is null)
+        {
+            state.Busy = false;
+            return;
+        }
+        state.Waiting.Remove(next);
+        state.Last = next.Session;
+        state.Busy = true;
+        next.Tcs.TrySetResult();
+    }
+
+    private sealed class SlotLease(ModelGate gate, string modelId) : IDisposable
+    {
+        private int _done;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _done, 1) == 0) gate.ReleaseSlot(modelId);
+        }
+    }
+
     /// <summary>Releases every model leased to <paramref name="owner"/> and hands each to the next waiter.</summary>
     public void Release(string owner)
     {
