@@ -5,7 +5,7 @@ import { computed } from 'vue'
  * Loading indicator: a coffee mug with animated vapor. Inherits currentColor and sizes by `size`.
  * When too small for the vapor to read (< 1rem), it becomes a coffee bean that spins, pauses, repeats.
  */
-const props = defineProps<{ size?: string; paused?: boolean }>()
+const props = defineProps<{ size?: string; paused?: boolean; robot?: boolean }>()
 
 const small = computed(() => {
   const m = /^([\d.]+)(rem|em|px)?$/.exec(props.size ?? '')
@@ -16,8 +16,27 @@ const small = computed(() => {
 </script>
 
 <template>
+  <!-- Subagents: a little robot shaking in every direction, hard at work. -->
   <svg
-    v-if="small"
+    v-if="robot"
+    class="robot"
+    :class="{ paused }"
+    :style="{ width: size ?? '1.125rem', height: size ?? '1.125rem' }"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path d="M12 8V4H8" />
+    <rect x="4" y="8" width="16" height="12" rx="2" />
+    <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
+  </svg>
+  <svg
+    v-else-if="small"
     class="bean"
     :class="{ paused }"
     :style="{ width: size, height: size }"
@@ -59,6 +78,27 @@ const small = computed(() => {
 .coffee {
   flex: none;
   overflow: visible;
+}
+
+.robot {
+  flex: none;
+  animation: robot-shake 0.5s linear infinite;
+}
+
+.robot.paused {
+  animation: none;
+}
+
+@keyframes robot-shake {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  12% { transform: translate(-8%, 6%) rotate(-6deg); }
+  25% { transform: translate(7%, -8%) rotate(5deg); }
+  37% { transform: translate(-6%, -6%) rotate(-4deg); }
+  50% { transform: translate(8%, 5%) rotate(7deg); }
+  62% { transform: translate(-7%, 8%) rotate(-7deg); }
+  75% { transform: translate(6%, -5%) rotate(4deg); }
+  87% { transform: translate(-5%, 4%) rotate(-5deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
 }
 
 .bean {

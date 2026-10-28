@@ -70,7 +70,7 @@ import {
   Zap,
 } from 'lucide-vue-next'
 
-const props = defineProps<{ name: string; size?: number | string; strokeWidth?: number; spin?: boolean; paused?: boolean }>()
+const props = defineProps<{ name: string; size?: number | string; strokeWidth?: number; spin?: boolean; paused?: boolean; robot?: boolean }>()
 
 const ICONS: Record<string, Component> = {
   folder: Folder,
@@ -145,7 +145,7 @@ const boxSize = computed(() =>
 </script>
 
 <template>
-  <CoffeeSpinner v-if="name === 'loader'" :size="boxSize" :paused="paused" />
+  <CoffeeSpinner v-if="name === 'loader'" :size="boxSize" :paused="paused" :robot="robot" />
   <component
     :is="icon"
     v-else-if="icon"

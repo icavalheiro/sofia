@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, nextTick, reactive, ref } from 'vue'
 
 import logoUrl from '@/assets/logo.png'
@@ -543,7 +543,7 @@ useShortcut('session.next', () => stepSession(1))
                   :class="`conv-status--${convStatus(c)}`"
                   :title="statusTitle(convStatus(c))"
                 >
-                  <SofiaIcon v-if="convStatus(c) === 'working' || convStatus(c) === 'waiting'" name="loader" spin :paused="convStatus(c) === 'waiting'" :size="'0.75rem'" />
+                  <SofiaIcon v-if="convStatus(c) === 'working' || convStatus(c) === 'waiting'" name="loader" spin :robot="depth > 0" :paused="convStatus(c) === 'waiting'" :size="'0.75rem'" />
                   <SofiaIcon v-else :name="statusIcon(convStatus(c))" :size="'0.75rem'" />
                 </span>
                 <SofiaIcon v-else class="conv-icon" :name="depth > 0 ? 'bot' : 'chat'" :size="'0.875rem'" />
