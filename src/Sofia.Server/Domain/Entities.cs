@@ -383,8 +383,10 @@ public sealed class ServerConfig
     public string SearxngUrl { get; set; } = "";
     /// <summary>Model ids ('providerId/modelId') hidden from the harness: not offered in pickers and never chosen as default.</summary>
     public List<string> DisabledModels { get; set; } = [];
-    /// <summary>Model ids that serve one conversation at a time: runs are queued (subagents first) and a conversation keeps the model until its run ends.</summary>
+    /// <summary>Model ids that serve one conversation at a time: runs are queued (subagents first) and a conversation keeps the model until its run ends. Local models are single client by default, so they only need to be listed here once they were switched off and back on.</summary>
     public List<string> SingleClientModels { get; set; } = [];
+    /// <summary>Model ids of local runtimes that the user explicitly allowed to serve several conversations at once (the exception to the local-is-single-client default).</summary>
+    public List<string> MultiClientModels { get; set; } = [];
 }
 
 public sealed class AccessToken

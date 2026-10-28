@@ -495,7 +495,7 @@ export interface ModelOption
   video: boolean;
   loaded?: boolean;
   enabled: boolean;
-  /** Serves one conversation at a time: runs queue (subagents first) and a conversation keeps the model until it finishes. */
+  /** Serves one conversation at a time: runs queue (subagents first) and a conversation keeps the model until it finishes. Local models are single client by default. */
   singleClient?: boolean;
 }
 

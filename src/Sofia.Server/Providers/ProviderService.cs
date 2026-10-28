@@ -27,7 +27,7 @@ public sealed class ModelInfo
     public bool? Loaded { get; set; }
     /// <summary>False when the user switched this model off in Settings.</summary>
     public bool Enabled { get; set; } = true;
-    /// <summary>Serves one conversation at a time (see <c>ModelGate</c>).</summary>
+    /// <summary>Serves one conversation at a time (see <c>ModelGate</c>). Local models are single client by default.</summary>
     public bool SingleClient { get; set; }
     [JsonIgnore] public double InputPrice { get; set; }
     [JsonIgnore] public double OutputPrice { get; set; }
@@ -503,12 +503,13 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         var cfg = db.GetConfig();
         var disabled = cfg.DisabledModels.ToHashSet();
         var single = cfg.SingleClientModels.ToHashSet();
+        var shared = cfg.MultiClientModels.ToHashSet();
         lock (_gate)
         {
             foreach (var m in _states.Values.SelectMany(s => s.Models))
             {
                 m.Enabled = !disabled.Contains(m.Id);
-                m.SingleClient = single.Contains(m.Id);
+                m.SingleClient = ComputeSingleClient(m.Id, m.Local, single, shared);
             }
             return _states.Values.SelectMany(s => s.Models)
                 .OrderByDescending(m => m.Connected)
@@ -529,17 +530,43 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         bus.Publish(EventTypes.ModelsUpdated, new { });
     }
 
-    /// <summary>Marks models as serving a single conversation at a time (or not).</summary>
+    /// <summary>Marks models as serving a single conversation at a time (or not). Local models are single client by default, so
+    /// switching one off records it in <c>MultiClientModels</c> instead of removing a grant.</summary>
     public void SetSingleClient(IReadOnlyCollection<string> modelIds, bool singleClient)
     {
         var config = db.GetConfig();
+        var local = modelIds.Where(IsLocalModel).ToHashSet();
         config.SingleClientModels = config.SingleClientModels.Where(id => !modelIds.Contains(id)).ToList();
-        if (singleClient) config.SingleClientModels.AddRange(modelIds);
+        config.MultiClientModels = config.MultiClientModels.Where(id => !modelIds.Contains(id)).ToList();
+        foreach (var id in modelIds)
+        {
+            if (local.Contains(id))
+            {
+                if (!singleClient) config.MultiClientModels.Add(id);
+            }
+            else if (singleClient) config.SingleClientModels.Add(id);
+        }
         db.SaveConfig(config);
         bus.Publish(EventTypes.ModelsUpdated, new { });
     }
 
-    public bool IsSingleClient(string modelId) => db.GetConfig().SingleClientModels.Contains(modelId);
+    public bool IsSingleClient(string modelId)
+    {
+        var config = db.GetConfig();
+        return ComputeSingleClient(modelId, IsLocalModel(modelId), [.. config.SingleClientModels], [.. config.MultiClientModels]);
+    }
+
+    /// <summary>A model is single client when the user marked it so, or — the default for local runtimes, which rebuild their
+    /// context whenever they switch conversations — unless the user explicitly allowed several conversations at once.</summary>
+    private static bool ComputeSingleClient(string modelId, bool local, HashSet<string> single, HashSet<string> shared) =>
+        shared.Contains(modelId) ? false : local || single.Contains(modelId);
+
+    /// <summary>True when the provider of a 'providerId/modelId' is a local runtime (model ids themselves may contain slashes).</summary>
+    private bool IsLocalModel(string modelId)
+    {
+        var slash = modelId.IndexOf('/');
+        return slash > 0 && db.Providers.FindById(modelId[..slash])?.Kind == "local";
+    }
 
     public List<ProviderView> Providers()
     {

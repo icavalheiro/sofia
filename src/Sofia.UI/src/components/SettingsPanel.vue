@@ -1232,7 +1232,7 @@ onBeforeUnmount(stopEvents)
                         class="kind-tag"
                         :class="{ 'kind-tag--on': m.singleClient }"
                         :aria-pressed="!!m.singleClient"
-                        title="Single client: serves one conversation at a time (subagents first, then sessions)"
+                        title="Single client: serves one conversation at a time (subagents first, then sessions). Local models are single client by default."
                         @click.prevent="setModelSingleClient(m, !m.singleClient)"
                       >
                         {{ m.singleClient ? 'single client ✓' : 'single client' }}

@@ -257,6 +257,7 @@ cache of the earlier steps survives.
 | --- | --- | --- | --- |
 | `GET` | `/api/models` | – | `ModelDto[]` (each with `enabled`; disabled models stay listed so they can be switched back on) |
 | `POST` | `/api/models/enabled` | `{ id?, ids?, enabled }` | `204` (`id` and/or `ids` for bulk changes; persisted in the server config; disabled models are hidden from pickers and the available-models list, skipped as default and rejected when chosen for a session — Settings → Models → provider card → "Manage models" switches them back on) |
+| `POST` | `/api/models/single-client` | `{ id?, ids?, enabled }` | `204` (marks models as serving one conversation at a time — runs queue, subagents first, and a conversation keeps the model until its run ends. **Local models are single client by default**; switching one off stores it in `config.MultiClientModels`, switching it back on clears that and returns to the default. Cloud models stay opt-in via `config.SingleClientModels`.) |
 | `GET` | `/api/providers` | – | `ProviderDto[]` |
 | `GET` | `/api/providers/presets` | – | `ProviderPresetDto[]` |
 | `POST` | `/api/providers` | `{ name, type, baseUrl, apiKey?, models?: string[], presetId? }` | `ProviderDto` |
@@ -284,6 +285,8 @@ interface ModelDto {
   audio: boolean           // accepts audio input (runtime metadata or known family)
   video: boolean           // accepts video input (runtime metadata only)
   loaded?: boolean         // local runtimes that report it
+  enabled: boolean         // false when switched off in Settings
+  singleClient?: boolean   // one conversation at a time; true by default for local models
 }
 
 interface ProviderDto {
@@ -318,7 +321,9 @@ for cloud models, then a 32K fallback. Cloud providers are enabled from
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`,
 `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`,
 `OPENCODE_API_KEY`, `QWENCLOUD_API_KEY`, `COPILOT_GITHUB_TOKEN` or keys
-saved through the API.
+saved through the API. Every model of a `local` provider is single client by
+default — the runtime rebuilds its context whenever it switches conversations
+— and Settings → Models can switch that off per model.
 
 Provider presets with specific behaviour:
 
