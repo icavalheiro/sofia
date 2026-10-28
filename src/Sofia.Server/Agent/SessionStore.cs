@@ -257,6 +257,7 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
     {
         var children = db.Sessions.Find(s => s.ParentId == session.Id).ToList();
         db.DeleteSession(session.Id);
+        db.Compact();
         foreach (var child in children)
             bus.Publish(EventTypes.SessionDeleted, new { id = child.Id, workspaceId = child.WorkspaceId }, child.Id, child.WorkspaceId);
         bus.Publish(EventTypes.SessionDeleted, new { id = session.Id, workspaceId = session.WorkspaceId }, session.Id, session.WorkspaceId);

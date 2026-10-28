@@ -80,10 +80,31 @@ public sealed class SofiaDb : IDisposable
     {
         foreach (var child in Sessions.Find(s => s.ParentId == sessionId).ToList())
             DeleteSession(child.Id);
+        var attachmentIds = Messages.Find(m => m.SessionId == sessionId)
+            .SelectMany(m => m.Attachments ?? [])
+            .Select(a => a.Id)
+            .Distinct()
+            .ToList();
         Messages.DeleteMany(m => m.SessionId == sessionId);
+        foreach (var id in attachmentIds)
+        {
+            // Keep the attachment if another session's message still references it.
+            if (Messages.Find(m => m.Attachments != null && m.Attachments.Any(a => a.Id == id)).Any()) continue;
+            var attachment = Attachments.FindById(id);
+            if (attachment is null) continue;
+            try { if (File.Exists(attachment.StoragePath)) File.Delete(attachment.StoragePath); } catch (IOException) { }
+            Attachments.Delete(id);
+        }
         Snapshots.DeleteMany(s => s.SessionId == sessionId);
         Knowledge.DeleteMany(k => k.Scope == KnowledgeScope.Chat && k.SessionId == sessionId);
         Sessions.Delete(sessionId);
+    }
+
+    /// <summary>LiteDB reuses freed pages but never shrinks the file; Rebuild rewrites it without the free space.</summary>
+    public void Compact()
+    {
+        try { _db.Checkpoint(); _db.Rebuild(); }
+        catch (Exception) { /* best effort: a failed shrink must not fail the delete */ }
     }
 
     public void Dispose() => _db.Dispose();

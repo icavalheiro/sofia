@@ -117,6 +117,7 @@ public static class SessionEndpoints
             db.Workspaces.Delete(id);
             db.Knowledge.DeleteMany(k => k.Scope == KnowledgeScope.Workspace && k.WorkspaceId == id);
             db.DeleteWorkspaceMemory(id);
+            db.Compact();
             bus.Publish(Events.EventTypes.WorkspaceDeleted, new { id }, workspaceId: id);
             return Results.NoContent();
         });
