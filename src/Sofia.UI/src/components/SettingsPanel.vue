@@ -482,6 +482,17 @@ async function setModelEnabled(model: ModelOption, enabled: boolean): Promise<vo
   await setModelsEnabled([model], enabled)
 }
 
+/** Marks a model as single client (one conversation at a time; optimistic). */
+async function setModelSingleClient(model: ModelOption, singleClient: boolean): Promise<void> {
+  model.singleClient = singleClient
+  try {
+    await api('POST', '/api/models/single-client', { ids: [model.id], enabled: singleClient })
+  } catch (e) {
+    configError.value = failure(e)
+    await refreshModels()
+  }
+}
+
 /** Bulk variant used by select all / deselect all in the provider's model manager. */
 async function setModelsEnabled(targets: ModelOption[], enabled: boolean): Promise<void> {
   const changed = targets.filter((m) => m.enabled !== enabled)
@@ -1210,6 +1221,16 @@ onBeforeUnmount(stopEvents)
                         @change="setModelEnabled(m, ($event.target as HTMLInputElement).checked)"
                       />
                       <span class="manage-label sofia-truncate">{{ m.label }}</span>
+                      <button
+                        type="button"
+                        class="kind-tag"
+                        :class="{ 'kind-tag--on': m.singleClient }"
+                        :aria-pressed="!!m.singleClient"
+                        title="Single client: serves one conversation at a time (subagents first, then sessions)"
+                        @click.prevent="setModelSingleClient(m, !m.singleClient)"
+                      >
+                        {{ m.singleClient ? 'single client ✓' : 'single client' }}
+                      </button>
                       <span class="model-chip-ctx">{{ m.context }}</span>
                     </label>
                   </div>

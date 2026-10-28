@@ -83,6 +83,7 @@ builder.Services.AddSingleton<IEventHandler, ProcessCleanupHandler>();
 builder.Services.AddSingleton<IEventHandler, BrowserCleanupHandler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<McpManager>());
 builder.Services.AddSingleton<ToolRegistry>();
+builder.Services.AddSingleton<ModelGate>();
 builder.Services.AddSingleton<RunServices>();
 builder.Services.AddSingleton<AgentService>();
 

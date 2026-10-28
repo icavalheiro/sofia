@@ -27,6 +27,8 @@ public sealed class ModelInfo
     public bool? Loaded { get; set; }
     /// <summary>False when the user switched this model off in Settings.</summary>
     public bool Enabled { get; set; } = true;
+    /// <summary>Serves one conversation at a time (see <c>ModelGate</c>).</summary>
+    public bool SingleClient { get; set; }
     [JsonIgnore] public double InputPrice { get; set; }
     [JsonIgnore] public double OutputPrice { get; set; }
 
@@ -498,10 +500,16 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
 
     public List<ModelInfo> Models()
     {
-        var disabled = db.GetConfig().DisabledModels.ToHashSet();
+        var cfg = db.GetConfig();
+        var disabled = cfg.DisabledModels.ToHashSet();
+        var single = cfg.SingleClientModels.ToHashSet();
         lock (_gate)
         {
-            foreach (var m in _states.Values.SelectMany(s => s.Models)) m.Enabled = !disabled.Contains(m.Id);
+            foreach (var m in _states.Values.SelectMany(s => s.Models))
+            {
+                m.Enabled = !disabled.Contains(m.Id);
+                m.SingleClient = single.Contains(m.Id);
+            }
             return _states.Values.SelectMany(s => s.Models)
                 .OrderByDescending(m => m.Connected)
                 .ThenByDescending(m => m.Local)
@@ -520,6 +528,18 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         db.SaveConfig(config);
         bus.Publish(EventTypes.ModelsUpdated, new { });
     }
+
+    /// <summary>Marks models as serving a single conversation at a time (or not).</summary>
+    public void SetSingleClient(IReadOnlyCollection<string> modelIds, bool singleClient)
+    {
+        var config = db.GetConfig();
+        config.SingleClientModels = config.SingleClientModels.Where(id => !modelIds.Contains(id)).ToList();
+        if (singleClient) config.SingleClientModels.AddRange(modelIds);
+        db.SaveConfig(config);
+        bus.Publish(EventTypes.ModelsUpdated, new { });
+    }
+
+    public bool IsSingleClient(string modelId) => db.GetConfig().SingleClientModels.Contains(modelId);
 
     public List<ProviderView> Providers()
     {

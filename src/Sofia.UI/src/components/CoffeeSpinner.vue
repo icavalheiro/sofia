@@ -5,7 +5,7 @@ import { computed } from 'vue'
  * Loading indicator: a coffee mug with animated vapor. Inherits currentColor and sizes by `size`.
  * When too small for the vapor to read (< 1rem), it becomes a coffee bean that spins, pauses, repeats.
  */
-const props = defineProps<{ size?: string }>()
+const props = defineProps<{ size?: string; paused?: boolean }>()
 
 const small = computed(() => {
   const m = /^([\d.]+)(rem|em|px)?$/.exec(props.size ?? '')
@@ -19,6 +19,7 @@ const small = computed(() => {
   <svg
     v-if="small"
     class="bean"
+    :class="{ paused }"
     :style="{ width: size, height: size }"
     viewBox="0 0 24 24"
     fill="none"
@@ -35,6 +36,7 @@ const small = computed(() => {
   <svg
     v-else
     class="coffee"
+    :class="{ paused }"
     :style="{ width: size ?? '1.125rem', height: size ?? '1.125rem' }"
     viewBox="0 0 24 24"
     fill="none"
@@ -72,6 +74,17 @@ const small = computed(() => {
   100% {
     transform: rotate(360deg);
   }
+}
+
+/* Waiting for a busy model: everything stands still, vapor drawn at rest. */
+.bean.paused {
+  animation: none;
+}
+
+.paused .steam {
+  animation: none;
+  stroke-dasharray: none;
+  opacity: 0.55;
 }
 
 .steam {

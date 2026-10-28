@@ -10,6 +10,8 @@ public static class SessionStatus
 {
     public const string Idle = "idle";
     public const string Working = "working";
+    /// <summary>Queued behind another conversation for a single-client model (no activity, no spinner).</summary>
+    public const string Waiting = "waiting";
     public const string Permission = "permission";
     public const string Question = "question";
     public const string Error = "error";
@@ -381,6 +383,8 @@ public sealed class ServerConfig
     public string SearxngUrl { get; set; } = "";
     /// <summary>Model ids ('providerId/modelId') hidden from the harness: not offered in pickers and never chosen as default.</summary>
     public List<string> DisabledModels { get; set; } = [];
+    /// <summary>Model ids that serve one conversation at a time: runs are queued (subagents first) and a conversation keeps the model until its run ends.</summary>
+    public List<string> SingleClientModels { get; set; } = [];
 }
 
 public sealed class AccessToken

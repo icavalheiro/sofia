@@ -51,6 +51,13 @@ public static class PlatformEndpoints
             providers.SetModelsEnabled(ids, body.Enabled);
             return Results.NoContent();
         });
+        api.MapPost("/models/single-client", (SetModelEnabledRequest body, ProviderService providers) =>
+        {
+            var ids = (body.Ids ?? []).Append(body.Id).Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id!).Distinct().ToList();
+            if (ids.Count == 0) throw new ArgumentException("A model id is required.");
+            providers.SetSingleClient(ids, body.Enabled);
+            return Results.NoContent();
+        });
         api.MapGet("/providers", (ProviderService providers) => Results.Ok(providers.Providers()));
         api.MapGet("/providers/presets", () => Results.Ok(ProviderService.Presets.Select(p => new { p.Id, p.Name, p.Type, p.BaseUrl, p.EnvKey, p.Auth, p.Note })));
 

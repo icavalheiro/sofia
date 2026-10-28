@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useHarness } from '@/composables/useHarness'
@@ -26,13 +26,14 @@ const STATUS_ICON: Record<string, string> = {
   error: 'x',
 }
 const STATUS_TITLE: Record<string, string> = {
-  working: 'Sofia is working on a task…',
+  waiting: 'Waiting for the model to be free…',
+  working: 'Sofia is working on a taskâ€¦',
   done: 'Last task finished',
   permission: 'Waiting for your permission',
   question: 'Asking you a question',
   error: 'The last run failed',
 }
-// LLM status of the conversation currently open — scoped to this chat so other
+// LLM status of the conversation currently open â€” scoped to this chat so other
 // conversations working in the background don't light up every header.
 const chatLlmStatus = computed<string>(() => {
   const c = activeConversation.value
@@ -90,7 +91,7 @@ onBeforeUnmount(() => {
       :class="`llm-status--${chatLlmStatus}`"
       :title="STATUS_TITLE[chatLlmStatus]"
     >
-      <SofiaIcon v-if="chatLlmStatus === 'working'" name="loader" spin :size="'0.85rem'" />
+      <SofiaIcon v-if="chatLlmStatus === 'working' || chatLlmStatus === 'waiting'" name="loader" spin :paused="chatLlmStatus === 'waiting'" :size="'0.85rem'" />
       <SofiaIcon v-else :name="STATUS_ICON[chatLlmStatus]" :size="'0.85rem'" />
     </span>
 
@@ -226,7 +227,8 @@ onBeforeUnmount(() => {
 }
 
 .llm-status--question,
-.llm-status--working {
+.llm-status--working,
+.llm-status--waiting {
   color: var(--sofia-primary);
   border-color: color-mix(in srgb, var(--sofia-primary) 45%, transparent);
 }

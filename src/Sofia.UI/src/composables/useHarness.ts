@@ -38,7 +38,7 @@ import
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY = 'sofia.harness.v2';
-const BUSY: ReadonlySet<WorkspaceStatus> = new Set<WorkspaceStatus>( [ 'working', 'permission', 'question' ] );
+const BUSY: ReadonlySet<WorkspaceStatus> = new Set<WorkspaceStatus>( [ 'working', 'waiting', 'permission', 'question' ] );
 
 /**
  * A composer attachment. Fresh picks keep the File for the upload; ones

@@ -35,8 +35,10 @@ public sealed class RunServices(
     KnowledgeService knowledge,
     ChangeTracker changes,
     GitService git,
+    ModelGate gate,
     ILogger<SessionRun> log)
 {
+    public ModelGate Gate => gate;
     public SofiaDb Db => db;
     public SessionStore Store => store;
     public ProviderService Providers => providers;
@@ -183,6 +185,7 @@ public sealed class SessionRun : IToolHost
                 SyncQueue();
             }
             Cleanup(aborted);
+            if (Root == this) _s.Gate.Release(Session.Id);
             _agents.Finished(this);
         }
     }
@@ -275,6 +278,23 @@ public sealed class SessionRun : IToolHost
                 : $"Model '{Session.ModelId}' is not available. Pick another model.");
         if (!resolved.Value.Provider.Enabled) throw new InvalidOperationException($"Provider '{resolved.Value.Provider.Name}' is disabled.");
         return resolved.Value;
+    }
+
+    /// <summary>
+    /// Single-client models serve one conversation at a time. The root conversation (session + its subagents) leases the model
+    /// on first use and keeps it until the root run ends, so the runtime never switches context between conversations.
+    /// Waiting conversations are served subagents first, then sessions.
+    /// </summary>
+    private async Task AcquireModelAsync(ModelInfo model, CancellationToken ct)
+    {
+        if (!_s.Providers.IsSingleClient(model.Id)) return;
+        var waited = false;
+        await _s.Gate.AcquireAsync(model.Id, Root.Session.Id, Session.ParentId is not null, ct, () =>
+        {
+            waited = true;
+            _s.Store.SetStatus(Session, SessionStatus.Waiting);
+        });
+        if (waited) _s.Store.SetStatus(Session, SessionStatus.Working);
     }
 
     private string ModelLabel() => _s.Providers.Resolve(Session.ModelId)?.Model.Label ?? Session.ModelId;
@@ -497,6 +517,7 @@ public sealed class SessionRun : IToolHost
     private async Task<(List<ToolCall> Calls, string Finish, bool Produced)> StreamOnceAsync(ProviderConfig provider, ModelInfo model, ChatRequest request,
         Message assistant, List<ITool> tools, int estimatedInput, CancellationToken ct)
     {
+        await AcquireModelAsync(model, ct);
         var client = _s.Providers.CreateClient(provider, model.ModelId);
         var builders = new SortedDictionary<int, (ToolCall Call, StringBuilder Args)>();
         var stepClock = Stopwatch.StartNew();
@@ -995,6 +1016,7 @@ public sealed class SessionRun : IToolHost
     private async Task<(int After, string Summary)?> CompactCoreAsync(bool auto, CancellationToken ct)
     {
         var (provider, model) = ResolveModel();
+        await AcquireModelAsync(model, ct);
         var messages = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).OrderBy(m => m.Seq).ToList();
         var previous = messages.Where(m => m.Summary == true).ToList();
         var conversation = messages.Where(m => m.Summary != true).ToList();

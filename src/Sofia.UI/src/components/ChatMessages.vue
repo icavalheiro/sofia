@@ -36,7 +36,8 @@ const answering = computed(() => {
 })
 
 /** The spinner only covers the wait for the first output of a run. */
-const showSpinner = computed(() => workingHere.value && !answering.value)
+const waitingHere = computed(() => activeConversation.value?.status === 'waiting')
+const showSpinner = computed(() => (workingHere.value || waitingHere.value) && !answering.value)
 
 /** Follow-ups the server holds back (steer / queue), shown greyed until they reach the model. */
 const pendingMessages = computed(() => {
@@ -137,7 +138,7 @@ watch(() => activeConversation.value?.id, followFromStart)
 
       <!-- Working indicator: a lone spinner centred below the transcript, only until the LLM starts answering. -->
       <div v-if="showSpinner" class="working" role="status" :aria-label="t('chat.working')">
-        <SofiaIcon class="spinner" name="loader" spin :size="'1.6rem'" />
+        <SofiaIcon class="spinner" name="loader" spin :paused="waitingHere" :size="'1.6rem'" />
       </div>
 
       <ChatMessageItem v-for="p in pendingMessages" :key="p.message.id" :message="p.message" :pending="p.delivery" />

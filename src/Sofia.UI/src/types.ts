@@ -6,7 +6,7 @@
 
 // --- Sofia.Server DTOs -------------------------------------------------------
 
-export type SessionStatus = 'idle' | 'working' | 'permission' | 'question' | 'error';
+export type SessionStatus = 'idle' | 'working' | 'waiting' | 'permission' | 'question' | 'error';
 export type WorkspaceKind = 'folder' | 'chat';
 
 export interface UsageDto
@@ -474,7 +474,7 @@ export interface Workspace
 }
 
 /** LLM activity shown as a badge / animated border on sidebar rows. */
-export type WorkspaceStatus = 'idle' | 'working' | 'done' | 'permission' | 'question' | 'error';
+export type WorkspaceStatus = 'idle' | 'working' | 'waiting' | 'done' | 'permission' | 'question' | 'error';
 
 /** A model from `GET /api/models`. */
 export interface ModelOption
@@ -494,8 +494,9 @@ export interface ModelOption
   audio: boolean;
   video: boolean;
   loaded?: boolean;
-  /** False when the model is switched off in Settings (hidden from pickers). */
   enabled: boolean;
+  /** Serves one conversation at a time: runs queue (subagents first) and a conversation keeps the model until it finishes. */
+  singleClient?: boolean;
 }
 
 export type PermissionModeId = 'read-only' | 'ask' | 'plan' | 'full';

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, reactive, ref } from 'vue'
 
 import logoUrl from '@/assets/logo.png'
@@ -54,7 +54,8 @@ const STATUS_ICON: Record<string, string> = {
 }
 
 const STATUS_TITLE: Record<string, string> = {
-  working: 'Sofia is working on a task…',
+  working: 'Sofia is working on a taskâ€¦',
+  waiting: 'Waiting for the model to be freeâ€¦',
   done: 'Last task finished',
   permission: 'Waiting for your permission',
   question: 'Asking you a question',
@@ -71,7 +72,7 @@ function visibleConvs(ws: Ws): Conv[] {
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
 }
 
-/** Archived conversations of a workspace — the "Archived" sub-folder's rows. */
+/** Archived conversations of a workspace â€” the "Archived" sub-folder's rows. */
 function archivedConvs(ws: Ws): Conv[] {
   return ws.conversations.filter((c) => !c.parentId && c.archived)
 }
@@ -312,7 +313,7 @@ const sections = computed(() => [
 /** A workspace row shows the highest-priority state of its conversations. */
 function wsStatus(ws: Ws): string {
   const badges = visibleConvs(ws).map(convStatus)
-  for (const status of ['permission', 'question', 'error', 'working', 'done']) {
+  for (const status of ['permission', 'question', 'error', 'working', 'waiting', 'done']) {
     if (badges.includes(status)) return status
   }
   return 'idle'
@@ -335,7 +336,7 @@ function convStatus(c: Conv): string {
   return liveBadge(c.id) ?? 'idle'
 }
 
-/** Absolute path: Windows drive (D:/…) or POSIX root (/…). */
+/** Absolute path: Windows drive (D:/â€¦) or POSIX root (/â€¦). */
 function isValidPath(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]/.test(path)
 }
@@ -483,7 +484,7 @@ useShortcut('session.next', () => stepSession(1))
                 :class="`ws-status--${wsStatus(ws)}`"
                 :title="statusTitle(wsStatus(ws))"
               >
-                <SofiaIcon v-if="wsStatus(ws) === 'working'" name="loader" spin :size="'0.8rem'" />
+                <SofiaIcon v-if="wsStatus(ws) === 'working' || wsStatus(ws) === 'waiting'" name="loader" spin :paused="wsStatus(ws) === 'waiting'" :size="'0.8rem'" />
                 <SofiaIcon v-else :name="statusIcon(wsStatus(ws))" :size="'0.8rem'" />
               </span>
               <SofiaIcon v-else class="ws-icon" :name="ws.icon ?? 'folder'" />
@@ -542,7 +543,7 @@ useShortcut('session.next', () => stepSession(1))
                   :class="`conv-status--${convStatus(c)}`"
                   :title="statusTitle(convStatus(c))"
                 >
-                  <SofiaIcon v-if="convStatus(c) === 'working'" name="loader" spin :size="'0.75rem'" />
+                  <SofiaIcon v-if="convStatus(c) === 'working' || convStatus(c) === 'waiting'" name="loader" spin :paused="convStatus(c) === 'waiting'" :size="'0.75rem'" />
                   <SofiaIcon v-else :name="statusIcon(convStatus(c))" :size="'0.75rem'" />
                 </span>
                 <SofiaIcon v-else class="conv-icon" :name="depth > 0 ? 'bot' : 'chat'" :size="'0.875rem'" />
@@ -998,7 +999,8 @@ useShortcut('session.next', () => stepSession(1))
   color: var(--sofia-primary);
 }
 
-.ws-status--working {
+.ws-status--working,
+.ws-status--waiting {
   background: var(--sofia-primary-soft);
   color: var(--sofia-primary);
 }
@@ -1186,7 +1188,8 @@ useShortcut('session.next', () => stepSession(1))
 }
 
 .conv-status--question,
-.conv-status--working {
+.conv-status--working,
+.conv-status--waiting {
   background: var(--sofia-primary-soft);
   color: var(--sofia-primary);
 }

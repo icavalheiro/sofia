@@ -1,4 +1,4 @@
-# Sofia.Server API
+﻿# Sofia.Server API
 
 `src/Sofia.Server` is Sofia's own harness backend (ASP.NET Core, .NET 10,
 minimal APIs, LiteDB, SignalR). `src/Sofia.UI` is its only client. This file is
@@ -57,7 +57,7 @@ interface SofiaEvent {
 | `config.changed` | `{ scope: 'global' \| 'project', directory }` | Command / prompt / skill / agent Markdown or `AGENTS.md` / `CLAUDE.md` changed on disk (debounced per root, ≈400ms). `directory` is the harness home (`~/.sofia`) for `global` or the workspace folder for `project`; re-fetch `/api/commands`, `/api/agents` and — for `global` — `/api/skills` |
 | `browser.updated` | `{ open: boolean, agent: boolean, url?: string }` (`sessionId` = root conversation) | The conversation's headless browser opened/closed, or the agent used it (`agent: true`: the UI opens the browser panel) |
 
-`SessionStatus = 'idle' | 'working' | 'permission' | 'question' | 'error'`.
+`SessionStatus = 'idle' | 'working' | 'waiting' (queued behind another conversation for a single-client model; clients show no spinner) | 'permission' | 'question' | 'error'`.
 
 ## Shared DTOs
 
