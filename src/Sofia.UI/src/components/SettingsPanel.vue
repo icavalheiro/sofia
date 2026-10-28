@@ -36,7 +36,7 @@ const props = defineProps<{ open: boolean; initialTab?: SettingsTabId }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const { settings, resetSettings } = useSettings()
-const { models, refreshModels } = useHarness()
+const { models, refreshModels, rediscoverModels } = useHarness()
 const { shortcuts, control, bindingOf, conflictFor, setBinding, resetBinding, resetAllBindings, isCustomized } =
   useShortcuts()
 
@@ -548,7 +548,7 @@ watch(
   (active) => {
     if (!active) return
     void refreshConfig()
-    void refreshModels()
+    void rediscoverModels()
   },
   { immediate: true },
 )

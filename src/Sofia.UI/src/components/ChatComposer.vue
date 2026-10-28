@@ -43,6 +43,7 @@ const textarea = ref<HTMLTextAreaElement | null>(null)
 // Popup list bodies ("/" palette and "@" agents); used to keep the active row visible.
 const mentionList = ref<HTMLElement | null>(null)
 const paletteList = ref<HTMLElement | null>(null)
+const { rediscoverModels } = useHarness()
 const modelPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
 const permissionPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
 const reasoningPopover = ref<InstanceType<typeof SofiaPopover> | null>(null)
@@ -825,6 +826,7 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
             :items="modelItems"
             :width="280"
             @dismiss="focusComposer"
+            @opened="rediscoverModels"
           />
           <SofiaPopover
             ref="reasoningPopover"

@@ -34,6 +34,8 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
   /** Closed with Escape or by picking an item (not by clicking elsewhere). */
   (e: 'dismiss'): void
+  /** The menu just opened. */
+  (e: 'opened'): void
 }>()
 
 const { playSound } = useSound()
@@ -72,6 +74,7 @@ function pick(item: PopoverItem): void {
 
 watch(open, (isOpen) => {
   if (!isOpen) return
+  emit('opened')
   const current = props.items.findIndex((i) => isActive(i))
   focusIndex.value = Math.max(current, 0)
   void nextTick(scrollFocusedIntoView)

@@ -626,6 +626,19 @@ async function refreshModels (): Promise<void>
   }
 }
 
+/** Re-probes local runtimes on the server, then reloads the catalog. */
+async function rediscoverModels (): Promise<void>
+{
+  try
+  {
+    await api( 'POST', '/api/providers/refresh' );
+  } catch
+  {
+    /* fall through to the cached catalog */
+  }
+  await refreshModels();
+}
+
 const loadingConversations = new Map<string, Promise<void>>();
 /** Message events that arrived while a transcript was being fetched. */
 const deferredEvents = new Map<string, SofiaEvent[]>();
@@ -1665,6 +1678,7 @@ export function useHarness ()
     models,
     refreshLiveSessions: loadWorkspaces,
     refreshModels,
+    rediscoverModels,
     defaultModelId,
     activeWorkspace,
     activeConversation,
