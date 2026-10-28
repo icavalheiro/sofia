@@ -42,11 +42,17 @@ const RETRIGGER_MS = 45
 
 let activeVoices = 0
 
-function track(src: AudioScheduledSourceNode): void {
+function track(src: AudioScheduledSourceNode, durSec: number): void {
   activeVoices += 1
-  src.addEventListener('ended', () => {
+  let released = false
+  const release = () => {
+    if (released) return
+    released = true
     activeVoices = Math.max(0, activeVoices - 1)
-  })
+  }
+  src.addEventListener('ended', release)
+  // `ended` can be skipped (suspended/throttled context); never leak a voice slot.
+  setTimeout(release, (durSec + 0.3) * 1000)
 }
 
 // --- voice helpers -------------------------------------------------------------
@@ -89,7 +95,7 @@ function note(ctx: BaseAudioContext, out: AudioNode, o: NoteOpts): void {
     }
     osc.start(t)
     osc.stop(t + o.dur + 0.03)
-    if (i === 0) track(osc)
+    if (i === 0) track(osc, (o.at ?? 0) + o.dur)
   })
 }
 
@@ -122,7 +128,7 @@ function knock(
   filter.connect(gain)
   gain.connect(out)
   src.start(t)
-  track(src)
+  track(src, dur)
 }
 
 // --- sound definitions -----------------------------------------------------------
