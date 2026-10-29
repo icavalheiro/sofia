@@ -39,6 +39,10 @@ export interface ConversationSummaryDto
   archivedAt?: string;
   /** Kept at the top of the workspace's list. */
   pinned?: boolean;
+  /** How long the last request of this chat took (ms), waiting on the user's answers excluded; persisted. */
+  lastTurnMs?: number;
+  /** When that request finished (ISO). */
+  lastTurnAt?: string;
 }
 
 export interface WorkspaceDto
@@ -185,7 +189,11 @@ export interface QueuedMessageDto
 
 export interface MetricsDto
 {
+  /** Clock of the request in flight (ms); 0 between runs. */
   durationMs: number;
+  /** What the last finished request took (ms), user-waiting time excluded. */
+  lastTurnMs?: number;
+  lastTurnAt?: string;
   tokensPerSec: number;
   usage: UsageDto;
   cost: number;
@@ -451,6 +459,8 @@ export interface Conversation
   reasoningMode?: ReasoningModeId;
   usage?: UsageDto;
   context?: ContextDto;
+  /** What the last request of this chat took (server-side, user-waiting time excluded). */
+  lastTurnMs?: number;
   activeSkills?: string[];
   queued?: number;
   /** Follow-ups accepted by the server but not yet sent to the model. */

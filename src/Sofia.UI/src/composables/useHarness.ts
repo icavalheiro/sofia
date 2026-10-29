@@ -198,6 +198,7 @@ function newConversation ( dto: ConversationSummaryDto ): Conversation
     parentId: dto.parentId || undefined,
     archived: !!dto.archived,
     pinned: !!dto.pinned,
+    lastTurnMs: dto.lastTurnMs ?? 0,
     loaded: false,
     messages: [],
   };
@@ -222,6 +223,7 @@ function applySessionDetails ( conv: Conversation, s: SessionDto ): void
   conv.reasoningMode = s.reasoningMode;
   conv.usage = s.usage;
   conv.context = s.context;
+  if ( s.lastTurnMs !== undefined ) conv.lastTurnMs = s.lastTurnMs;
   conv.activeSkills = [ ...( s.activeSkills ?? [] ) ];
   conv.queued = s.queued;
   conv.queuedMessages = s.queuedMessages ?? [];
@@ -452,7 +454,8 @@ function applyStatus ( conv: Conversation, status: SessionStatus, quiet = false 
 
 function resetMetricsFor ( conv: Conversation | undefined ): void
 {
-  metrics.durationMs = 0;
+  // A chat that is not running shows what its last request took (persisted on the session).
+  metrics.durationMs = conv?.lastTurnMs ?? 0;
   metrics.tokensPerSec = 0;
   metrics.sessionCost = conv?.usage?.cost ?? 0;
   metrics.costAvailable = ( conv?.usage?.cost ?? 0 ) > 0;
@@ -873,6 +876,7 @@ function handleEvent ( event: SofiaEvent ): void
       if ( !conv || !data ) break;
       conv.usage = data.usage;
       conv.context = data.context;
+      if ( data.lastTurnMs !== undefined ) conv.lastTurnMs = data.lastTurnMs;
       if ( conv.id === state.activeConversationId ) applyMetrics( data );
       break;
     }

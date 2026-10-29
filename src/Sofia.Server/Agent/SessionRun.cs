@@ -68,7 +68,8 @@ public sealed class SessionRun : IToolHost
     private readonly Queue<PendingPrompt> _followUps = new();
     private readonly ConcurrentDictionary<string, (TaskCompletionSource<string> Tcs, Message Card)> _permissions = new();
     private readonly ConcurrentDictionary<string, (TaskCompletionSource<List<string>> Tcs, Message Card)> _questions = new();
-    private readonly Stopwatch _clock = new();
+    /// <summary>Clock of the request in flight: start → end, minus the time the user spent answering.</summary>
+    private readonly TurnClock _turn = new();
     private bool _finished;
     private Message? _current;
     private DateTime _lastProgressPublish = DateTime.MinValue;
@@ -133,8 +134,11 @@ public sealed class SessionRun : IToolHost
     public async Task RunAsync()
     {
         var ct = _cts.Token;
-        _clock.Start();
         _s.Store.SetStatus(Session, SessionStatus.Working);
+        // The composer clock shows how long the request is taking, so it must keep ticking between steps too
+        // (metrics are otherwise published only while tokens stream).
+        using var beat = new CancellationTokenSource();
+        _ = HeartbeatAsync(beat.Token);
         var aborted = false;
         try
         {
@@ -157,13 +161,24 @@ public sealed class SessionRun : IToolHost
                     _ = await CompactAsync(auto: false, ct);
                     continue;
                 }
-                // A new turn: re-read the live facts once (frozen prompt reused, changes become context notes).
-                _turnPrompt = null;
-                var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), ct);
-                AddUserMessage(next, contextNotes: notes);
-                // Only after the message is persisted: a crash replays the change once more instead of losing it.
-                CommitFacts();
-                await RunTurnAsync(ct);
+                // Each request is timed from the moment the prompt is taken, so the composer clock always
+                // shows the latest one.
+                _turn.Restart();
+                PublishMetrics(0);
+                try
+                {
+                    // A new turn: re-read the live facts once (frozen prompt reused, changes become context notes).
+                    _turnPrompt = null;
+                    var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), ct);
+                    AddUserMessage(next, contextNotes: notes);
+                    // Only after the message is persisted: a crash replays the change once more instead of losing it.
+                    CommitFacts();
+                    await RunTurnAsync(ct);
+                }
+                finally
+                {
+                    RecordTurn();
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -177,6 +192,7 @@ public sealed class SessionRun : IToolHost
         }
         finally
         {
+            beat.Cancel();
             lock (_gate)
             {
                 _finished = true;
@@ -188,6 +204,48 @@ public sealed class SessionRun : IToolHost
             if (Root == this) _s.Gate.Release(Session.Id);
             _agents.Finished(this);
         }
+    }
+
+    /// <summary>Republishes the live readouts while a request runs, so a client that just switched chats converges at once.</summary>
+    private async Task HeartbeatAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+                if (_turn.Running) PublishMetrics(0);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The run ended; the final metrics are published by RecordTurn/Cleanup.
+        }
+    }
+
+    /// <summary>Stores how long the request that just finished took, so the clock survives a chat switch or a reload.</summary>
+    private void RecordTurn()
+    {
+        Session.LastTurnMs = (long)_turn.Elapsed.TotalMilliseconds;
+        Session.LastTurnAt = DateTime.UtcNow;
+        _s.Store.SaveSession(Session);
+        PublishMetrics(0);
+    }
+
+    /// <summary>
+    /// Stops counting time while the run waits on the user (a question or a permission card): the request duration
+    /// measures Sofia's work, not the minutes the answer took. Subagents report the wait to their root run too.
+    /// </summary>
+    private void BeginUserWait()
+    {
+        _turn.BeginWait();
+        if (Root != this) Root._turn.BeginWait();
+    }
+
+    private void EndUserWait()
+    {
+        _turn.EndWait();
+        if (Root != this) Root._turn.EndWait();
     }
 
     private void Cleanup(bool aborted)
@@ -648,7 +706,11 @@ public sealed class SessionRun : IToolHost
         var model = _s.Providers.Resolve(Session.ModelId)?.Model;
         _s.Store.PublishMetrics(Session, new
         {
-            durationMs = (long)_clock.Elapsed.TotalMilliseconds,
+            // Live clock of the request in flight (0 between runs), plus what the last one took: clients show
+            // `durationMs` while the chat is busy and `lastTurnMs` when it is idle.
+            durationMs = (long)_turn.Elapsed.TotalMilliseconds,
+            lastTurnMs = Session.LastTurnMs,
+            lastTurnAt = Session.LastTurnAt,
             tokensPerSec = Math.Round(_lastTps, 1),
             usage = Session.Usage,
             cost = Session.Usage.Cost,
@@ -772,7 +834,15 @@ public sealed class SessionRun : IToolHost
         if (mode == "full") return null;
         if (mode is "read-only" or "plan" && tool.Kind is ToolKind.Write or ToolKind.Execute)
             return $"Blocked: the session is in '{mode}' mode, which does not allow `{tool.Name}`. Describe the change instead, or ask the user to switch the permission mode.";
-        return await Root.RequestPermissionAsync(tool, call, args, ct);
+        BeginUserWait();
+        try
+        {
+            return await Root.RequestPermissionAsync(tool, call, args, ct);
+        }
+        finally
+        {
+            EndUserWait();
+        }
     }
 
     private async Task<string?> RequestPermissionAsync(ITool tool, ToolCall call, JsonObject args, CancellationToken ct)
@@ -915,6 +985,7 @@ public sealed class SessionRun : IToolHost
         var tcs = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
         _questions[formId] = (tcs, card);
         RefreshStatus();
+        BeginUserWait();
         try
         {
             await using (ct.Register(() => tcs.TrySetCanceled()))
@@ -922,6 +993,7 @@ public sealed class SessionRun : IToolHost
         }
         finally
         {
+            EndUserWait();
             _questions.TryRemove(formId, out _);
             if (SettleCard(card)) _s.Store.UpdateMessage(Session, card);
             RefreshStatus();
@@ -1130,4 +1202,70 @@ public sealed class SessionRun : IToolHost
     private static int Estimate(Message m) =>
         Text.EstimateTokens(m.Expanded ?? m.Text) + Text.EstimateTokens(m.Reasoning)
         + (m.ToolCalls ?? []).Sum(c => Text.EstimateTokens(c.Arguments) + Text.EstimateTokens(c.Result ?? c.Output ?? c.Error));
+
+    /// <summary>
+    /// How long one request took: a stopwatch that ignores the time the user was answering. Waits nest (a subagent
+    /// question and its permission card can block at the same time), so only the outermost pair stops the clock.
+    /// </summary>
+    private sealed class TurnClock
+    {
+        private readonly Stopwatch _clock = new();
+        private readonly object _gate = new();
+        private TimeSpan _waited;
+        private long _waitStarted;
+        private int _waitDepth;
+
+        public bool Running
+        {
+            get
+            {
+                lock (_gate) return _clock.IsRunning;
+            }
+        }
+
+        /// <summary>Starts timing a new request, discarding the previous one.</summary>
+        public void Restart()
+        {
+            lock (_gate)
+            {
+                _waited = TimeSpan.Zero;
+                _waitStarted = 0;
+                _waitDepth = 0;
+                _clock.Restart();
+            }
+        }
+
+        public void BeginWait()
+        {
+            lock (_gate)
+            {
+                if (_waitDepth++ == 0) _waitStarted = Stopwatch.GetTimestamp();
+            }
+        }
+
+        public void EndWait()
+        {
+            lock (_gate)
+            {
+                if (_waitDepth == 0) return;
+                if (_waitDepth-- > 1 || _waitStarted == 0) return;
+                _waited += Stopwatch.GetElapsedTime(_waitStarted);
+                _waitStarted = 0;
+            }
+        }
+
+        /// <summary>Elapsed time of the request minus every stretch the user was answering, never negative.</summary>
+        public TimeSpan Elapsed
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    var open = _waitDepth > 0 && _waitStarted != 0 ? Stopwatch.GetElapsedTime(_waitStarted) : TimeSpan.Zero;
+                    var elapsed = _clock.Elapsed - _waited - open;
+                    return elapsed > TimeSpan.Zero ? elapsed : TimeSpan.Zero;
+                }
+            }
+        }
+    }
 }

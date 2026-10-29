@@ -85,6 +85,10 @@ public sealed class Session
     public int Order { get; set; }
     public Usage Usage { get; set; } = new();
     public ContextInfo Context { get; set; } = new();
+    /// <summary>How long the last request took, start to finish, minus the time spent waiting on the user's answers.</summary>
+    public long LastTurnMs { get; set; }
+    /// <summary>When the last request finished; null before the first one.</summary>
+    public DateTime? LastTurnAt { get; set; }
     public List<string> ActiveSkills { get; set; } = [];
     /// <summary>Highest message sequence already reviewed for knowledge notes.</summary>
     [JsonIgnore] public long KnowledgeSeq { get; set; }

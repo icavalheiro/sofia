@@ -14,5 +14,7 @@ public static class ProcessEndpoints
             return Results.Ok(new { info, output });
         });
         api.MapPost("/{id}/kill", (string id, ProcessManager processes) => Results.Ok(processes.Kill(id)));
+        // Drops the history: running processes stay, finished ones leave the list.
+        api.MapPost("/clear", (ProcessManager processes) => Results.Ok(new { removed = processes.Clear() }));
     }
 }

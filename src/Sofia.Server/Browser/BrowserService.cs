@@ -560,11 +560,11 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         try
         {
             if (_page is null) return;
-            var frame = await _page.ScreenshotAsync(new PageScreenshotOptions { Type = ScreenshotType.Jpeg, Quality = 60 });
+            var frame = await _page.ScreenshotAsync(new PageScreenshotOptions { Type = ScreenshotType.Jpeg, Quality = 60, Timeout = 5000 });
             _lastFrame = frame;
             viewer.PushFrame(frame);
         }
-        catch (PlaywrightException)
+        catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
         {
             // Mid-navigation; the screencast delivers the next frame.
         }

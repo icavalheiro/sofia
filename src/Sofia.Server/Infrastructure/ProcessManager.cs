@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Sofia.Server.Agent;
 using Sofia.Server.Events;
 
@@ -110,6 +110,22 @@ public sealed class ProcessManager(ILogger<ProcessManager> log) : IHostedService
     public void KillSession(string sessionId)
     {
         foreach (var p in List(sessionId).Where(p => p.Status == "running")) Kill(p.Id);
+    }
+
+    /// <summary>Forgets every process that is no longer running (history only) and reports how many were dropped.</summary>
+    public int Clear()
+    {
+        List<Entry> finished;
+        lock (_gate)
+        {
+            finished = _entries.Values.Where(e => ToInfo(e).Status != "running").ToList();
+            foreach (var e in finished) _entries.Remove(e.Id);
+        }
+        foreach (var e in finished)
+        {
+            try { e.Process.Dispose(); } catch { /* already gone */ }
+        }
+        return finished.Count;
     }
 
     private Entry Find(string id) =>

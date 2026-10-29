@@ -47,7 +47,7 @@ interface SofiaEvent {
 | `session.updated` | `SessionDto` (no `messages`) | Title, model, usage, skills… changed |
 | `session.deleted` | `{ id, workspaceId }` | |
 | `session.status` | `{ status: SessionStatus, error?: string }` | Run state changed |
-| `session.metrics` | `MetricsDto` | Live run readouts (≈4/s while running) |
+| `session.metrics` | `MetricsDto` | Live run readouts (≈2/s while running, and once when a request ends) |
 | `message.created` | `MessageDto` | Append to the transcript |
 | `message.updated` | `MessageDto` | Replace the message with the same `id` |
 | `message.delta` | `{ messageId, field: "text" \| "reasoning", delta }` | Append `delta` to that field |
@@ -87,6 +87,9 @@ interface ConversationSummaryDto {
   archived?: boolean      // parked in the workspace's "Archived" folder
   archivedAt?: string     // set while archived
   pinned?: boolean        // kept at the top of the workspace's list
+  lastTurnMs?: number     // how long the last request took, start to finish (waiting on the
+                          // user's answers excluded); persisted in LiteDB, so it survives a reload
+  lastTurnAt?: string     // when that request finished
 }
 
 interface UsageDto {
@@ -179,7 +182,9 @@ interface KnowledgeEntryDto {
 }
 
 interface MetricsDto {
-  durationMs: number
+  durationMs: number      // clock of the request in flight (0 between runs)
+  lastTurnMs: number      // what the last finished request took (user-waiting time excluded)
+  lastTurnAt?: string
   tokensPerSec: number
   usage: UsageDto         // session totals
   cost: number
@@ -482,6 +487,7 @@ conversation and on server shutdown.
 - `GET /api/processes?sessionId=` → `[{id, command, cwd, sessionId, pid, status (running|exited|killed), exitCode, startedAt, endedAt}]`
 - `GET /api/processes/{id}/output?tail=200` → `{info, output}`
 - `POST /api/processes/{id}/kill` → the updated process (404 if unknown)
+- `POST /api/processes/clear` → `{ removed }` (forgets the finished ones — exited or killed — and keeps the running ones)
 
 ## Live browser
 

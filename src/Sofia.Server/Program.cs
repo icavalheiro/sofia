@@ -141,6 +141,12 @@ app.Lifetime.ApplicationStarted.Register(() =>
         options.UiPath.Length > 0 ? options.UiPath : "not bundled (run the Vite dev server)");
 });
 
+// Diagnostics: say why the host is going down (a Ctrl+C/SIGTERM delivered by a child process sharing the console looks identical to a manual one).
+Console.CancelKeyPress += (_, e) =>
+    app.Services.GetService<ILogger<Program>>()?.LogWarning("Console signal {Signal} received; shutting down", e.SpecialKey);
+app.Lifetime.ApplicationStopping.Register(() =>
+    app.Services.GetService<ILogger<Program>>()?.LogWarning("Application is stopping (shutdown requested)"));
+
 app.Run();
 
 public partial class Program;

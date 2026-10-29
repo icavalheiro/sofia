@@ -146,6 +146,25 @@ async function killProcess(p: BackgroundProcess): Promise<void> {
   await loadProcesses()
 }
 
+const clearingProcesses = ref(false)
+const runningCount = computed(() => processes.value.filter((p) => p.status === 'running').length)
+/** Processes kept only as history: exited or killed, safe to drop from the list. */
+const finishedCount = computed(() => processes.value.length - runningCount.value)
+
+async function clearProcesses(): Promise<void> {
+  if (clearingProcesses.value || finishedCount.value === 0) return
+  clearingProcesses.value = true
+  try {
+    const res = await api<{ removed: number }>('POST', '/api/processes/clear')
+    notify(t('panel.processesCleared', { count: res.removed }))
+  } catch (e) {
+    notify(e instanceof Error ? e.message : String(e))
+  } finally {
+    clearingProcesses.value = false
+    await loadProcesses()
+  }
+}
+
 watch(
   () => props.open,
   (open) => {
@@ -254,8 +273,23 @@ async function copyPath(): Promise<void> {
       </section>
 
       <section class="rp-section">
-        <div class="rp-section-label">Background processes · {{ processes.filter((p) => p.status === 'running').length }}</div>
-        <p v-if="!processes.length" class="rp-note">None running.</p>
+        <div class="rp-section-label rp-section-label--row">
+          <span>{{ t('panel.processes') }} · {{ runningCount }}</span>
+          <!-- Housekeeping: drop exited/killed processes from the list. Running ones stay. -->
+          <button
+            v-if="finishedCount"
+            class="rp-clear"
+            type="button"
+            :title="t('panel.processesClear')"
+            :aria-label="t('panel.processesClear')"
+            :disabled="clearingProcesses"
+            @click="clearProcesses"
+          >
+            <SofiaIcon name="trash" :size="'0.8rem'" />
+            <span>{{ finishedCount }}</span>
+          </button>
+        </div>
+        <p v-if="!processes.length" class="rp-note">{{ t('panel.processesNone') }}</p>
         <div v-for="p in processes" :key="p.id" class="rp-file" :title="p.command">
           <span class="rp-badge">{{ p.status }}</span>
           <span class="rp-file-path sofia-truncate">{{ p.command }}</span>
@@ -419,6 +453,39 @@ async function copyPath(): Promise<void> {
   text-transform: uppercase;
   color: var(--sofia-text-faint);
   margin-bottom: 0.5rem;
+}
+
+/* Label with a trailing action (e.g. clear finished processes). */
+.rp-section-label--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.rp-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.3rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sofia-text-faint);
+  font-size: 0.625rem;
+  font-weight: 600;
+  font-family: var(--sofia-font-mono);
+  cursor: pointer;
+}
+
+.rp-clear:hover:not(:disabled) {
+  background: var(--sofia-surface-3);
+  color: var(--sofia-err);
+}
+
+.rp-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .rp-files {

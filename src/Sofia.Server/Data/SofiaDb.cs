@@ -8,6 +8,7 @@ namespace Sofia.Server.Data;
 public sealed class SofiaDb : IDisposable
 {
     private readonly LiteDatabase _db;
+    private readonly string? _compactMarker;
     private long _seq;
     private readonly object _seqGate = new();
 
@@ -17,6 +18,10 @@ public sealed class SofiaDb : IDisposable
 
     public SofiaDb(ConnectionString connection)
     {
+        _compactMarker = string.IsNullOrEmpty(connection.Filename) || connection.Filename == ":memory:" || connection.Filename == ":temp:"
+            ? null
+            : connection.Filename + ".compact";
+        RebuildIfFlagged(_compactMarker, connection);
         var mapper = new BsonMapper { SerializeNullValues = false };
         mapper.TrimWhitespace = false;
         mapper.EmptyStringToNull = false;
@@ -100,11 +105,30 @@ public sealed class SofiaDb : IDisposable
         Sessions.Delete(sessionId);
     }
 
-    /// <summary>LiteDB reuses freed pages but never shrinks the file; Rebuild rewrites it without the free space.</summary>
+    /// <summary>
+    /// LiteDB reuses freed pages but never shrinks the file. Rebuild closes and reopens the engine, which breaks every
+    /// concurrent reader/writer ("engine instance already disposed"), so it is never run online: this only flags the
+    /// file and the next startup rebuilds it before anything else touches it.
+    /// </summary>
     public void Compact()
     {
-        try { _db.Checkpoint(); _db.Rebuild(); }
+        try
+        {
+            _db.Checkpoint();
+            if (_compactMarker is not null) File.WriteAllText(_compactMarker, "");
+        }
         catch (Exception) { /* best effort: a failed shrink must not fail the delete */ }
+    }
+
+    private static void RebuildIfFlagged(string? marker, ConnectionString connection)
+    {
+        if (marker is null || !File.Exists(marker)) return;
+        try
+        {
+            using (var db = new LiteDatabase(connection)) db.Rebuild();
+        }
+        catch (Exception) { /* keep the data as is */ }
+        try { File.Delete(marker); } catch (IOException) { }
     }
 
     public void Dispose() => _db.Dispose();

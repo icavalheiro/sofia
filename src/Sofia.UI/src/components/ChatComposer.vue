@@ -184,7 +184,13 @@ function formatDuration(ms: number): string {
 
 const costLabel = computed(() => `$${metrics.sessionCost.toFixed(4)}`)
 const tpsLabel = computed(() => `${metrics.tokensPerSec} tok/s`)
-const durationLabel = computed(() => formatDuration(metrics.durationMs))
+// While the chat runs, the live clock; when it is idle, what its last request took (persisted on
+// the session, so switching chats or reloading the client keeps the number).
+const durationLabel = computed(() =>
+  formatDuration(
+    state.isReplying ? metrics.durationMs : activeConversation.value?.lastTurnMs ?? metrics.durationMs,
+  ),
+)
 
 // Usage.input is the whole prompt (cached + uncached), so hit % = cacheRead / input.
 // The metric never disappears: before the first request it reads 0% like the other

@@ -70,8 +70,13 @@ One `SessionRun` per active session, owned by `AgentService`:
 2. Each step: resolve the model, auto-compact if the last request used more
    than `compactThreshold` of the window, build the history (`HistoryBuilder`)
    and stream the reply. Text and reasoning go out as `message.delta`, tool
-   calls as `message.updated`; `session.metrics` is published about 4 times a
-   second.
+   calls as `message.updated`; `session.metrics` is published while tokens
+   stream and twice a second while a request runs, so the composer clock keeps
+   ticking between steps. That clock measures one request, start to finish,
+   ignoring the time the user spends answering a question or a permission card,
+   and subagent runs count inside their parent's request. The finished value is
+   stored on the session (`LastTurnMs` / `LastTurnAt`) so a chat switch or a
+   client reload still shows how long the last request took.
 3. The request prefix — system prompt (`SystemPromptBuilder`) and tool schemas
    — is built once and **frozen for the whole conversation**. The prompt is
    persisted on the session (`FrozenPrompt`, `FrozenAgent`, `FrozenTools` = a

@@ -462,6 +462,55 @@ public sealed class AgentLoopTests : IDisposable
         Assert.False(last.TryGetProperty("retry", out _));
     }
 
+    [Fact]
+    public async Task PersistsHowLongTheLastRequestTook()
+    {
+        var http = _factory.CreateClient();
+        var provider = await Post(http, "/api/providers", new { name = "Fake", type = "openai", baseUrl = "http://fake.llm/v1", apiKey = "test" });
+        var modelId = $"{provider.GetProperty("id").GetString()}/fake-model";
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        // The endpoint holds this answer: the request measurably takes longer than an instant reply.
+        var marker = "SLOWANSWER" + Guid.NewGuid().ToString("N");
+        FakeLlmHandler.FlakyRemaining[marker] = -1;   // negative: never rejected, only held
+        FakeLlmHandler.FlakyHoldMs[marker] = 400;
+
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = marker + " hello", modelId, permissionMode = "full" });
+        var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle");
+        Assert.Equal("Recovered", session.GetProperty("messages").EnumerateArray().Last().GetProperty("text").GetString());
+
+        // The duration is on the session itself (LiteDB), so a client that reopens or switches chats reads it back.
+        Assert.True(session.GetProperty("lastTurnMs").GetInt64() >= 300, session.GetProperty("lastTurnMs").ToString());
+        Assert.False(string.IsNullOrEmpty(session.GetProperty("lastTurnAt").GetString()));
+        var reopened = await http.GetFromJsonAsync<JsonElement>($"/api/sessions/{sessionId}");
+        Assert.Equal(session.GetProperty("lastTurnMs").GetInt64(), reopened.GetProperty("lastTurnMs").GetInt64());
+    }
+
+    [Fact]
+    public async Task DoesNotCountTheTimeSpentWaitingOnTheUser()
+    {
+        var http = _factory.CreateClient();
+        var provider = await Post(http, "/api/providers", new { name = "Fake", type = "openai", baseUrl = "http://fake.llm/v1", apiKey = "test" });
+        var modelId = $"{provider.GetProperty("id").GetString()}/fake-model";
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "create hello.txt", modelId, permissionMode = "ask" });
+        var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "permission");
+        var requestId = session.GetProperty("messages").EnumerateArray().Last(m => m.TryGetProperty("permission", out _))
+            .GetProperty("permission").GetProperty("requestId").GetString();
+
+        // A minute on the permission card is the user's time, not the request's.
+        await Task.Delay(1_000);
+        (await http.PostAsJsonAsync($"/api/sessions/{sessionId}/permissions/{requestId}", new { decision = "once" })).EnsureSuccessStatusCode();
+        session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle");
+
+        var turnMs = session.GetProperty("lastTurnMs").GetInt64();
+        Assert.True(turnMs > 0, $"lastTurnMs={turnMs}");
+        Assert.True(turnMs < 900, $"lastTurnMs={turnMs} includes the wait on the card");
+    }
+
     private const string NoteText = "Tests run with dotnet test Sofia.slnx here.";
 
     /// <summary>The retry notice currently carried by a message of the session, when a step is being repeated.</summary>
