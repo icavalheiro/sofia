@@ -9,15 +9,18 @@ public sealed class SofiaDb : IDisposable
 {
     private readonly LiteDatabase _db;
     private readonly string? _compactMarker;
+    private readonly ILogger<SofiaDb>? _log;
     private long _seq;
     private readonly object _seqGate = new();
 
-    public SofiaDb(SofiaOptions options) : this(new ConnectionString { Filename = options.DbPath, Connection = ConnectionType.Direct })
+    public SofiaDb(SofiaOptions options, ILogger<SofiaDb>? log = null)
+        : this(new ConnectionString { Filename = options.DbPath, Connection = ConnectionType.Direct }, log)
     {
     }
 
-    public SofiaDb(ConnectionString connection)
+    public SofiaDb(ConnectionString connection, ILogger<SofiaDb>? log = null)
     {
+        _log = log;
         _compactMarker = string.IsNullOrEmpty(connection.Filename) || connection.Filename == ":memory:" || connection.Filename == ":temp:"
             ? null
             : connection.Filename + ".compact";
@@ -93,12 +96,23 @@ public sealed class SofiaDb : IDisposable
         Messages.DeleteMany(m => m.SessionId == sessionId);
         foreach (var id in attachmentIds)
         {
-            // Keep the attachment if another session's message still references it.
-            if (Messages.Find(m => m.Attachments != null && m.Attachments.Any(a => a.Id == id)).Any()) continue;
-            var attachment = Attachments.FindById(id);
-            if (attachment is null) continue;
-            try { if (File.Exists(attachment.StoragePath)) File.Delete(attachment.StoragePath); } catch (IOException) { }
-            Attachments.Delete(id);
+            try
+            {
+                // Keep the attachment if another session's message still references it. LiteDB only translates
+                // Any/All when the lambda body compares the lambda *parameter* itself (not a member), so the
+                // projection into Ids has to come from Select: `Attachments.Any(a => a.Id == id)` throws
+                // "Any/All requires simple parameter on left side" at query build time (LiteDB 5.0.21, #2810).
+                if (Messages.Exists(m => m.Attachments != null && m.Attachments.Select(a => a.Id).Any(x => x == id))) continue;
+                var attachment = Attachments.FindById(id);
+                if (attachment is null) continue;
+                try { if (File.Exists(attachment.StoragePath)) File.Delete(attachment.StoragePath); } catch (IOException) { }
+                Attachments.Delete(id);
+            }
+            catch (Exception ex)
+            {
+                // A leaked attachment file is harmless; a session left behind with its messages already gone is not.
+                _log?.LogWarning(ex, "Could not clean up attachment {AttachmentId}", id);
+            }
         }
         Snapshots.DeleteMany(s => s.SessionId == sessionId);
         Knowledge.DeleteMany(k => k.Scope == KnowledgeScope.Chat && k.SessionId == sessionId);
