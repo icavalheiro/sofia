@@ -37,6 +37,8 @@
   --sofia-detail-soft: rgba(228, 211, 172, 0.1);
 
   /* Status colours (tool calls, badges). */
+  --sofia-info: #6f9fcc;
+  --sofia-info-soft: rgba(111, 159, 204, 0.14);
   --sofia-ok: #74a672;
   --sofia-ok-soft: rgba(116, 166, 114, 0.14);
   --sofia-err: #c9705f;

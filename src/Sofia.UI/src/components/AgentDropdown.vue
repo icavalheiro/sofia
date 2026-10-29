@@ -53,6 +53,9 @@ const current = computed(
 /** Chip caption: the agent name, or the raw id when its file is gone. */
 const chipLabel = computed(() => current.value?.name || currentId.value)
 
+/** Icon-only chip: the tooltip still names the current agent. */
+const chipTitle = computed(() => `${t('composer.agent')}: ${chipLabel.value}`)
+
 function toggle(): void {
   if (open.value) close()
   else openMenu()
@@ -142,14 +145,13 @@ function describe(agent: AgentDto): string {
     <button
       class="ad-chip"
       type="button"
-      :title="t('composer.agent')"
+      :title="chipTitle"
+      :aria-label="chipTitle"
       aria-haspopup="listbox"
       :aria-expanded="open"
       @click="toggle"
     >
       <SofiaIcon class="ad-chip-icon" name="bot" :size="'0.8rem'" />
-      <span class="ad-chip-value sofia-truncate">{{ chipLabel }}</span>
-      <SofiaIcon class="ad-caret" :name="open ? 'chevronDown' : 'chevronRight'" :size="'0.7rem'" />
     </button>
 
     <div
@@ -197,9 +199,9 @@ function describe(agent: AgentDto): string {
 .ad-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  max-width: 10rem;
-  padding: 0.15rem 0.5rem;
+  gap: 0;
+  max-width: none;
+  padding: 0.25rem 0.4rem;
   background: color-mix(in srgb, var(--sofia-surface-2) 74%, transparent);
   border: 1px solid var(--sofia-border);
   border-radius: 999px;
@@ -217,15 +219,6 @@ function describe(agent: AgentDto): string {
 
 .ad-chip-icon {
   color: var(--sofia-primary);
-  flex-shrink: 0;
-}
-
-.ad-chip-value {
-  color: var(--sofia-text);
-}
-
-.ad-caret {
-  color: var(--sofia-text-faint);
   flex-shrink: 0;
 }
 

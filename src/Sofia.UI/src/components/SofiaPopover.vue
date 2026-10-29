@@ -3,12 +3,26 @@
 // permission and reasoning. Plain elements (not Mantine Menu) so behaviour and
 // styling stay predictable; click-outside and Escape both close it. When open
 // it is also keyboard driven (arrows + Enter) and can be opened from outside
-// through the exposed `open()` (keyboard shortcuts).
+// through the exposed `open()` (keyboard shortcuts). `iconOnly` hides the chip
+// caption (the icon carries the state, tinted by the selected item's `tone`);
+// the option list always keeps its labels.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import { useSound } from '@/composables/useSound'
 import { usePopoverLock } from '@/composables/usePopoverLock'
+
+/** Semantic colour of an option and of the chip icon when it is selected. */
+export type PopoverTone = 'primary' | 'info' | 'detail' | 'warn' | 'err'
+
+/** Tones map to the `--sofia-*` tokens so every picker stays on the palette. */
+const TONE_COLOR: Record<PopoverTone, string> = {
+  primary: 'var(--sofia-primary)',
+  info: 'var(--sofia-info)',
+  detail: 'var(--sofia-detail)',
+  warn: 'var(--sofia-warn)',
+  err: 'var(--sofia-err)',
+}
 
 export interface PopoverItem {
   value: string
@@ -16,6 +30,7 @@ export interface PopoverItem {
   description?: string
   icon?: string
   badge?: string
+  tone?: PopoverTone
 }
 
 const props = defineProps<{
@@ -28,6 +43,8 @@ const props = defineProps<{
   width?: number
   /** Smaller chip without the caption (the label becomes the tooltip). */
   compact?: boolean
+  /** Chip shows only the icon; the selected label moves into the tooltip. */
+  iconOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +69,17 @@ const focusIndex = ref(0)
 const selected = computed(
   () => props.items.find((i) => i.value === props.modelValue) ?? props.items[0],
 )
+
+/** Tooltip/accessible name: the icon-only chip must still say what it is. */
+const chipTitle = computed(() => {
+  if (props.iconOnly) return [props.label, selected.value?.label].filter(Boolean).join(': ')
+  return props.compact ? props.label : undefined
+})
+
+/** Inline colour for a toned icon (undefined keeps the palette default). */
+function toneStyle(tone?: PopoverTone): { color: string } | undefined {
+  return tone ? { color: TONE_COLOR[tone] } : undefined
+}
 
 function toggle(): void {
   playSound('click')
@@ -134,16 +162,23 @@ onBeforeUnmount(() => {
   <div ref="root" class="sp-root">
     <button
       class="sp-chip"
-      :class="{ 'sp-chip--compact': compact }"
+      :class="{ 'sp-chip--compact': compact, 'sp-chip--icon-only': iconOnly }"
       type="button"
-      :title="compact ? label : undefined"
+      :title="chipTitle"
+      :aria-label="iconOnly ? chipTitle : undefined"
       :aria-expanded="open"
       @click="toggle"
     >
-      <SofiaIcon v-if="icon" class="sp-chip-icon" :name="icon" :size="compact ? '0.8rem' : '0.85rem'" />
-      <span v-if="label && !compact" class="sp-chip-label">{{ label }}</span>
-      <span class="sp-chip-value sofia-truncate">{{ selected?.label }}</span>
-      <SofiaIcon class="sp-caret" :name="open ? 'chevronDown' : 'chevronRight'" :size="'0.7rem'" />
+      <SofiaIcon
+        v-if="icon"
+        class="sp-chip-icon"
+        :name="icon"
+        :size="compact ? '0.8rem' : '0.85rem'"
+        :style="toneStyle(selected?.tone)"
+      />
+      <span v-if="label && !compact && !iconOnly" class="sp-chip-label">{{ label }}</span>
+      <span v-if="!iconOnly" class="sp-chip-value sofia-truncate">{{ selected?.label }}</span>
+      <SofiaIcon v-if="!iconOnly" class="sp-caret" :name="open ? 'chevronDown' : 'chevronRight'" :size="'0.7rem'" />
     </button>
 
     <div
@@ -162,7 +197,13 @@ onBeforeUnmount(() => {
         @mouseenter="focusIndex = i"
         @click="pick(it)"
       >
-        <SofiaIcon v-if="it.icon" class="sp-item-icon" :name="it.icon" :size="'0.95rem'" />
+        <SofiaIcon
+          v-if="it.icon"
+          class="sp-item-icon"
+          :name="it.icon"
+          :size="'0.95rem'"
+          :style="toneStyle(it.tone)"
+        />
         <span class="sp-item-body">
           <span class="sp-item-label">
             {{ it.label }}
@@ -207,6 +248,13 @@ onBeforeUnmount(() => {
   max-width: 10rem;
   padding: 0.15rem 0.5rem;
   font-size: 0.6875rem;
+}
+
+/* Icon-only chip: square-ish pill, the colour (item tone) carries the state. */
+.sp-chip--icon-only {
+  gap: 0;
+  max-width: none;
+  padding: 0.25rem 0.4rem;
 }
 
 .sp-chip-icon {

@@ -16,7 +16,7 @@ import {
   type UsageDto,
 } from '@/types'
 import SofiaIcon from '@/components/SofiaIcon.vue'
-import SofiaPopover, { type PopoverItem } from '@/components/SofiaPopover.vue'
+import SofiaPopover, { type PopoverItem, type PopoverTone } from '@/components/SofiaPopover.vue'
 import AgentDropdown from '@/components/AgentDropdown.vue'
 
 const {
@@ -108,11 +108,21 @@ const modelItems = computed<PopoverItem[]>(() => {
   return items
 })
 
+// Permission levels escalate: blue (read only) → beige (plan) → brown (ask)
+// → red (full access). The chip is icon-only, so the colour is the state.
+const PERMISSION_TONE: Record<PermissionModeId, PopoverTone> = {
+  'read-only': 'info',
+  plan: 'detail',
+  ask: 'primary',
+  full: 'err',
+}
+
 const permissionItems: PopoverItem[] = PERMISSION_MODES.map((p) => ({
   value: p.id,
   label: p.label,
   description: p.description,
   icon: 'shield',
+  tone: PERMISSION_TONE[p.id],
 }))
 
 const reasoningItems: PopoverItem[] = REASONING_MODES.map((r) => ({
@@ -803,6 +813,7 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
           <SofiaPopover
             ref="permissionPopover"
             compact
+            icon-only
             align="right"
             :model-value="state.permissionMode"
             icon="shield"
