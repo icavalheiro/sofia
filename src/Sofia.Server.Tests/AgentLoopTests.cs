@@ -6,6 +6,9 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Sofia.Server.Changes;
+using Sofia.Server.Domain;
+using Sofia.Server.Infrastructure;
 
 namespace Sofia.Server.Tests;
 
@@ -238,6 +241,41 @@ public sealed class AgentLoopTests : IDisposable
         var revert = await Post(http, $"/api/sessions/{sessionId}/revert", new { messageId = userId });
         Assert.Single(revert.GetProperty("restoredFiles").EnumerateArray());
         Assert.False(File.Exists(Path.Combine(_project, "hello.txt")));
+    }
+
+    [Fact]
+    public async Task SessionDiffLeavesOutTheFilesGitIgnores()
+    {
+        var git = ProcessRunner.FindOnPath(OperatingSystem.IsWindows() ? "git.exe" : "git");
+        if (git is null) return;      // Only git knows which paths the ignore rules cover.
+
+        // A repository that hides scratch/: a change there is not a workspace change.
+        var init = await ProcessRunner.ExecAsync(git, ["init", "-q", "-b", "main"], _project);
+        Assert.True(init.ExitCode == 0, "git init failed: " + init.StdErr);
+        File.WriteAllText(Path.Combine(_project, ".gitignore"), "scratch/\n");
+
+        var http = _factory.CreateClient();
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+
+        // Two files the session creates: git ignores one of them. As the tools do, snapshot before writing.
+        var draft = Path.Combine(_project, "scratch", "draft.md");
+        var keep = Path.Combine(_project, "keep.txt");
+        var message = new Message { Id = "msg-1", SessionId = sessionId };
+        var changes = _factory.Services.GetRequiredService<ChangeTracker>();
+        changes.Capture(sessionId, message, draft);
+        changes.Capture(sessionId, message, keep);
+        Directory.CreateDirectory(Path.GetDirectoryName(draft)!);
+        File.WriteAllText(draft, "draft\n");
+        File.WriteAllText(keep, "kept\n");
+
+        var diff = await http.GetFromJsonAsync<JsonElement>($"/api/sessions/{sessionId}/diff");
+        Assert.Equal(["keep.txt"], diff.EnumerateArray().Select(d => d.GetProperty("file").GetString()!).ToArray());
+
+        // Reverting still reaches the ignored file: hiding it is a view decision, not a lost snapshot.
+        Assert.Equal(2, changes.Revert(sessionId, 0).Count);
+        Assert.False(File.Exists(draft));
+        Assert.False(File.Exists(keep));
     }
 
     [Fact]

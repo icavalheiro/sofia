@@ -12,6 +12,7 @@ using Sofia.Server.Domain;
 using Sofia.Server.Infrastructure;
 using Sofia.Server.Providers;
 using Sofia.Server.Security;
+using Sofia.Server.Vcs;
 
 namespace Sofia.Server.Api;
 
@@ -241,14 +242,18 @@ public static class SessionEndpoints
             return Results.NoContent();
         });
 
-        api.MapGet("/sessions/{id}/diff", (string id, AgentService agents, ChangeTracker changes, SofiaDb db) =>
+        api.MapGet("/sessions/{id}/diff", async (string id, AgentService agents, ChangeTracker changes, GitService git, SofiaDb db, CancellationToken ct) =>
         {
             var (_, workspace) = agents.Load(id);
             var ids = new List<string> { id };
             ids.AddRange(Descendants(db, id));
             var diffs = ids.SelectMany(sid => changes.SessionDiff(sid, workspace.Path))
                 .GroupBy(d => d.File).Select(g => g.Last()).ToList();
-            return Results.Ok(diffs);
+            // Files Git ignores are not workspace changes — the panel lists what a commit could carry. Snapshots are
+            // kept, so reverting a message still restores those files.
+            var paths = diffs.Select(d => Absolute(workspace.Path, d.File)).ToList();
+            var ignored = await git.IgnoredAsync(workspace.Path, paths, ct);
+            return Results.Ok(diffs.Where((_, index) => !ignored.Contains(paths[index])).ToList());
         });
 
         api.MapPost("/sessions/{id}/skills", (string id, SkillRequest body, AgentService agents, SessionStore store) =>
@@ -316,6 +321,10 @@ public static class SessionEndpoints
             foreach (var grandchild in Descendants(db, child.Id)) yield return grandchild;
         }
     }
+
+    /// <summary>Absolute `/`-separated path of a diff entry (`FileDiff.File` is workspace-relative).</summary>
+    private static string Absolute(string root, string file) =>
+        Path.GetFullPath(Path.IsPathRooted(file) ? file : Path.Combine(root, file)).Replace('\\', '/');
 
     internal static JsonObject WithMessages(Session session, List<Message> messages)
     {

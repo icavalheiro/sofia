@@ -613,6 +613,114 @@ public class ParsingTests
     }
 }
 
+public class GitIgnoreTests
+{
+    private static bool HasGit => GitExe is not null;
+
+    private static readonly string? GitExe = ProcessRunner.FindOnPath(OperatingSystem.IsWindows() ? "git.exe" : "git");
+
+    private static async Task InitRepoAsync(string dir)
+    {
+        var (code, _, err) = await ProcessRunner.ExecAsync(GitExe!, ["init", "-q", "-b", "main"], dir);
+        Assert.True(code == 0, "git init failed: " + err);
+    }
+
+    /// <summary>Best-effort cleanup: git leaves read-only object files behind.</summary>
+    private static void DeleteDir(string dir)
+    {
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(dir, true);
+        }
+        catch (IOException) { /* temp leftovers are fine */ }
+        catch (UnauthorizedAccessException) { /* temp leftovers are fine */ }
+    }
+
+    [Fact]
+    public async Task ReportsIgnoredPathsAndKeepsTrackedAndForeignOnes()
+    {
+        if (!HasGit) return;    // no git on this machine: nothing to assert about ignore rules.
+        var dir = Directory.CreateTempSubdirectory("sofia-ignore-").FullName;
+        try
+        {
+            await InitRepoAsync(dir);
+            File.WriteAllText(Path.Combine(dir, ".gitignore"), "scratch/\n*.log\n");
+            Directory.CreateDirectory(Path.Combine(dir, "scratch"));
+            File.WriteAllText(Path.Combine(dir, "scratch", "notes.md"), "x");
+            File.WriteAllText(Path.Combine(dir, "run.log"), "x");
+            File.WriteAllText(Path.Combine(dir, "build.log"), "x");
+            File.WriteAllText(Path.Combine(dir, "Program.cs"), "x");
+            // Tracked files are never ignored, even when a rule matches them (git status proves it).
+            var (addCode, _, addErr) = await ProcessRunner.ExecAsync(GitExe!, ["add", "-f", "build.log"], dir);
+            Assert.True(addCode == 0, "git add failed: " + addErr);
+
+            var paths = new[]
+            {
+                Path.Combine(dir, "scratch", "notes.md"),
+                Path.Combine(dir, "run.log"),
+                Path.Combine(dir, "build.log"),
+                Path.Combine(dir, "Program.cs"),
+                Path.Combine(dir, "..", "outside.txt"),
+            };
+            var ignored = await new GitService().IgnoredAsync(dir, paths, CancellationToken.None);
+
+            Assert.Contains(Path.Combine(dir, "scratch", "notes.md").Replace('\\', '/'), ignored);
+            Assert.Contains(Path.Combine(dir, "run.log").Replace('\\', '/'), ignored);
+            Assert.DoesNotContain(Path.Combine(dir, "build.log").Replace('\\', '/'), ignored);
+            Assert.DoesNotContain(Path.Combine(dir, "Program.cs").Replace('\\', '/'), ignored);
+            // A path outside the repository must not break the check nor be reported.
+            Assert.All(ignored, p => Assert.DoesNotContain("outside.txt", p, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            DeleteDir(dir);
+        }
+    }
+
+    [Fact]
+    public async Task ResolvesRelativePathsAgainstASubFolderOfTheRepository()
+    {
+        if (!HasGit) return;
+        var dir = Directory.CreateTempSubdirectory("sofia-ignore-sub-").FullName;
+        try
+        {
+            await InitRepoAsync(dir);
+            File.WriteAllText(Path.Combine(dir, ".gitignore"), "src/dist/\n");
+            var sub = Path.Combine(dir, "src", "dist");
+            Directory.CreateDirectory(sub);
+            File.WriteAllText(Path.Combine(sub, "bundle.js"), "x");
+
+            var rootIgnore = await new GitService().IgnoredAsync(dir, ["src/dist/bundle.js"], CancellationToken.None);
+            var fromSub = await new GitService().IgnoredAsync(sub, ["bundle.js"], CancellationToken.None);
+
+            Assert.Single(rootIgnore);
+            Assert.Equal(Path.Combine(sub, "bundle.js").Replace('\\', '/'), Assert.Single(fromSub));
+        }
+        finally
+        {
+            DeleteDir(dir);
+        }
+    }
+
+    [Fact]
+    public async Task TreatsNothingAsIgnoredOutsideARepository()
+    {
+        var dir = Directory.CreateTempSubdirectory("sofia-nogit-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "run.log"), "x");
+            var ignored = await new GitService().IgnoredAsync(dir, ["run.log"], CancellationToken.None);
+            Assert.Empty(ignored);
+        }
+        finally
+        {
+            DeleteDir(dir);
+        }
+    }
+}
+
 public class TextDurationTests
 {
     [Theory]

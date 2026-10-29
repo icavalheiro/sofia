@@ -1,4 +1,4 @@
-﻿# Sofia Frontend â€” Initialization Notes
+# Sofia Frontend â€” Initialization Notes
 
 > Working knowledge for the `src/Sofia.UI/` web client. This is the living
 > reference for anyone (human or agent) picking up UI work on Sofia.
@@ -234,8 +234,10 @@ combos with a warning and they can be rebound.
 
 Toggled from the chat header. Shows the files the active session changed
 (`/api/sessions/{id}/diff`, falling back to the git working tree) with a
-side-by-side diff viewer. Actions: open folder, open in VS Code, open the
-native terminal, copy path.
+side-by-side diff viewer. Both sources leave out what Git ignores (`.gitignore`,
+global excludes), so the list matches what a commit could carry; reverting a
+message still restores those files. Actions: open folder, open in VS Code, open
+the native terminal, copy path.
 
 ## Browser panel
 

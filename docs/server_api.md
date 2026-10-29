@@ -228,7 +228,7 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `POST` | `/api/sessions/{id}/branch` | `{ messageId }` | `SessionDto` with `messages` (new session in the same workspace titled "<title> (branch)", holding a copy of the history up to and including `messageId`; subagent conversations and file snapshots are copied too, workspace files are not forked; `409` while a reply is running; the new session also arrives as `session.created`) |
 | `POST` | `/api/sessions/{id}/permissions/{requestId}` | `{ decision: 'once' \| 'always' \| 'reject' }` | `204` |
 | `POST` | `/api/sessions/{id}/questions/{formId}` | `{ answers: (string \| string[] \| null)[] }` | `204` |
-| `GET` | `/api/sessions/{id}/diff` | – | `FileDiffDto[]` (files changed by this session) |
+| `GET` | `/api/sessions/{id}/diff` | – | `FileDiffDto[]` (files changed by this session; the ones Git ignores through `.gitignore` are left out — their snapshots stay, so reverting still restores them) |
 | `POST` | `/api/sessions/{id}/skills` | `{ skillId }` | `SessionDto` |
 | `DELETE` | `/api/sessions/{id}/skills/{skillId}` | – | `SessionDto` |
 | `GET` | `/api/sessions/{id}/export` | – | `{ version: 1, info: SessionDto, messages: MessageDto[] }` |
@@ -532,7 +532,7 @@ and after 20 idle minutes without viewers.
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
 | `GET` | `/api/vcs?directory=` | – | `{ isRepo, branch, branches: string[] }` |
-| `GET` | `/api/vcs/diff?directory=` | – | `FileDiffDto[]` (working tree vs `HEAD`, untracked included) |
+| `GET` | `/api/vcs/diff?directory=` | – | `FileDiffDto[]` (working tree vs `HEAD`, untracked included, gitignored paths excluded) |
 | `GET` | `/api/worktrees?directory=` | – | `{ root, worktrees: { directory, branch, isMain }[] }` |
 | `POST` | `/api/worktrees` | `{ directory, name }` | `{ directory, branch, isMain }` |
 | `DELETE` | `/api/worktrees` | `{ directory, worktree, force? }` | `204` |

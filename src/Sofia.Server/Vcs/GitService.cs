@@ -80,6 +80,41 @@ public sealed class GitService
         return diffs;
     }
 
+    /// <summary>
+    /// The absolute (`/`-separated) form of those <paramref name="paths"/> Git excludes through .gitignore, the global
+    /// or the repository-local excludes — the files that are not workspace changes. Paths may be absolute or relative
+    /// to <paramref name="directory"/>; ones outside the repository are never reported, and neither are tracked files
+    /// (like <c>git status</c>). Fails open: without a usable git nothing is treated as ignored.
+    /// </summary>
+    public async Task<HashSet<string>> IgnoredAsync(string directory, IEnumerable<string> paths, CancellationToken ct)
+    {
+        var ignored = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var root = await RootAsync(directory, ct);
+        if (root is null) return ignored;
+
+        var candidates = new List<string>();
+        var cwd = Path.GetFullPath(directory);
+        foreach (var path in paths.Where(p => !string.IsNullOrWhiteSpace(p)))
+        {
+            // Paths are given relative to the caller's directory, which may be a sub-folder of the repository.
+            var full = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(cwd, path));
+            // Git has no ignore rules for files that live outside the repository: leave those visible.
+            var rel = Path.GetRelativePath(root, full);
+            if (rel.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(rel)) continue;
+            candidates.Add(full.Replace('\\', '/'));
+        }
+
+        foreach (var chunk in candidates.Distinct(StringComparer.OrdinalIgnoreCase).Chunk(64))
+        {
+            var (code, output, _) = await RunAsync(root, ct, ["check-ignore", "--", .. chunk]);
+            // 0 = at least one path ignored, 1 = none; anything else means git cannot answer: keep the paths visible.
+            if (code != 0 && code != 1) break;
+            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                ignored.Add(line.Replace('\\', '/'));
+        }
+        return ignored;
+    }
+
     internal static List<FileDiff> ParsePatch(string patch)
     {
         var result = new List<FileDiff>();
