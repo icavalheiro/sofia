@@ -24,6 +24,8 @@ public sealed partial class AgentCatalog(SofiaOptions options)
         ["question"] = "question", ["askuserquestion"] = "question", ["task"] = "task", ["agent"] = "task",
         ["processes"] = "processes", ["process"] = "processes", ["jobs"] = "processes", ["skill"] = "skill", ["sofia_info"] = "sofia_info", ["sofia"] = "sofia_info", ["notes"] = "notes", ["note"] = "notes",
         ["memory"] = "memory", ["mem"] = "memory",
+        ["current_time"] = "current_time", ["time"] = "current_time", ["now"] = "current_time",
+        ["get_current_time"] = "current_time", ["datetime"] = "current_time", ["date_time"] = "current_time",
     };
 
     public IEnumerable<string> GlobalRoots()
