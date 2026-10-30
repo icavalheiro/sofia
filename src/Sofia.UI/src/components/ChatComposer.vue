@@ -321,6 +321,13 @@ const sendTitle = computed(() => {
   return steerDelivery.value === 'steer' ? 'Send steer' : 'Send queued'
 })
 
+// The submit icon mirrors the selected follow-up mode (steer → send, queue → clock)
+// while a reply is running, so the button reflects what Enter will deliver.
+const sendIcon = computed(() => {
+  if (!state.isReplying) return 'send'
+  return steerDelivery.value === 'steer' ? 'send' : 'clock'
+})
+
 function pickDelivery(mode: Delivery): void {
   steerDelivery.value = mode
   modeOpen.value = false
@@ -744,7 +751,7 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
             :disabled="!canSend || steering"
             @click="submit"
           >
-            <SofiaIcon name="send" :size="'1rem'" />
+            <SofiaIcon :name="sendIcon" :size="'1rem'" />
           </button>
           <button
             v-if="state.isReplying"
