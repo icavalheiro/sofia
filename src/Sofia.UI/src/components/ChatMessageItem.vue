@@ -323,6 +323,25 @@ async function copyDiagnosis(info: CacheBreakInfo): Promise<void> {
   }
 }
 
+// --- copy message source ---------------------------------------------------
+const sourceCopied = ref(false)
+let sourceCopiedTimer: number | undefined
+
+async function copySource(): Promise<void> {
+  const text = (props.message.text || props.message.reasoning || '').trim()
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    sourceCopied.value = true
+    if (sourceCopiedTimer !== undefined) window.clearTimeout(sourceCopiedTimer)
+    sourceCopiedTimer = window.setTimeout(() => {
+      sourceCopied.value = false
+    }, 2000)
+  } catch {
+    sourceCopied.value = false
+  }
+}
+
 // --- fullscreen image lightbox ----------------------------------------------
 const lightbox = reactive<{ open: boolean; src: string; name: string }>({
   open: false,
@@ -811,8 +830,18 @@ function closeLightbox(): void {
         </div>
       </div>
 
-      <!-- Message actions, bottom-right: Branch out, plus Retry for failed messages or Revert otherwise. -->
-      <div v-if="!pending && (failed || !message.local)" class="msg-actions">
+      <!-- Message actions, bottom-right: Copy source, Branch out, plus Retry for failed messages or Revert otherwise. -->
+      <div v-if="!pending && !message.compaction" class="msg-actions">
+        <button
+          v-if="message.text || message.reasoning"
+          class="msg-revert msg-revert--copy"
+          type="button"
+          title="Copy the message source as Markdown"
+          @click="copySource"
+        >
+          <SofiaIcon :name="sourceCopied ? 'check' : 'copy'" :size="'0.8rem'" />
+          <span>{{ sourceCopied ? 'Copied' : 'Copy' }}</span>
+        </button>
         <button
           v-if="!message.local"
           class="msg-revert msg-revert--branch"
@@ -825,7 +854,7 @@ function closeLightbox(): void {
           <span>{{ branching ? 'Branching…' : 'Branch out' }}</span>
         </button>
         <button
-          v-if="failed"
+          v-if="failed && !message.local"
           class="msg-revert msg-revert--retry"
           type="button"
           title="Retry: rewinds to the prompt that triggered this failure and sends it again"
@@ -836,7 +865,7 @@ function closeLightbox(): void {
           <span>{{ retrying ? 'Retrying…' : 'Retry' }}</span>
         </button>
         <button
-          v-else
+          v-else-if="!message.local"
           class="msg-revert"
           type="button"
           title="Revert the session here: removes this message and everything after, restores files"
@@ -1005,6 +1034,10 @@ function closeLightbox(): void {
 }
 
 .msg-revert--branch:hover:not(:disabled) {
+  color: var(--sofia-primary);
+}
+
+.msg-revert--copy:hover:not(:disabled) {
   color: var(--sofia-primary);
 }
 
