@@ -342,6 +342,19 @@ public sealed class ProviderConfig
         : null;
 }
 
+/// <summary>
+/// Last models.dev catalog the server fetched (already trimmed to context/output limits), kept so a
+/// restart does not need the network. Never exposed to the UI.
+/// </summary>
+public sealed class CatalogCache
+{
+    [BsonId] public string Id { get; set; } = "models";
+    /// <summary>Trimmed catalog: <c>{"provider":{"model":{"c":context,"o":output}}}</c>.</summary>
+    public string Body { get; set; } = "";
+    public string? Etag { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
 public sealed class McpServerConfig
 {
     [BsonId] public string Id { get; set; } = "";

@@ -1,77 +1,85 @@
 namespace Sofia.Server.Providers;
 
-public sealed record ModelTraits(int Context, int MaxOutput, bool Reasoning, bool Vision, double InputPrice = 0, double OutputPrice = 0);
+/// <summary>
+/// Traits of a model family that no catalog reports: whether it reasons, accepts images, and its
+/// per-token prices. Context windows and output limits are **not** here — they come from the model
+/// itself, from <see cref="ModelCatalog"/> (models.dev) or from <see cref="FallbackContext"/>.
+/// </summary>
+public sealed record ModelTraits(bool Reasoning, bool Vision, double InputPrice = 0, double OutputPrice = 0);
 
 /// <summary>
-/// Fallback knowledge for models whose endpoint does not report limits. Prices are
-/// USD per million tokens. Runtime metadata always wins over this table.
+/// Fallback traits for models no catalog knows. Prices are USD per million tokens.
+/// Context/output limits are resolved by <see cref="ProviderService"/> in this order: provider-reported
+/// metadata, the runtime value remembered in <c>ProviderConfig.KnownContext</c>, the models.dev catalog,
+/// and finally <see cref="FallbackContext"/>.
 /// </summary>
 public static class ModelLimits
 {
+    /// <summary>Context window used when neither the provider nor the catalog reports one. The only hardcoded limit.</summary>
     public const int FallbackContext = 32_768;
 
     // Ordered: the first matching prefix wins, so specific names come first.
     private static readonly (string Prefix, ModelTraits Traits)[] Table =
     [
-        ("claude-haiku-5", new(1_000_000, 64_000, true, true)),
-        ("claude-opus-4", new(200_000, 32_000, true, true, 15, 75)),
-        ("claude-sonnet-4", new(200_000, 64_000, true, true, 3, 15)),
-        ("claude-haiku-4", new(200_000, 64_000, true, true, 1, 5)),
-        ("claude-3-7-sonnet", new(200_000, 64_000, true, true, 3, 15)),
-        ("claude-3-5-sonnet", new(200_000, 8_192, false, true, 3, 15)),
-        ("claude-3-5-haiku", new(200_000, 8_192, false, true, 0.8, 4)),
-        ("claude", new(200_000, 8_192, false, true, 3, 15)),
-        ("gpt-5-mini", new(400_000, 128_000, true, true, 0.25, 2)),
-        ("gpt-5-nano", new(400_000, 128_000, true, true, 0.05, 0.4)),
-        ("gpt-5", new(400_000, 128_000, true, true, 1.25, 10)),
-        ("gpt-4.1-mini", new(1_047_576, 32_768, false, true, 0.4, 1.6)),
-        ("gpt-4.1-nano", new(1_047_576, 32_768, false, true, 0.1, 0.4)),
-        ("gpt-4.1", new(1_047_576, 32_768, false, true, 2, 8)),
-        ("gpt-4o-mini", new(128_000, 16_384, false, true, 0.15, 0.6)),
-        ("gpt-4o", new(128_000, 16_384, false, true, 2.5, 10)),
-        ("gpt-oss", new(131_072, 32_768, true, false)),
-        ("o4-mini", new(200_000, 100_000, true, true, 1.1, 4.4)),
-        ("o3-mini", new(200_000, 100_000, true, false, 1.1, 4.4)),
-        ("o3", new(200_000, 100_000, true, true, 2, 8)),
-        ("o1", new(200_000, 100_000, true, true, 15, 60)),
-        ("gemini-2.5-pro", new(1_048_576, 65_536, true, true, 1.25, 10)),
-        ("gemini-2.5-flash-lite", new(1_048_576, 65_536, true, true, 0.1, 0.4)),
-        ("gemini-2.5-flash", new(1_048_576, 65_536, true, true, 0.3, 2.5)),
-        ("gemini-2.0-flash", new(1_048_576, 8_192, false, true, 0.1, 0.4)),
-        ("gemini", new(1_048_576, 8_192, false, true)),
-        ("deepseek-v4-pro", new(1_048_576, 131_072, true, false, 0.66, 1.98)),
-        ("deepseek-v4", new(1_048_576, 131_072, true, true, 0.15, 0.6)),
-        ("deepseek-flash", new(1_048_576, 131_072, true, true, 0.15, 0.6)),
-        ("deepseek-reasoner", new(128_000, 32_768, true, false, 0.55, 2.19)),
-        ("deepseek-chat", new(128_000, 8_192, false, false, 0.27, 1.1)),
-        ("grok-4", new(256_000, 32_768, true, true, 3, 15)),
-        ("grok-3-mini", new(131_072, 16_384, true, false, 0.3, 0.5)),
-        ("grok", new(131_072, 16_384, false, false, 3, 15)),
-        ("mistral-large", new(131_072, 8_192, false, false, 2, 6)),
-        ("codestral", new(256_000, 8_192, false, false, 0.3, 0.9)),
-        ("devstral", new(131_072, 8_192, false, false)),
-        ("qwen3.8", new(1_000_000, 131_072, true, true)),
-        ("qwen3.7-max", new(1_000_000, 131_072, true, false)),
-        ("qwen3.7", new(1_000_000, 65_536, true, true)),
-        ("qwen3.6", new(1_000_000, 65_536, true, true)),
-        ("kimi-k3", new(1_048_576, 131_072, true, true)),
-        ("kimi-k2.7", new(262_144, 65_536, true, true)),
-        ("kimi-k2.6", new(262_144, 65_536, true, true)),
-        ("kimi-k2.5", new(262_144, 65_536, true, true)),
-        ("glm-5.3", new(1_000_000, 131_072, true, false)),
-        ("glm-5.2", new(1_000_000, 131_072, true, false)),
-        ("glm-5.1", new(202_752, 65_536, true, false)),
-        ("glm-5", new(202_752, 16_384, true, false)),
-        ("minimax-m3", new(1_000_000, 131_072, true, false)),
-        ("minimax-m2", new(204_800, 65_536, true, false)),
-        ("mimo-v2", new(1_000_000, 131_072, true, false)),
-        ("longcat-2", new(1_000_000, 131_072, true, false)),
-        ("hy4", new(1_024_000, 64_000, true, false)),
-        ("hy3", new(256_000, 64_000, true, false)),
-        ("step-5", new(1_000_000, 65_536, true, true)),
-        ("kimi-k2", new(131_072, 16_384, false, false)),
-        ("llama-4", new(131_072, 8_192, false, true)),
-        ("llama-3", new(131_072, 8_192, false, false)),
+        ("claude-haiku-5", new(true, true)),
+        ("claude-opus-4", new(true, true, 15, 75)),
+        ("claude-sonnet-4", new(true, true, 3, 15)),
+        ("claude-haiku-4", new(true, true, 1, 5)),
+        ("claude-3-7-sonnet", new(true, true, 3, 15)),
+        ("claude-3-5-sonnet", new(false, true, 3, 15)),
+        ("claude-3-5-haiku", new(false, true, 0.8, 4)),
+        ("claude", new(false, true, 3, 15)),
+        ("gpt-5-mini", new(true, true, 0.25, 2)),
+        ("gpt-5-nano", new(true, true, 0.05, 0.4)),
+        ("gpt-5", new(true, true, 1.25, 10)),
+        ("gpt-4.1-mini", new(false, true, 0.4, 1.6)),
+        ("gpt-4.1-nano", new(false, true, 0.1, 0.4)),
+        ("gpt-4.1", new(false, true, 2, 8)),
+        ("gpt-4o-mini", new(false, true, 0.15, 0.6)),
+        ("gpt-4o", new(false, true, 2.5, 10)),
+        ("gpt-oss", new(true, false)),
+        ("o4-mini", new(true, true, 1.1, 4.4)),
+        ("o3-mini", new(true, false, 1.1, 4.4)),
+        ("o3", new(true, true, 2, 8)),
+        ("o1", new(true, true, 15, 60)),
+        ("gemini-2.5-pro", new(true, true, 1.25, 10)),
+        ("gemini-2.5-flash-lite", new(true, true, 0.1, 0.4)),
+        ("gemini-2.5-flash", new(true, true, 0.3, 2.5)),
+        ("gemini-2.0-flash", new(false, true, 0.1, 0.4)),
+        ("gemini", new(false, true)),
+        ("deepseek-v4-pro", new(true, false, 0.66, 1.98)),
+        ("deepseek-v4", new(true, true, 0.15, 0.6)),
+        ("deepseek-flash", new(true, true, 0.15, 0.6)),
+        ("deepseek-reasoner", new(true, false, 0.55, 2.19)),
+        ("deepseek-chat", new(false, false, 0.27, 1.1)),
+        ("grok-4", new(true, true, 3, 15)),
+        ("grok-3-mini", new(true, false, 0.3, 0.5)),
+        ("grok", new(false, false, 3, 15)),
+        ("mistral-large", new(false, false, 2, 6)),
+        ("codestral", new(false, false, 0.3, 0.9)),
+        ("devstral", new(false, false)),
+        ("qwen3.8", new(true, true)),
+        ("qwen3.7-max", new(true, false)),
+        ("qwen3.7", new(true, true)),
+        ("qwen3.6", new(true, true)),
+        ("kimi-k3", new(true, true)),
+        ("kimi-k2.7", new(true, true)),
+        ("kimi-k2.6", new(true, true)),
+        ("kimi-k2.5", new(true, true)),
+        ("glm-5.3", new(true, false)),
+        ("glm-5.2", new(true, false)),
+        ("glm-5.1", new(true, false)),
+        ("glm-5", new(true, false)),
+        ("minimax-m3", new(true, false)),
+        ("minimax-m2", new(true, false)),
+        ("mimo-v2", new(true, false)),
+        ("longcat-2", new(true, false)),
+        ("hy4", new(true, false)),
+        ("hy3", new(true, false)),
+        ("step-5", new(true, true)),
+        ("kimi-k2", new(false, false)),
+        ("llama-4", new(false, true)),
+        ("llama-3", new(false, false)),
     ];
 
     public static ModelTraits? Known(string modelId)

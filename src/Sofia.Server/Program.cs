@@ -64,6 +64,7 @@ builder.Services.AddHttpClient("fetch", c =>
 
 builder.Services.AddSingleton<SofiaDb>();
 builder.Services.AddSingleton<IEventBus, EventBus>();
+builder.Services.AddSingleton<ModelCatalog>();
 builder.Services.AddSingleton<ProviderService>();
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<ChangeTracker>();

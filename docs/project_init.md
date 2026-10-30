@@ -279,10 +279,26 @@ finishes, the setting is turned off or the server stops.
 - Local discovery (startup and every 90 s): Unsloth Studio `:8888`, Ollama
   `:11434` (`OLLAMA_HOST`), LM Studio `:1234`, llama.cpp `:8080`, vLLM `:8000`,
   plus `SOFIA_LOCAL_ENDPOINTS="name=url,…"`.
-- Context windows come from runtime metadata (`context_length`,
-  `max_model_len`, llama.cpp `/props`, Ollama `/api/show` and `/api/ps`, LM
-  Studio `/api/v0/models`), remembered per model while it is unloaded, then a
-  built-in table, then 32K.
+- Context windows and output limits are read at runtime, newest source first:
+  what the endpoint reports (`context_length`, `max_model_len`,
+  `top_provider.max_completion_tokens`, llama.cpp `/props`, Ollama `/api/show`
+  and `/api/ps`, LM Studio `/api/v0/models`, Copilot `capabilities.limits`;
+  Anthropic reports none), the last value a runtime reported while the model was
+  loaded (`ProviderConfig.KnownContext`), the **models.dev catalog**, and finally
+  one documented constant (`ModelLimits.FallbackContext`, 32K). No context or
+  output limit is hardcoded anywhere else; prices, `Reasoning`, `Vision` and
+  `Audio` still come from `Providers/ModelLimits.cs`.
+- `Providers/ModelCatalog.cs` is that catalog. It boots from the trimmed snapshot
+  committed as `Providers/ModelsDevSnapshot.json` (embedded resource; regenerate
+  with `node script/update-model-snapshot.mjs`), replaces it with the copy cached
+  in the `catalog` LiteDB collection when a previous process fetched one, and
+  refetches at most once every 24 h with an `If-None-Match` GET of
+  `https://models.dev/api.json` (`SOFIA_MODELS_URL` overrides it, 30 s timeout; a
+  304, a network error or a body with no limits keeps the current data). Lookups
+  prefer the exact `(provider, model)` pair, then any provider serving that model
+  id. `MaintenanceService` refreshes it at boot and every 90 s (a no-op until the
+  cached copy is a day old), and `POST /api/providers/refresh` starts one off the
+  request path.
 - Cloud presets are enabled from environment keys (`OPENAI_API_KEY`,
   `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`,
   `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`,

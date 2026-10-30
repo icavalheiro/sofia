@@ -37,7 +37,7 @@ public class SingleClientModelTests
     private static SofiaDb Db() => new(new LiteDB.ConnectionString { Filename = ":memory:" });
 
     private static ProviderService Providers(SofiaDb db) =>
-        new(db, new StubHttpFactory(), new EventBus(), NullLogger<ProviderService>.Instance);
+        new(db, new StubHttpFactory(), new EventBus(), new ModelCatalog(db, new StubHttpFactory(), NullLogger<ModelCatalog>.Instance), NullLogger<ProviderService>.Instance);
 
     [Fact]
     public void LocalModelsAreSingleClientByDefaultAndCloudModelsStayOptIn()

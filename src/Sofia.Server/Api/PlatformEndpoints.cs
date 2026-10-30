@@ -162,8 +162,11 @@ public static class PlatformEndpoints
             return Results.NoContent();
         });
 
-        api.MapPost("/providers/refresh", async (ProviderService providers, SofiaDb db, CancellationToken ct) =>
+        api.MapPost("/providers/refresh", async (ProviderService providers, ModelCatalog catalog, SofiaDb db, CancellationToken ct) =>
         {
+            // A manual refresh also updates the models.dev catalog; it runs off the request path because the
+            // model list already has the last known limits.
+            _ = catalog.EnsureFreshAsync();
             await providers.RefreshAsync(discover: true, ct);
             return Results.Ok(providers.Providers());
         });

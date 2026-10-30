@@ -21,6 +21,15 @@
     <InternalsVisibleTo Include="Sofia.Server.Tests" />
   </ItemGroup>
 
+  <!-- Boot-time floor of the runtime model catalog (models.dev). Regenerate it with
+       `node script/update-model-snapshot.mjs`; the build tolerates it being absent, in which case the
+       catalog relies on the network and on the constants in ModelLimits. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Providers/ModelsDevSnapshot.json"
+                      LogicalName="Sofia.Server.Providers.ModelsDevSnapshot.json"
+                      Condition="Exists('Providers/ModelsDevSnapshot.json')" />
+  </ItemGroup>
+
   <!-- `dotnet publish` also builds Sofia.UI and ships it as wwwroot, so the published server
        serves the harness UI on the same URL. Opt out with -p:BuildUiOnPublish=false. -->
   <PropertyGroup>

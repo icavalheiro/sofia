@@ -59,7 +59,7 @@ public sealed record ProviderPreset(string Id, string Name, string Type, string 
 public sealed record LocalRuntime(string Id, string Name, string BaseUrl, string Flavor);
 
 /// <summary>Provider registry: presets, local auto-discovery, model catalog and client factory.</summary>
-public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, IEventBus bus, ILogger<ProviderService> log)
+public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, IEventBus bus, ModelCatalog catalog, ILogger<ProviderService> log)
 {
     public static readonly ProviderPreset[] Presets =
     [
@@ -252,19 +252,35 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
                 state.Status = provider.Kind == "local" ? "disconnected" : "error";
                 state.Detail = provider.Kind == "local" ? "Not running" : Text.FirstLine(ex.Message, 160);
                 // Keep declared models selectable even when listing fails.
-                state.Models = provider.Models.Select(id => ToInfo(provider, Fallback(id))).ToList();
+                state.Models = provider.Models.Select(id => ToInfo(provider, Fallback(provider, id))).ToList();
                 foreach (var m in state.Models) m.Connected = false;
             }
         }
         lock (_gate) _states[provider.Id] = state;
     }
 
-    private static DiscoveredModel Fallback(string id)
+    /// <summary>Provider id the catalog is keyed by (the temporary probe provider borrows its flavor).</summary>
+    private static string CatalogKey(ProviderConfig provider) => provider.Id == "probe" ? provider.Flavor : provider.Id;
+
+    /// <summary>
+    /// Context window and max output for a model, in priority order: what the endpoint reported now, what the
+    /// runtime reported earlier (<see cref="ProviderConfig.KnownContext"/>), the models.dev catalog and finally
+    /// the single documented unknown floor.
+    /// </summary>
+    private (int Context, int MaxOutput) Limits(ProviderConfig provider, string modelId, int? reportedContext, int? reportedMaxOutput, int? rememberedContext = null)
+    {
+        var hit = catalog.Lookup(CatalogKey(provider), modelId);
+        var ctx = reportedContext ?? rememberedContext ?? hit?.Context ?? ModelLimits.FallbackContext;
+        var maxOut = reportedMaxOutput ?? hit?.MaxOutput ?? ModelLimits.DefaultMaxOutput(ctx);
+        return (ctx, Math.Min(maxOut, ctx));
+    }
+
+    private DiscoveredModel Fallback(ProviderConfig provider, string id)
     {
         var known = ModelLimits.Known(id);
-        var ctx = known?.Context ?? ModelLimits.FallbackContext;
-        return new DiscoveredModel(id, id, ctx, known?.MaxOutput ?? ModelLimits.DefaultMaxOutput(ctx),
-            known?.Reasoning ?? ModelLimits.LooksReasoning(id), known?.Vision ?? ModelLimits.LooksVision(id), null);
+        var (ctx, maxOut) = Limits(provider, id, reportedContext: null, reportedMaxOutput: null);
+        return new DiscoveredModel(id, id, ctx, maxOut, known?.Reasoning ?? ModelLimits.LooksReasoning(id),
+            known?.Vision ?? ModelLimits.LooksVision(id), null);
     }
 
     private static ModelInfo ToInfo(ProviderConfig provider, DiscoveredModel m)
@@ -320,9 +336,11 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             {
                 var id = item?["id"]?.GetValue<string>();
                 if (string.IsNullOrEmpty(id)) continue;
+                // Anthropic reports no limits: they come from the catalog (or the unknown floor).
                 var known = ModelLimits.Known(id);
-                result.Add(new DiscoveredModel(id, item?["display_name"]?.GetValue<string>() ?? id, known?.Context ?? 200_000,
-                    known?.MaxOutput ?? 8192, known?.Reasoning ?? false, true, null));
+                var (ctx, maxOut) = Limits(provider, id, reportedContext: null, reportedMaxOutput: null);
+                result.Add(new DiscoveredModel(id, item?["display_name"]?.GetValue<string>() ?? id, ctx, maxOut,
+                    known?.Reasoning ?? false, true, null));
             }
             return MergeDeclared(provider, result);
         }
@@ -334,7 +352,7 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             foreach (var (name, value) in auth.Headers ?? new Dictionary<string, string>()) ProviderIdentity.ApplyHeader(req, name, value);
             ProviderIdentity.ApplyIdentity(req, provider, null);
             var json = await SendJsonAsync(http, req, ct);
-            if (provider.Flavor == "copilot") return MergeDeclared(provider, ParseCopilotModels(json));
+            if (provider.Flavor == "copilot") return MergeDeclared(provider, ParseCopilotModels(json, id => catalog.Lookup(CatalogKey(provider), id)));
             foreach (var item in json?["data"]?.AsArray() ?? [])
             {
                 if (item is null) continue;
@@ -350,9 +368,9 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
                 var runtimeCtx = Int(item["context_length"]) ?? Int(item["max_context_length"]) ?? Int(item["max_model_len"])
                     ?? Int(item["meta"]?["n_ctx_train"]) ?? Int(item["context_window"]) ?? Int(item["inputTokenLimit"]);
                 if (runtimeCtx is { } reported) provider.KnownContext[id] = reported;
-                var ctx = runtimeCtx ?? (provider.KnownContext.TryGetValue(id, out var remembered) ? remembered : (int?)null)
-                    ?? known?.Context ?? ModelLimits.FallbackContext;
-                var maxOut = Int(item["top_provider"]?["max_completion_tokens"]) ?? known?.MaxOutput ?? ModelLimits.DefaultMaxOutput(ctx);
+                var (ctx, maxOut) = Limits(provider, id, runtimeCtx,
+                    Int(item["top_provider"]?["max_completion_tokens"]),
+                    provider.KnownContext.TryGetValue(id, out var remembered) ? remembered : null);
                 bool? loaded = item["loaded"] is JsonValue lv && lv.TryGetValue<bool>(out var l) ? l : null;
                 var label = item["display_name"]?.GetValue<string>() ?? item["name"]?.GetValue<string>() ?? id;
                 var reasoning = known?.Reasoning ?? ModelLimits.LooksReasoning(id);
@@ -381,10 +399,10 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         return MergeDeclared(provider, result);
     }
 
-    private static List<DiscoveredModel> MergeDeclared(ProviderConfig provider, List<DiscoveredModel> found)
+    private List<DiscoveredModel> MergeDeclared(ProviderConfig provider, List<DiscoveredModel> found)
     {
         foreach (var id in provider.Models)
-            if (found.All(m => m.Id != id)) found.Add(Fallback(id));
+            if (found.All(m => m.Id != id)) found.Add(Fallback(provider, id));
         return found;
     }
 
@@ -612,7 +630,7 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         {
             model = _states.TryGetValue(providerId, out var s) ? s.Models.FirstOrDefault(m => m.Id == modelId) : null;
         }
-        model ??= ToInfo(config, Fallback(modelId[(slash + 1)..]));
+        model ??= ToInfo(config, Fallback(config, modelId[(slash + 1)..]));
         return (config, model);
     }
 
@@ -642,8 +660,9 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
     /// <summary>Copilot model ids that are only served on <c>/responses</c>, filled while parsing the catalog.</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> ResponsesOnlyModels = new();
 
-    /// <summary>Copilot's catalog mixes chat models with embeddings, hidden picks and Responses-only models.</summary>
-    internal static List<DiscoveredModel> ParseCopilotModels(JsonNode? json)
+    /// <summary>Copilot's catalog mixes chat models with embeddings, hidden picks and Responses-only models.
+    /// <paramref name="limits"/> resolves the models.dev catalog entry when Copilot itself reports no limits.</summary>
+    internal static List<DiscoveredModel> ParseCopilotModels(JsonNode? json, Func<string, ModelLimit?>? limits = null)
     {
         var result = new List<DiscoveredModel>();
         foreach (var item in json?["data"]?.AsArray() ?? [])
@@ -666,8 +685,9 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             }
 
             var known = ModelLimits.Known(id);
-            var ctx = Int(caps?["limits"]?["max_context_window_tokens"]) ?? known?.Context ?? 128_000;
-            var maxOut = Int(caps?["limits"]?["max_output_tokens"]) ?? known?.MaxOutput ?? ModelLimits.DefaultMaxOutput(ctx);
+            var hit = limits?.Invoke(id);
+            var ctx = Int(caps?["limits"]?["max_context_window_tokens"]) ?? hit?.Context ?? ModelLimits.FallbackContext;
+            var maxOut = Int(caps?["limits"]?["max_output_tokens"]) ?? hit?.MaxOutput ?? ModelLimits.DefaultMaxOutput(ctx);
             var vision = caps?["supports"]?["vision"] is JsonValue v && v.TryGetValue<bool>(out var hasVision) ? hasVision : known?.Vision ?? ModelLimits.LooksVision(id);
             var reasoning = known?.Reasoning ?? ModelLimits.LooksReasoning(id);
             result.Add(new DiscoveredModel(id, item["name"]?.GetValue<string>() ?? id, ctx, Math.Min(maxOut, ctx), reasoning, vision, null));

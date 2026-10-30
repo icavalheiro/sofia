@@ -41,6 +41,7 @@ public sealed class SofiaDb : IDisposable
         Tokens = _db.GetCollection<AccessToken>("tokens");
         Config = _db.GetCollection<ServerConfig>("config");
         Knowledge = _db.GetCollection<KnowledgeNote>("knowledge");
+        Catalog = _db.GetCollection<CatalogCache>("catalog");
 
         Memory = _db.GetCollection<MemoryEntry>("memory");
 
@@ -66,6 +67,7 @@ public sealed class SofiaDb : IDisposable
     public ILiteCollection<AccessToken> Tokens { get; }
     public ILiteCollection<ServerConfig> Config { get; }
     public ILiteCollection<KnowledgeNote> Knowledge { get; }
+    public ILiteCollection<CatalogCache> Catalog { get; }
     public ILiteCollection<MemoryEntry> Memory { get; }
 
     /// <summary>Global monotonic message sequence (order inside a session follows it).</summary>

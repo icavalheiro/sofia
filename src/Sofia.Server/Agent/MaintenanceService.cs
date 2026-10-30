@@ -5,7 +5,7 @@ using Sofia.Server.Providers;
 namespace Sofia.Server.Agent;
 
 /// <summary>Recovers state left by a previous process and keeps the model catalog fresh.</summary>
-public sealed class MaintenanceService(SofiaDb db, ProviderService providers, ILogger<MaintenanceService> log) : BackgroundService
+public sealed class MaintenanceService(SofiaDb db, ProviderService providers, ModelCatalog catalog, ILogger<MaintenanceService> log) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(90);
 
@@ -17,7 +17,17 @@ public sealed class MaintenanceService(SofiaDb db, ProviderService providers, IL
         {
             try
             {
+                // The models.dev catalog is fetched in parallel with the first listing, which already uses the
+                // bundled snapshot, so an unreachable catalog never delays the model list.
+                var before = catalog.UpdatedAt;
+                var catalogRefresh = catalog.EnsureFreshAsync(stoppingToken);
                 await providers.RefreshAsync(discover: db.GetConfig().Discovery, stoppingToken);
+                await catalogRefresh;
+                if (catalog.UpdatedAt != before)
+                {
+                    // Limits that arrived after the listing was built apply now instead of next cycle.
+                    await providers.RefreshAsync(discover: false, stoppingToken);
+                }
             }
             catch (OperationCanceledException)
             {
