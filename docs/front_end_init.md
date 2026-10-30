@@ -45,6 +45,8 @@ src/Sofia.UI/src/
 â”‚   â”‚                          #   --sofia-composer-height from its own ResizeObserver
 â”‚   â”œâ”€â”€ ChatMessages.vue       # scrollable transcript (wallpaper canvas, reserves the
 â”‚   â”‚                          #   composer height as bottom padding)
+â”‚   â”‚                          #   messages plus every user message and the first reply, so older
+â”‚   â”‚                          #   blocks collapse into one centred "(...)" where they were)
 â”‚   â”œâ”€â”€ ChatMessageItem.vue    # renders one message: text, reasoning, tool cards,
 â”‚   â”‚                          #   permission cards, question cards, error banners,
 â”‚   â”‚                          #   provider retry notices, report cards, attachments

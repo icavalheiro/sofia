@@ -15,6 +15,47 @@ const { t } = useI18n()
 const scroller = ref<HTMLElement | null>(null)
 const content = ref<HTMLElement | null>(null)
 
+/**
+ * How many transcript messages stay rendered. Longer conversations keep the
+ * newest window plus the pinned entries below and collapse every other block
+ * into a centred "(...)" — the transcript forgets, the model never does (its
+ * context is untouched; compaction owns that).
+ */
+const MESSAGE_WINDOW = 70
+
+/** A rendered transcript row: a real message (with its index in `messages`) or an elided block. */
+type TranscriptItem =
+  | { kind: 'message'; message: Message; index: number }
+  | { kind: 'gap'; key: string; count: number }
+
+const transcript = computed<TranscriptItem[]>(() => {
+  const all = messages.value
+  if (all.length <= MESSAGE_WINDOW) return all.map((message, index) => ({ kind: 'message', message, index }))
+
+  // Always readable: what the user asked, plus the first reply the model gave.
+  const firstReply = all.findIndex((m) => m.role === 'assistant' && !m.compaction)
+  const windowStart = all.length - MESSAGE_WINDOW
+
+  const items: TranscriptItem[] = []
+  let hidden = 0
+  let hiddenFrom = 0
+  for (let index = 0; index < all.length; index++) {
+    const message = all[index]
+    const visible = index >= windowStart || message.role === 'user' || index === firstReply
+    if (visible) {
+      if (hidden > 0) {
+        items.push({ kind: 'gap', key: `gap-${hiddenFrom}`, count: hidden })
+        hidden = 0
+      }
+      items.push({ kind: 'message', message, index })
+      continue
+    }
+    if (hidden === 0) hiddenFrom = index
+    hidden++
+  }
+  return items
+})
+
 /** True while the open conversation's run is working (not waiting on the user). */
 const workingHere = computed(() => !!activeConversation.value?.working)
 
@@ -133,8 +174,24 @@ watch(() => activeConversation.value?.id, followFromStart)
         </p>
       </div>
 
-      <ChatMessageItem v-for="(m, i) in messages" :key="m.id" :message="m"
-        :streaming="workingHere && i === messages.length - 1" :cache-break="cacheBreaks[i] ?? null" />
+      <template v-for="item in transcript" :key="item.kind === 'gap' ? item.key : item.message.id">
+        <!-- Elided block: the transcript skips here, centred where the messages were. -->
+        <div
+          v-if="item.kind === 'gap'"
+          class="msg-gap"
+          role="note"
+          :title="t('chat.omitted', { count: item.count })"
+          :aria-label="t('chat.omitted', { count: item.count })"
+        >
+          <span class="msg-gap-dots" aria-hidden="true">(...)</span>
+        </div>
+        <ChatMessageItem
+          v-else
+          :message="item.message"
+          :streaming="workingHere && item.index === messages.length - 1"
+          :cache-break="cacheBreaks[item.index] ?? null"
+        />
+      </template>
 
       <!-- Working indicator: a lone spinner centred below the transcript, only until the LLM starts answering. -->
       <div v-if="showSpinner" class="working" role="status" :aria-label="t('chat.working')">
@@ -221,5 +278,22 @@ watch(() => activeConversation.value?.id, followFromStart)
 
 .spinner {
   color: var(--sofia-primary);
+}
+
+/* --- elided block --------------------------------------------------------- */
+/* Where the transcript forgets: a quiet "(...)" centred in the column, the
+   width of the transcript, so it reads as a gap rather than as a card. */
+.msg-gap {
+  display: flex;
+  justify-content: center;
+  padding: 0.15rem 0;
+  user-select: none;
+}
+
+.msg-gap-dots {
+  color: var(--sofia-text-faint);
+  font-size: 0.8125rem;
+  letter-spacing: 0.18em;
+  line-height: 1;
 }
 </style>
