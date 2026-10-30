@@ -107,12 +107,14 @@ const pendingMessages = computed(() => {
 const BOTTOM_EPSILON = 4
 let following = true
 let lastScrollTop = 0
+let lastScrollHeight = 0
 
 function scrollToBottom(): void {
   const el = scroller.value
   if (!el) return
   el.scrollTop = el.scrollHeight
   lastScrollTop = el.scrollTop
+  lastScrollHeight = el.scrollHeight
 }
 
 function onScroll(): void {
@@ -120,8 +122,27 @@ function onScroll(): void {
   if (!el) return
   const distance = el.scrollHeight - el.scrollTop - el.clientHeight
   if (distance <= BOTTOM_EPSILON) following = true
-  else if (el.scrollTop < lastScrollTop) following = false
+  // Only treat an upward move as "user scrolled away" when the content did
+  // not shrink: when truncation drops rendered rows the scroll height can fall
+  // and the browser clamps scrollTop down, which must not disable auto-follow.
+  else if (el.scrollTop < lastScrollTop && el.scrollHeight >= lastScrollHeight) following = false
   lastScrollTop = el.scrollTop
+  lastScrollHeight = el.scrollHeight
+}
+
+function onEndKey(event: KeyboardEvent): void {
+  if (event.key !== 'End') return
+  const target = event.target as HTMLElement | null
+  const editable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+  if (!scroller.value) return
+  following = true
+  if (editable) {
+    // Let the textarea move its caret, then re-pin the transcript.
+    window.setTimeout(() => scrollToBottom(), 0)
+    return
+  }
+  event.preventDefault()
+  requestAnimationFrame(() => scrollToBottom())
 }
 
 function followFromStart(): void {
@@ -133,16 +154,27 @@ let resizeObserver: ResizeObserver | null = null
 
 onMounted(() => {
   followFromStart()
+  const el = scroller.value
+  if (el) {
+    lastScrollTop = el.scrollTop
+    lastScrollHeight = el.scrollHeight
+  }
   // Streamed text, reasoning folds and markdown layout all change the height.
   if (content.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
-      if (following) scrollToBottom()
+      if (following) requestAnimationFrame(() => {
+        if (following) scrollToBottom()
+      })
     })
     resizeObserver.observe(content.value)
   }
+  window.addEventListener('keydown', onEndKey)
 })
 
-onBeforeUnmount(() => resizeObserver?.disconnect())
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  window.removeEventListener('keydown', onEndKey)
+})
 
 // A message the user just sent always jumps to the end.
 watch(
@@ -160,6 +192,22 @@ watch(
 )
 
 watch(() => activeConversation.value?.id, followFromStart)
+
+// Keep pinned to the bottom when the transcript grows or its shape changes
+// (e.g. crossing the 70-message truncation boundary) while auto-follow is on.
+watch(
+  () => messages.value.length,
+  () => {
+    if (following) void nextTick(scrollToBottom)
+  },
+)
+
+watch(
+  () => transcript.value.length,
+  () => {
+    if (following) void nextTick(scrollToBottom)
+  },
+)
 </script>
 
 <template>
