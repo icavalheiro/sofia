@@ -245,6 +245,9 @@ const editText = ref('')
 function onConvClick(ws: Ws, c: Conv): void {
   if (editingId.value === c.id) return
   if (c.id === state.activeConversationId) {
+    // Entering the inline-rename mode is still a user gesture: give it the
+    // same click feedback as every other control in the sidebar.
+    playSound('click')
     editingId.value = c.id
     editText.value = c.title
     void nextTick(() => {
