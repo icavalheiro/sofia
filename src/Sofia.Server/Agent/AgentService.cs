@@ -101,7 +101,7 @@ public sealed class AgentService(RunServices services, CommandService commands, 
             .ToList();
         if (string.IsNullOrWhiteSpace(input.Text) && attachments.Count == 0) throw new ArgumentException("The prompt is empty.");
 
-        var prompt = new PendingPrompt(Ids.New("msg"), "prompt", input.Text.Trim(), expanded ?? ExpandMentions(session, workspace, input.Text), attachments);
+        var prompt = new PendingPrompt(Ids.New("msg"), "prompt", input.Text.Trim(), expanded ?? ExpandPrompt(session, workspace, input.Text), attachments);
         var steer = input.Delivery == "steer";
         lock (_gate)
         {
@@ -131,18 +131,48 @@ public sealed class AgentService(RunServices services, CommandService commands, 
     }
 
     /// <summary>
-    /// `@agent` mentions: the user sees their text as typed, the model also gets a note to hand the work to the
-    /// mentioned subagents with the `task` tool. Only possible when the active agent can use `task`.
+    /// Expands a normal prompt for the model: `@path/to/file` references inside the workspace are appended as
+    /// `&lt;file&gt;` blocks (read-only, no shell injection) and `@agent` mentions get a delegation note.
+    /// Returns null when nothing changed, so the original text is used as-is.
     /// </summary>
-    private string? ExpandMentions(Session session, Workspace workspace, string text)
+    private string? ExpandPrompt(Session session, Workspace workspace, string text)
     {
+        var trimmed = text.Trim();
         var dir = workspace.IsFolder ? workspace.Path : null;
-        var catalog = services.AgentCatalog;
-        var active = catalog.Get(session.Agent, dir);
-        if (!active.HasTaskTool) return null;
-        var mentioned = catalog.Mentions(text, dir).Where(a => a.ReadOnly || active.Tools.Contains("task")).ToList();
-        if (mentioned.Count == 0) return null;
-        return $"{text.Trim()}\n\n<agent_mentions>\n{AgentCatalog.DelegationHint(mentioned.Select(a => a.Id))}\n</agent_mentions>";
+        var changed = false;
+        var expanded = trimmed;
+
+        // `@path/to/file` references: append the file contents (no shell injection, no permission prompt).
+        if (dir is not null)
+        {
+            var shell = ProcessRunner.ResolveShell(Db.GetConfig().Shell);
+            var withFiles = CommandService.ExpandDynamicAsync(trimmed, dir, false, shell, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            if (withFiles != trimmed)
+            {
+                expanded = withFiles;
+                changed = true;
+            }
+        }
+
+        // `@agent` mentions: hand the work to the mentioned subagents with the `task` tool.
+        if (dir is not null)
+        {
+            var catalog = services.AgentCatalog;
+            var active = catalog.Get(session.Agent, dir);
+            if (active.HasTaskTool)
+            {
+                var mentioned = catalog.Mentions(trimmed, dir)
+                    .Where(a => a.ReadOnly || active.Tools.Contains("task")).ToList();
+                if (mentioned.Count > 0)
+                {
+                    expanded = $"{expanded.Trim()}\n\n<agent_mentions>\n{AgentCatalog.DelegationHint(mentioned.Select(a => a.Id))}\n</agent_mentions>";
+                    changed = true;
+                }
+            }
+        }
+
+        return changed ? expanded : null;
     }
 
     public async Task<string> CommandAsync(string sessionId, string name, string? arguments, List<string>? attachments = null, CancellationToken ct = default)

@@ -76,6 +76,23 @@ const agentCatalog = ref<AgentDto[]>([])
 // Agents the user can call with "@name" (subagent or both).
 const subagents = computed(() => agentCatalog.value.filter((a) => a.mode !== 'primary'))
 
+// Files inside the workspace that can be referenced with "@path/to/file".
+const workspaceFiles = ref<string[]>([])
+async function refreshFiles(): Promise<void> {
+  const dir = directory.value
+  if (!dir) {
+    workspaceFiles.value = []
+    return
+  }
+  try {
+    const list = await api<string[]>('GET', `/api/files${query(dir)}`)
+    if (dir !== directory.value) return
+    workspaceFiles.value = (list ?? []).filter((p) => !!p)
+  } catch {
+    workspaceFiles.value = []
+  }
+}
+
 async function refreshAgents(): Promise<void> {
   try {
     agentCatalog.value = (await api<AgentDto[]>('GET', `/api/agents${query(directory.value)}`)) ?? []
@@ -172,6 +189,7 @@ watch(
     if (backend.phase !== 'ready') return
     void refreshBranch()
     void refreshAgents()
+    void refreshFiles()
   },
   { immediate: true },
 )
@@ -414,7 +432,21 @@ const filteredMentions = computed(() => {
   const q = mentionQuery.value.toLowerCase()
   return subagents.value.filter((a) => a.id.toLowerCase().includes(q) || a.name.toLowerCase().includes(q))
 })
-const mentionVisible = computed(() => mentionOpen.value && filteredMentions.value.length > 0)
+const filteredFileMentions = computed(() => {
+  const q = mentionQuery.value.toLowerCase()
+  const list = q
+    ? workspaceFiles.value.filter((p) => p.toLowerCase().includes(q))
+    : workspaceFiles.value
+  return list.slice(0, 40)
+})
+type MentionItem =
+  | { kind: 'agent'; agent: AgentDto }
+  | { kind: 'file'; path: string }
+const mentionItems = computed<MentionItem[]>(() => [
+  ...filteredMentions.value.map((a) => ({ kind: 'agent' as const, agent: a })),
+  ...filteredFileMentions.value.map((p) => ({ kind: 'file' as const, path: p })),
+])
+const mentionVisible = computed(() => mentionOpen.value && mentionItems.value.length > 0)
 watch(mentionQuery, () => {
   mentionIndex.value = 0
   scrollActiveItemIntoView(mentionList, 0)
@@ -440,7 +472,7 @@ function updateMention(): void {
   const el = textarea.value
   if (!el) return
   const caret = el.selectionStart ?? 0
-  const match = /(^|\s)@([\w.-]*)$/.exec(el.value.slice(0, caret))
+  const match = /(^|\s)@([\w.\-/\\]*)$/.exec(el.value.slice(0, caret))
   if (!match) {
     closeMention()
     return
@@ -452,8 +484,11 @@ function updateMention(): void {
   // Re-opening the popup must start from the first row (the watcher above only
   // fires when the query text itself changes).
   if (!wasOpen) mentionIndex.value = 0
-  // Agents are files the user (or an LLM) may have just added: re-read them when the popup opens.
-  if (!wasOpen) void refreshAgents()
+  // Agents and files may have changed since the popup last opened: re-read them.
+  if (!wasOpen) {
+    void refreshAgents()
+    void refreshFiles()
+  }
 }
 
 function onInput(): void {
@@ -465,10 +500,10 @@ function onKeyup(event: KeyboardEvent): void {
   if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) updateMention()
 }
 
-function pickMention(agent: AgentDto): void {
+function pickMention(item: MentionItem): void {
   const range = mentionRange
   if (!range) return
-  const insertion = `@${agent.id} `
+  const insertion = item.kind === 'agent' ? `@${item.agent.id} ` : `@${item.path} `
   state.composerText = state.composerText.slice(0, range.start) + insertion + state.composerText.slice(range.end)
   closeMention()
   nextTick(() => {
@@ -556,7 +591,7 @@ function onKeydown(event: KeyboardEvent): void {
     return
   }
   if (mentionVisible.value) {
-    const count = filteredMentions.value.length
+    const count = mentionItems.value.length
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       mentionIndex.value = Math.min(mentionIndex.value + 1, count - 1)
@@ -569,7 +604,7 @@ function onKeydown(event: KeyboardEvent): void {
     }
     if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
       event.preventDefault()
-      const chosen = filteredMentions.value[mentionIndex.value]
+      const chosen = mentionItems.value[mentionIndex.value]
       if (chosen) pickMention(chosen)
       return
     }
@@ -669,10 +704,10 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
 
       <div class="input-box">
         <!-- "@" agent mentions: lists the subagents the request can be handed to. -->
-        <div v-if="mentionVisible" ref="mentionList" class="cmd-palette" role="listbox" aria-label="Agents">
+        <div v-if="mentionVisible" ref="mentionList" class="cmd-palette" role="listbox" aria-label="Agents and files">
           <button
-            v-for="(a, i) in filteredMentions"
-            :key="a.id"
+            v-for="(m, i) in mentionItems"
+            :key="m.kind === 'agent' ? 'agent:' + m.agent.id : 'file:' + m.path"
             class="cmd-item"
             :class="{ 'cmd-item--active': i === mentionIndex }"
             type="button"
@@ -680,11 +715,12 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
             :aria-selected="i === mentionIndex"
             @mousedown.prevent
             @mouseenter="mentionIndex = i"
-            @click="pickMention(a)"
+            @click="pickMention(m)"
           >
-            <span class="cmd-name sofia-mono">@{{ a.id }}</span>
-            <span v-if="a.description" class="cmd-desc sofia-truncate">{{ a.description }}</span>
-            <span v-if="a.source && a.source !== 'builtin'" class="cmd-tag">{{ a.source }}</span>
+            <span class="cmd-name sofia-mono">@{{ m.kind === 'agent' ? m.agent.id : m.path }}</span>
+            <span v-if="m.kind === 'agent' && m.agent.description" class="cmd-desc sofia-truncate">{{ m.agent.description }}</span>
+            <span v-if="m.kind === 'file'" class="cmd-desc sofia-truncate">workspace file</span>
+            <span v-if="m.kind === 'agent' && m.agent.source && m.agent.source !== 'builtin'" class="cmd-tag">{{ m.agent.source }}</span>
           </button>
         </div>
 

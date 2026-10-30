@@ -380,6 +380,7 @@ conversation (model discovery, probes) fall back to one stable per-process `harn
 | `GET` | `/api/agents?directory=` | `{ id, name, description, mode: 'primary' \| 'subagent' \| 'all', source: 'builtin' \| 'global' \| 'project', path? }[]` (built-ins first; `directory` adds the workspace's agents) |
 | `GET` | `/api/commands?directory=` | `{ name, description, source: 'builtin' \| 'global' \| 'project', agent?, model?, subtask?, path? }[]` |
 | `GET` | `/api/skills?directory=` | `{ id, name, description, path, content, source }[]` (the Settings → Skills tab omits `directory`, so it lists only global skills) |
+| `GET` | `/api/files?directory=` | `string[]` of workspace-relative file paths (recursive, capped at 2000, ignored/build folders excluded) |
 
 Agents are the built-ins (`build`, `plan`, `general`, `explore`) plus Markdown
 files in `~/.sofia/agents`, `<workspace>/.agents/agents` and

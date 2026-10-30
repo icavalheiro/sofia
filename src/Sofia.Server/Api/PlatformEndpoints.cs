@@ -223,6 +223,43 @@ public static class PlatformEndpoints
             .Select(a => new { a.Id, a.Name, a.Description, a.Mode, a.Source, a.Path })));
         api.MapGet("/commands", (string? directory, CommandService commands) => Results.Ok(commands.List(directory)));
         api.MapGet("/skills", (string? directory, SkillService skills) => Results.Ok(skills.List(directory)));
+        api.MapGet("/files", (string? directory) =>
+        {
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return Results.Ok(Array.Empty<string>());
+            var results = new List<string>();
+            var stack = new Stack<string>();
+            stack.Push(directory);
+            while (stack.Count > 0 && results.Count < 2000)
+            {
+                var dir = stack.Pop();
+                IEnumerable<string> files;
+                IEnumerable<string> dirs;
+                try
+                {
+                    files = Directory.EnumerateFiles(dir);
+                    dirs = Directory.EnumerateDirectories(dir);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    continue;
+                }
+                foreach (var f in files)
+                {
+                    if (results.Count >= 2000) break;
+                    var rel = Path.GetRelativePath(directory, f).Replace('\\', '/');
+                    if (!results.Contains(rel, StringComparer.Ordinal)) results.Add(rel);
+                }
+                foreach (var d in dirs)
+                {
+                    if (PathUtil.IgnoredDirs.Contains(Path.GetFileName(d))) continue;
+                    // Skip hidden folders (dot-prefixed) to keep the list focused on project files.
+                    if (Path.GetFileName(d).StartsWith('.')) continue;
+                    stack.Push(d);
+                }
+            }
+            results.Sort(StringComparer.OrdinalIgnoreCase);
+            return Results.Ok(results);
+        });
 
         // --- VCS ------------------------------------------------------------------------
 
