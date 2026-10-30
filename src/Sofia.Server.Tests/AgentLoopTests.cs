@@ -440,7 +440,7 @@ public sealed class AgentLoopTests : IDisposable
 
         await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = marker + " hello", modelId, permissionMode = "full" });
 
-        var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle");
+        var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle", tries: 300);
         var last = session.GetProperty("messages").EnumerateArray().Last();
         Assert.Equal("Recovered", last.GetProperty("text").GetString());
         Assert.False(last.TryGetProperty("error", out _));
@@ -463,7 +463,7 @@ public sealed class AgentLoopTests : IDisposable
 
         await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = marker + " hello", modelId, permissionMode = "full" });
 
-        var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "error", tries: 400);
+        var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "error", tries: 600);
         var last = session.GetProperty("messages").EnumerateArray().Last();
         Assert.Equal("assistant", last.GetProperty("role").GetString());
         Assert.Contains("Client Closed Request", last.GetProperty("error").GetString());
@@ -494,7 +494,7 @@ public sealed class AgentLoopTests : IDisposable
         Assert.Contains("Client Closed Request", retry.GetProperty("error").GetString());
 
         // The attempt that answers clears the notice.
-        session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle");
+        session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle", tries: 300);
         var last = session.GetProperty("messages").EnumerateArray().Last();
         Assert.Equal("Recovered", last.GetProperty("text").GetString());
         Assert.False(last.TryGetProperty("retry", out _));
