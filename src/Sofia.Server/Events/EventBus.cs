@@ -28,6 +28,7 @@ public static class EventTypes
     public const string McpUpdated = "mcp.updated";
     public const string ModelsUpdated = "models.updated";
     public const string BrowserUpdated = "browser.updated";
+    public const string TasksUpdated = "tasks.updated";
 }
 
 public interface IEventBus

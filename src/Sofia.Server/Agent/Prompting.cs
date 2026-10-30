@@ -28,15 +28,15 @@ public static class Agents
     public static readonly AgentDefinition[] All =
     [
         new("build", "Build", "Default agent: reads, edits, runs commands and delegates to subagents.", "primary",
-            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "question", "task", "skill", "notes", "memory", "sofia_info"], true, null),
+            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "question", "task", "skill", "notes", "memory", "tasks", "sofia_info"], true, null),
         new("plan", "Plan", "Research-only: explores with read-only tools and proposes a plan without changing files.", "primary",
-            ["read", "grep", "find", "ls", "web_fetch", "web_search", "question", "task:explore", "skill", "notes", "memory", "sofia_info"], true,
+            ["read", "grep", "find", "ls", "web_fetch", "web_search", "question", "task:explore", "skill", "notes", "memory", "tasks", "sofia_info"], true,
             "You are in PLAN mode. Investigate with read-only tools, then present a concrete, step-by-step plan. Do not modify files or run commands that change state."),
         new("general", "General", "Subagent for multi-step tasks that may edit files and run commands.", "subagent",
-            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "skill", "notes", "memory", "sofia_info"], true,
+            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "skill", "notes", "memory", "tasks", "sofia_info"], true,
             "You are a subagent. Complete the task autonomously, then reply with a concise report of what you did and found. The user cannot answer questions."),
         new("explore", "Explore", "Read-only subagent for fast codebase research.", "subagent",
-            ["read", "grep", "find", "ls", "web_fetch", "web_search", "skill", "notes", "memory", "sofia_info"], false,
+            ["read", "grep", "find", "ls", "web_fetch", "web_search", "skill", "notes", "memory", "tasks", "sofia_info"], false,
             "You are a read-only research subagent. Search and read efficiently, then reply with a concise, factual report including file paths and line references. The user cannot answer questions."),
     ];
 
@@ -116,6 +116,8 @@ public static class SystemPromptBuilder
             sb.AppendLine("- Use `notes` to keep what must outlive the context window: scope `chat` for this conversation's progress and findings (check it after a compaction), scope `workspace` for durable project facts. Never store secrets.");
         if (tools.Any(t => t.Name == "memory"))
             sb.AppendLine("- Use `memory` as a per-workspace key/value store shared by every chat: `list` the keys, `get` a value, `set` a key (an empty value deletes it). It is not shown in this prompt, so list it when earlier facts may matter. Never store secrets.");
+        if (tools.Any(t => t.Name is "tasks" or "task_list" or "todo"))
+            sb.AppendLine("- Use `tasks` to plan multi-step work: create a task list before starting, mark items in_progress as you work and completed when done, and make sure every task is finished (or explicitly skipped) before you finish. Never leave the list with unfinished items you forgot about.");
         if (tools.Any(t => t.Name == "browser"))
             sb.AppendLine("- The `browser` tool is a headless browser the user watches live in the Sofia UI. Read the snapshot before acting, use refs from the latest snapshot only, and if a page needs a login, captcha or other personal input, ask the user to do it in the browser panel instead of guessing.");
         sb.AppendLine("- Be concise. Show file paths clearly. Format replies in Markdown.");

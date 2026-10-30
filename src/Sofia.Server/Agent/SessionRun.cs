@@ -72,6 +72,7 @@ public sealed class SessionRun : IToolHost
     private readonly TurnClock _turn = new();
     private bool _finished;
     private Message? _current;
+    private bool _askedAboutUnfinished;
     private DateTime _lastProgressPublish = DateTime.MinValue;
 
     public SessionRun(RunServices services, AgentService agents, Session session, Workspace workspace, SessionRun? root, CancellationToken parent)
@@ -169,6 +170,7 @@ public sealed class SessionRun : IToolHost
                 {
                     // A new turn: re-read the live facts once (frozen prompt reused, changes become context notes).
                     _turnPrompt = null;
+                    _askedAboutUnfinished = false;
                     var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), ct);
                     AddUserMessage(next, contextNotes: notes);
                     // Only after the message is persisted: a crash replays the change once more instead of losing it.
@@ -423,6 +425,25 @@ public sealed class SessionRun : IToolHost
                 {
                     lock (assistant) assistant.Error ??= "The reply was cut off at the output token limit.";
                     _s.Store.UpdateMessage(Session, assistant);
+                }
+
+                // If the model stopped with unfinished tasks still on its list, ask it to either finish them or
+                // explain why they are skipped, so nothing is silently forgotten.
+                if (!_askedAboutUnfinished)
+                {
+                    var unfinished = _s.Db.Tasks.Find(t => t.SessionId == Session.Id
+                        && t.Status != TaskItemStatus.Completed && t.Status != TaskItemStatus.Cancelled).ToList();
+                    if (unfinished.Count > 0)
+                    {
+                        _askedAboutUnfinished = true;
+                        var lines = unfinished.Select(t => $"- ({t.Id}) {t.Title} [{t.Status}]");
+                        _s.Store.AddMessage(Session, new Message
+                        {
+                            Role = "user",
+                            Text = $"Your task list still has {unfinished.Count} unfinished item(s):\n{string.Join("\n", lines)}\n\nBefore you finish, either complete (or cancel) each of them and update the list, or explain clearly why they are left open.",
+                        });
+                        continue;
+                    }
                 }
                 return;
             }

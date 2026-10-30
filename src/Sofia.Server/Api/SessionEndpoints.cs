@@ -118,6 +118,7 @@ public static class SessionEndpoints
             db.Workspaces.Delete(id);
             db.Knowledge.DeleteMany(k => k.Scope == KnowledgeScope.Workspace && k.WorkspaceId == id);
             db.DeleteWorkspaceMemory(id);
+            db.DeleteWorkspaceTasks(id);
             db.Compact();
             bus.Publish(Events.EventTypes.WorkspaceDeleted, new { id }, workspaceId: id);
             return Results.NoContent();
@@ -271,6 +272,9 @@ public static class SessionEndpoints
             store.SaveSession(session);
             return Results.Ok(session);
         });
+
+        api.MapGet("/sessions/{id}/tasks", (string id, SofiaDb db) =>
+            Results.Ok(db.Tasks.Find(t => t.SessionId == id).OrderBy(t => t.Order).ThenBy(t => t.CreatedAt).ToList()));
 
         api.MapGet("/sessions/{id}/export", (string id, AgentService agents, SofiaDb db) =>
         {

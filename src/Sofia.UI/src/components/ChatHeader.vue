@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useHarness } from '@/composables/useHarness'
@@ -10,8 +10,8 @@ import { LANGUAGES } from '@/types'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import SessionPopover from '@/components/SessionPopover.vue'
 
-defineProps<{ panelOpen: boolean; browserOpen: boolean }>()
-const emit = defineEmits<{ (e: 'togglePanel'): void; (e: 'toggleBrowser'): void }>()
+const props = defineProps<{ panelOpen: boolean; browserOpen: boolean; tasksOpen?: boolean }>()
+const emit = defineEmits<{ (e: 'togglePanel'): void; (e: 'toggleBrowser'): void; (e: 'toggleTasks'): void }>()
 
 const { activeWorkspace, activeConversation } = useHarness()
 const { settings } = useSettings()
@@ -137,6 +137,17 @@ onBeforeUnmount(() => {
         @click="playSound('click'); emit('toggleBrowser')"
       >
         <SofiaIcon name="globe" :size="'1rem'" />
+      </button>
+
+      <button
+        class="panel-toggle"
+        :class="{ 'panel-toggle--active': props.tasksOpen }"
+        type="button"
+        :title="'Tasks'"
+        :aria-label="'Tasks'"
+        @click="playSound('click'); emit('toggleTasks')"
+      >
+        <SofiaIcon name="list" :size="'1rem'" />
       </button>
 
       <button

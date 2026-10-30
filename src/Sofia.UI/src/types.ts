@@ -164,6 +164,15 @@ export interface KnowledgeEntryDto
   deleted?: boolean;
 }
 
+export interface TaskDto
+{
+  id: string;
+  title: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SessionDto extends ConversationSummaryDto
 {
   modelId: string;

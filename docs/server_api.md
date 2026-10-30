@@ -56,6 +56,7 @@ interface SofiaEvent {
 | `models.updated` | `{}` | Re-fetch `/api/models` and `/api/providers` |
 | `config.changed` | `{ scope: 'global' \| 'project', directory }` | Command / prompt / skill / agent Markdown or `AGENTS.md` / `CLAUDE.md` changed on disk (debounced per root, ≈400ms). `directory` is the harness home (`~/.sofia`) for `global` or the workspace folder for `project`; re-fetch `/api/commands`, `/api/agents` and — for `global` — `/api/skills` |
 | `browser.updated` | `{ open: boolean, agent: boolean, url?: string }` (`sessionId` = root conversation) | The conversation's headless browser opened/closed, or the agent used it (`agent: true`: the UI opens the browser panel) |
+| `tasks.updated` | `{ sessionId, tasks: TaskDto[] }` | The conversation's task list changed (managed by the `tasks` tool) |
 
 `SessionStatus = 'idle' | 'working' | 'waiting' (queued behind another conversation for a single-client model; clients show no spinner) | 'permission' | 'question' | 'error'`.
 
@@ -181,6 +182,14 @@ interface KnowledgeEntryDto {
   deleted?: boolean       // the user removed the note after it was announced
 }
 
+interface TaskDto {
+  id: string
+  title: string
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  createdAt: string
+  updatedAt: string
+}
+
 interface MetricsDto {
   durationMs: number      // clock of the request in flight (0 between runs)
   lastTurnMs: number      // what the last finished request took (user-waiting time excluded)
@@ -231,6 +240,7 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `GET` | `/api/sessions/{id}/diff` | – | `FileDiffDto[]` (files changed by this session; the ones Git ignores through `.gitignore` are left out — their snapshots stay, so reverting still restores them) |
 | `POST` | `/api/sessions/{id}/skills` | `{ skillId }` | `SessionDto` |
 | `DELETE` | `/api/sessions/{id}/skills/{skillId}` | – | `SessionDto` |
+| `GET` | `/api/sessions/{id}/tasks` | – | `TaskDto[]` (the conversation's task list, managed by the `tasks` tool) |
 | `GET` | `/api/sessions/{id}/export` | – | `{ version: 1, info: SessionDto, messages: MessageDto[] }` |
 | `POST` | `/api/sessions/import` | `{ workspaceId?, info, messages }` | `SessionDto` |
 | `GET` | `/api/stats` | – | `{ sessions, prompts, steps, tokens: { input, output }, cost, activeDays, streak }` |

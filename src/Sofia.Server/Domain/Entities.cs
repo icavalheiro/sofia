@@ -198,6 +198,28 @@ public sealed class MemoryEntry
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
+public static class TaskItemStatus
+{
+    public const string Pending = "pending";
+    public const string InProgress = "in_progress";
+    public const string Completed = "completed";
+    public const string Cancelled = "cancelled";
+}
+
+/// <summary>One entry of a session's task list (agent planning aid).</summary>
+public sealed class TaskItem
+{
+    [BsonId] public string Id { get; set; } = Infrastructure.Ids.New("tsk");
+    public string SessionId { get; set; } = "";
+    public string WorkspaceId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Status { get; set; } = TaskItemStatus.Pending;
+    /// <summary>Insertion order within the session's task list.</summary>
+    public int Order { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public static class KnowledgeScope
 {
     /// <summary>Facts about one workspace (project conventions, commands, decisions).</summary>

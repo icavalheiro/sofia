@@ -44,8 +44,10 @@ public sealed class SofiaDb : IDisposable
         Catalog = _db.GetCollection<CatalogCache>("catalog");
 
         Memory = _db.GetCollection<MemoryEntry>("memory");
+        Tasks = _db.GetCollection<TaskItem>("tasks");
 
         Memory.EnsureIndex(x => x.WorkspaceId);
+        Tasks.EnsureIndex(x => x.SessionId);
         Knowledge.EnsureIndex(x => x.WorkspaceId);
         Knowledge.EnsureIndex(x => x.Agent);
         Sessions.EnsureIndex(x => x.WorkspaceId);
@@ -69,6 +71,7 @@ public sealed class SofiaDb : IDisposable
     public ILiteCollection<KnowledgeNote> Knowledge { get; }
     public ILiteCollection<CatalogCache> Catalog { get; }
     public ILiteCollection<MemoryEntry> Memory { get; }
+    public ILiteCollection<TaskItem> Tasks { get; }
 
     /// <summary>Global monotonic message sequence (order inside a session follows it).</summary>
     public long NextSeq()
@@ -85,6 +88,9 @@ public sealed class SofiaDb : IDisposable
 
     /// <summary>Removes every `memory` entry of a workspace; call it when the workspace is deleted.</summary>
     public int DeleteWorkspaceMemory(string workspaceId) => Memory.DeleteMany(m => m.WorkspaceId == workspaceId);
+
+    /// <summary>Removes every `task` entry of a workspace; call it when the workspace is deleted.</summary>
+    public int DeleteWorkspaceTasks(string workspaceId) => Tasks.DeleteMany(t => t.WorkspaceId == workspaceId);
 
     public void DeleteSession(string sessionId)
     {
@@ -118,6 +124,7 @@ public sealed class SofiaDb : IDisposable
         }
         Snapshots.DeleteMany(s => s.SessionId == sessionId);
         Knowledge.DeleteMany(k => k.Scope == KnowledgeScope.Chat && k.SessionId == sessionId);
+        Tasks.DeleteMany(t => t.SessionId == sessionId);
         Sessions.Delete(sessionId);
     }
 
