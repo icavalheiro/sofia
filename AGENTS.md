@@ -37,8 +37,10 @@ installer remains future work.
   local discovery of Unsloth (`:8888`), Ollama (`:11434`), LM Studio (`:1234`),
   llama.cpp (`:8080`), vLLM (`:8000`); cloud keys from env or Settings.
 - Desktop: `src/Sofia.Desktop` (Avalonia 12 + XAML, net10.0) native shell that
-  launches `Sofia.Server` as a child process and renders the web UI in a
-  platform-native WebView (`Avalonia.Controls.WebView`). Run with
+  launches `Sofia.Server` as a child process (or, if one is already running on
+  port 5199, connects to it as an external, permanent service it does not own
+  or stop) and renders the web UI in a platform-native WebView
+  (`Avalonia.Controls.WebView`). Run with
   `dotnet run --project src/Sofia.Desktop`. Prerequisites: OS WebView runtime
   (WebView2 on Windows, WebKitGTK on Linux, WKWebView on macOS).
 - UI: Vue 3.5 + Vite + TypeScript, Mantine Vue (`@mantine-vue/core`),

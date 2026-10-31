@@ -139,7 +139,8 @@ cd src/Sofia.UI && npm run typecheck
 A native desktop shell (`src/Sofia.Desktop`) wraps the server and renders the web
 UI in the OS native WebView (WebView2 on Windows, WebKitGTK on Linux, WKWebView
 on macOS). It launches the published `Sofia.Server` binary as a child process
-(or reuses one already answering on port 5199) and owns its lifecycle.
+(or, if one is already answering on port 5199, connects to it as an external,
+permanent service that it does not own or stop).
 
 ### Prerequisites
 
@@ -162,10 +163,11 @@ cd src/Sofia.UI && npm run build
 dotnet run --project src/Sofia.Desktop
 ```
 
-The shell probes `http://127.0.0.1:5199/api/health`: if healthy it reuses that
-server, otherwise it launches the resolved `Sofia.Server` binary. Set
-`SOFIA_SERVER_PATH` to override server discovery (useful in dev when the binary
-cannot be located automatically).
+The shell probes `http://127.0.0.1:5199/api/health`: if healthy it connects to
+that server as an external, permanent service (it never owns or stops it),
+otherwise it launches the resolved `Sofia.Server` binary and owns its lifecycle.
+Set `SOFIA_SERVER_PATH` to override server discovery (useful in dev when the
+binary cannot be located automatically).
 
 ### Build a distributable desktop app
 

@@ -12,6 +12,7 @@ public partial class MainWindow : Window
     private readonly ServerProcess _server = new();
     private CancellationTokenSource? _cts;
     private bool _ownsServer;
+    private bool _externalServer;
 
     public MainWindow()
     {
@@ -31,7 +32,8 @@ public partial class MainWindow : Window
             Console.WriteLine("[sofia.desktop] Starting server…");
             await _server.StartAsync(_cts.Token);
             _ownsServer = _server.IsOwned;
-            var status = _server.Status == "reused" ? "Reusing running server…" : "Server ready. Loading UI…";
+            _externalServer = _server.IsExternal;
+            var status = _externalServer ? "Connected to running server…" : "Server ready. Loading UI…";
             Console.WriteLine("[sofia.desktop] " + status);
             SetStatus(status);
             WebView.IsVisible = true;
@@ -60,8 +62,9 @@ public partial class MainWindow : Window
     private void Shutdown()
     {
         try { _cts?.Cancel(); } catch { }
-        if (_ownsServer) _server.Stop();
-        _server.Dispose();
+        // An externally running server is a permanent service: never stop or dispose it.
+        if (_ownsServer && !_externalServer) _server.Stop();
+        if (_ownsServer && !_externalServer) _server.Dispose();
     }
 
     private void SetStatus(string text) => StatusText.Text = text;

@@ -10,6 +10,11 @@ public sealed class ServerProcess : IDisposable
     public const string BaseUrl = "http://127.0.0.1:5199";
 
     public bool IsOwned { get; private set; }
+    /// <summary>
+    /// True when the server was already running (and is treated as an external, permanent
+    /// service): the desktop only connects to it and never owns or stops it.
+    /// </summary>
+    public bool IsExternal { get; private set; }
     public string Status { get; private set; } = "idle";
     public string? ExecutablePath { get; private set; }
 
@@ -20,12 +25,32 @@ public sealed class ServerProcess : IDisposable
 
     public async Task StartAsync(CancellationToken ct = default)
     {
-        // Reuse an already-healthy server (no child process, no LiteDB lock collision).
+        // Reset ownership for this attempt; an already-running server is an external service.
+        IsOwned = false;
+        IsExternal = false;
+
+        // If we already started a (still alive) server in this instance, keep owning it
+        // instead of reclassifying it as external on a retry.
+        if (_process is not null && !_process.HasExited)
+        {
+            if (await ProbeHealthAsync(ct))
+            {
+                Status = "started";
+                IsOwned = true;
+                IsExternal = false;
+                Console.WriteLine("[sofia.desktop] Reusing our own Sofia.Server on " + BaseUrl);
+                return;
+            }
+        }
+
+        // Reuse an already-healthy server: treat it as a permanent external service.
+        // The desktop does not own it and must never stop it.
         if (await ProbeHealthAsync(ct))
         {
-            Status = "reused";
+            Status = "external";
             IsOwned = false;
-            Console.WriteLine("[sofia.desktop] Reusing an already-healthy Sofia.Server on " + BaseUrl);
+            IsExternal = true;
+            Console.WriteLine("[sofia.desktop] Connecting to an already-running Sofia.Server service on " + BaseUrl);
             return;
         }
 
@@ -60,6 +85,7 @@ public sealed class ServerProcess : IDisposable
         _process.BeginErrorReadLine();
         AssignToJob(_process);
         IsOwned = true;
+        IsExternal = false;
 
         var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline)
@@ -74,6 +100,8 @@ public sealed class ServerProcess : IDisposable
             if (await ProbeHealthAsync(CancellationToken.None))
             {
                 Status = "started";
+                IsOwned = true;
+                IsExternal = false;
                 Console.WriteLine("[sofia.desktop] Sofia.Server is healthy on " + BaseUrl);
                 return;
             }
@@ -85,7 +113,8 @@ public sealed class ServerProcess : IDisposable
 
     public void Stop()
     {
-        if (!IsOwned || _process is null) return;
+        // Never stop an external/permanent service we do not own.
+        if (IsExternal || !IsOwned || _process is null) return;
         try
         {
             if (!_process.HasExited)
@@ -98,6 +127,7 @@ public sealed class ServerProcess : IDisposable
         finally
         {
             IsOwned = false;
+            IsExternal = false;
             Status = "stopped";
         }
     }
@@ -123,6 +153,7 @@ public sealed class ServerProcess : IDisposable
         if (_disposed) return;
         _disposed = true;
         Stop();
+        IsExternal = false;
         try { _process?.Dispose(); } catch { }
         try { _log?.Dispose(); } catch { }
         if (_jobHandle != IntPtr.Zero)
