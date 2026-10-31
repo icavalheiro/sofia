@@ -7,11 +7,13 @@ namespace Sofia.Server.Data;
 /// <summary>LiteDB store. One shared instance; LiteDB serializes access internally.</summary>
 public sealed class SofiaDb : IDisposable
 {
-    private readonly LiteDatabase _db;
+    private readonly ConnectionString _connection;
     private readonly string? _compactMarker;
     private readonly ILogger<SofiaDb>? _log;
+    private LiteDatabase _db = null!;
     private long _seq;
     private readonly object _seqGate = new();
+    private DateTime _lastCompactUtc = DateTime.MinValue;
 
     public SofiaDb(SofiaOptions options, ILogger<SofiaDb>? log = null)
         : this(new ConnectionString { Filename = options.DbPath, Connection = ConnectionType.Direct }, log)
@@ -21,10 +23,16 @@ public sealed class SofiaDb : IDisposable
     public SofiaDb(ConnectionString connection, ILogger<SofiaDb>? log = null)
     {
         _log = log;
+        _connection = connection;
         _compactMarker = string.IsNullOrEmpty(connection.Filename) || connection.Filename == ":memory:" || connection.Filename == ":temp:"
             ? null
             : connection.Filename + ".compact";
         RebuildIfFlagged(_compactMarker, connection);
+        Open(connection);
+    }
+
+    private void Open(ConnectionString connection)
+    {
         var mapper = new BsonMapper { SerializeNullValues = false };
         mapper.TrimWhitespace = false;
         mapper.EmptyStringToNull = false;
@@ -59,19 +67,19 @@ public sealed class SofiaDb : IDisposable
         _seq = Messages.Count() == 0 ? 0 : Messages.Max(x => x.Seq);
     }
 
-    public ILiteCollection<Workspace> Workspaces { get; }
-    public ILiteCollection<Session> Sessions { get; }
-    public ILiteCollection<Message> Messages { get; }
-    public ILiteCollection<ProviderConfig> Providers { get; }
-    public ILiteCollection<McpServerConfig> McpServers { get; }
-    public ILiteCollection<FileSnapshot> Snapshots { get; }
-    public ILiteCollection<Attachment> Attachments { get; }
-    public ILiteCollection<AccessToken> Tokens { get; }
-    public ILiteCollection<ServerConfig> Config { get; }
-    public ILiteCollection<KnowledgeNote> Knowledge { get; }
-    public ILiteCollection<CatalogCache> Catalog { get; }
-    public ILiteCollection<MemoryEntry> Memory { get; }
-    public ILiteCollection<TaskItem> Tasks { get; }
+    public ILiteCollection<Workspace> Workspaces { get; private set; } = default!;
+    public ILiteCollection<Session> Sessions { get; private set; } = default!;
+    public ILiteCollection<Message> Messages { get; private set; } = default!;
+    public ILiteCollection<ProviderConfig> Providers { get; private set; } = default!;
+    public ILiteCollection<McpServerConfig> McpServers { get; private set; } = default!;
+    public ILiteCollection<FileSnapshot> Snapshots { get; private set; } = default!;
+    public ILiteCollection<Attachment> Attachments { get; private set; } = default!;
+    public ILiteCollection<AccessToken> Tokens { get; private set; } = default!;
+    public ILiteCollection<ServerConfig> Config { get; private set; } = default!;
+    public ILiteCollection<KnowledgeNote> Knowledge { get; private set; } = default!;
+    public ILiteCollection<CatalogCache> Catalog { get; private set; } = default!;
+    public ILiteCollection<MemoryEntry> Memory { get; private set; } = default!;
+    public ILiteCollection<TaskItem> Tasks { get; private set; } = default!;
 
     /// <summary>Global monotonic message sequence (order inside a session follows it).</summary>
     public long NextSeq()
@@ -129,29 +137,72 @@ public sealed class SofiaDb : IDisposable
     }
 
     /// <summary>
-    /// LiteDB reuses freed pages but never shrinks the file. Rebuild closes and reopens the engine, which breaks every
-    /// concurrent reader/writer ("engine instance already disposed"), so it is never run online: this only flags the
-    /// file and the next startup rebuilds it before anything else touches it.
+    /// LiteDB reuses freed pages but never shrinks the file on its own. Rebuild rewrites the file without the
+    /// freed pages, so the on-disk size drops immediately. We try to do it online on the live instance; if that
+    /// fails (concurrent access, in-memory database, ...) we fall back to flagging the file so the next startup
+    /// rebuilds it before anything else touches it.
     /// </summary>
     public void Compact()
     {
+        // Debounce: a burst of deletes (e.g. "delete all archived") must not rebuild the whole file N times.
+        if ((DateTime.UtcNow - _lastCompactUtc).TotalSeconds < 10)
+        {
+            try { if (_compactMarker is not null) File.WriteAllText(_compactMarker, ""); } catch { }
+            return;
+        }
+
+        try { _db.Checkpoint(); } catch { /* best effort */ }
+
+        // In-memory / temp databases cannot be rebuilt online.
+        if (_compactMarker is not null)
+        {
+            try
+            {
+                _db.Rebuild();
+                try { if (File.Exists(_compactMarker)) File.Delete(_compactMarker); } catch { }
+                _lastCompactUtc = DateTime.UtcNow;
+                return;
+            }
+            catch (Exception ex)
+            {
+                _log?.LogWarning(ex, "Online database rebuild failed; will retry on next startup");
+                // Rebuild may have disposed the engine; reopen so the instance stays usable.
+                try { _db.Dispose(); } catch { }
+                try { Open(_connection); } catch (Exception reopenEx) { _log?.LogError(reopenEx, "Failed to reopen database after rebuild failure"); }
+            }
+        }
+
         try
         {
-            _db.Checkpoint();
             if (_compactMarker is not null) File.WriteAllText(_compactMarker, "");
         }
-        catch (Exception) { /* best effort: a failed shrink must not fail the delete */ }
+        catch { /* best effort: a failed shrink must not fail the delete */ }
     }
 
     private static void RebuildIfFlagged(string? marker, ConnectionString connection)
     {
-        if (marker is null || !File.Exists(marker)) return;
+        if (marker is null || string.IsNullOrEmpty(connection.Filename)) return;
+        bool shouldRebuild = File.Exists(marker);
+        // One-shot reclaim of free pages left by older versions (or by deleting conversations before this
+        // version existed): if the file is large and we have never auto-compacted it, rebuild on startup.
+        var autoMarker = connection.Filename + ".autocompact";
+        if (!shouldRebuild && !File.Exists(autoMarker))
+        {
+            try
+            {
+                if (File.Exists(connection.Filename) && new FileInfo(connection.Filename).Length > 100L * 1024 * 1024)
+                    shouldRebuild = true;
+            }
+            catch { /* ignore */ }
+        }
+        if (!shouldRebuild) return;
         try
         {
             using (var db = new LiteDatabase(connection)) db.Rebuild();
         }
         catch (Exception) { /* keep the data as is */ }
-        try { File.Delete(marker); } catch (IOException) { }
+        try { if (File.Exists(marker)) File.Delete(marker); } catch (IOException) { }
+        try { if (!File.Exists(autoMarker)) File.WriteAllText(autoMarker, ""); } catch (IOException) { }
     }
 
     public void Dispose() => _db.Dispose();
