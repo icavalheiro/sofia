@@ -137,28 +137,46 @@ cd src/Sofia.UI && npm run typecheck
 ## Desktop app
 
 A native desktop shell (`src/Sofia.Desktop`) wraps the server and renders the web
-UI in the OS native WebView. It launches the published `Sofia.Server` binary as
-a child process (or reuses one already answering on port 5199) and owns its
-lifecycle.
+UI in the OS native WebView (WebView2 on Windows, WebKitGTK on Linux, WKWebView
+on macOS). It launches the published `Sofia.Server` binary as a child process
+(or reuses one already answering on port 5199) and owns its lifecycle.
 
-Prerequisites:
+### Prerequisites
 
-- .NET 10 SDK (to build).
-- The UI built (`cd src/Sofia.UI && npm run build`) so the server serves `wwwroot`,
-  or run the Vite dev server.
-- OS WebView runtime: WebView2 on Windows (preinstalled on Windows 10 1803+ with
-  Edge), WebKitGTK (`libwebkit2gtk-4.1`) on Linux, WKWebView built into macOS.
+- **.NET 10 SDK** (to build).
+- **OS WebView runtime**:
+  - Windows: WebView2 (preinstalled on Windows 10 1803+ with Edge).
+  - Linux: WebKitGTK (`sudo apt install libwebkit2gtk-4.1-dev`).
+  - macOS: WKWebView (built-in).
 
-Run:
+### Run from source
 
 ```bash
+# Build the web UI first (so the server serves wwwroot)
+cd src/Sofia.UI && npm run build
+
+# Or run the Vite dev server in a separate terminal:
+# cd src/Sofia.UI && npm run dev
+
+# Run the desktop app
 dotnet run --project src/Sofia.Desktop
 ```
 
-The shell probes `http://127.0.0.1:5199/api/health`; if healthy it reuses that
-server, otherwise it launches the resolved `Sofia.Server` binary
-(`SOFIA_SERVER_PATH` overrides discovery). Set `SOFIA_SERVER_PATH` if the binary
-cannot be located in dev.
+The shell probes `http://127.0.0.1:5199/api/health`: if healthy it reuses that
+server, otherwise it launches the resolved `Sofia.Server` binary. Set
+`SOFIA_SERVER_PATH` to override server discovery (useful in dev when the binary
+cannot be located automatically).
+
+### Build a distributable desktop app
+
+```bash
+# Publish for your platform
+dotnet publish src/Sofia.Desktop -c Release -r win-x64 --self-contained true -o out-desktop
+# Linux: use -r linux-x64, macOS Apple Silicon: -r osx-arm64, macOS Intel: -r osx-x64
+
+# Run the published binary
+./out-desktop/Sofia.Desktop
+```
 
 ## Layout
 
