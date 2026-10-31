@@ -11,7 +11,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RootNamespace>Sofia.Desktop</RootNamespace>
     <AssemblyName>Sofia.Desktop</AssemblyName>
-    <Version>0.5.2</Version>
+    <Version>0.5.3</Version>
     <ApplicationIcon>Assets\sofia.ico</ApplicationIcon>
   </PropertyGroup>
 
