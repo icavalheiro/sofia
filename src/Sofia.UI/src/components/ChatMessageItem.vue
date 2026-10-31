@@ -1795,6 +1795,14 @@ button.compact-notice {
   margin-bottom: 0.5rem;
 }
 
+.msg--user .img-gallery {
+  margin-bottom: 0.75rem;
+}
+
+.msg--user .knowledge-card {
+  margin-top: 0.5rem;
+}
+
 .img-item {
   margin: 0;
   max-width: 240px;
@@ -2473,6 +2481,10 @@ button.compact-notice {
   flex-wrap: wrap;
   gap: 0.4rem;
   margin-bottom: 0.5rem;
+}
+
+.msg--user .attachments {
+  margin-bottom: 0.75rem;
 }
 
 .attach-chip {

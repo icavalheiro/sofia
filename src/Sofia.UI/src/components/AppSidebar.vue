@@ -1117,6 +1117,7 @@ useShortcut('session.next', () => stepSession(1))
 }
 
 .conv-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -1203,14 +1204,25 @@ useShortcut('session.next', () => stepSession(1))
 }
 
 /* --- hover action pill on conversation rows ------------------------------- */
-/* The actions pill sits at the far right; it appears on hover (or keyboard
-   focus inside) over the empty trail, so the row never shifts. */
+/* The actions pill floats above the row on hover/focus so it never truncates
+   the title. It overlays the empty trail area, so the row never shifts. */
 .conv-trail {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
   display: inline-grid;
   align-items: center;
   justify-items: end;
-  flex-shrink: 0;
-  margin-left: auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.conv-row:hover .conv-trail,
+.conv-row:focus-within .conv-trail {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .conv-actions {
