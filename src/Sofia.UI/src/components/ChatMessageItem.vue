@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 
-import logoUrl from '@/assets/logo.png'
+import logoUrl from '@/assets/logo_31.png'
 import MarkdownText from '@/components/MarkdownText.vue'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import { useHarness } from '@/composables/useHarness'

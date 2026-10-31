@@ -25,6 +25,7 @@ public sealed class ServerProcess : IDisposable
         {
             Status = "reused";
             IsOwned = false;
+            Console.WriteLine("[sofia.desktop] Reusing an already-healthy Sofia.Server on " + BaseUrl);
             return;
         }
 
@@ -32,6 +33,7 @@ public sealed class ServerProcess : IDisposable
         if (ExecutablePath is null)
             throw new FileNotFoundException(
                 "Sofia.Server binary not found. Build the server project or set SOFIA_SERVER_PATH.");
+        Console.WriteLine("[sofia.desktop] Starting Sofia.Server: " + ExecutablePath);
 
         var logDir = Path.Combine(SofiaOptions.DefaultDataDir(), "logs");
         Directory.CreateDirectory(logDir);
@@ -48,6 +50,7 @@ public sealed class ServerProcess : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        psi.Environment["SOFIA_URLS"] = BaseUrl;
 
         _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _process.OutputDataReceived += (_, e) => { if (e.Data is not null) _log?.WriteLine(e.Data); };
@@ -63,15 +66,20 @@ public sealed class ServerProcess : IDisposable
         {
             ct.ThrowIfCancellationRequested();
             if (_process.HasExited)
+            {
+                Console.WriteLine("[sofia.desktop] Sofia.Server exited before becoming healthy (code " + _process.ExitCode + "). See " + logPath);
                 throw new InvalidOperationException(
                     $"Sofia.Server exited before becoming healthy (code {_process.ExitCode}). See {(_log is null ? "logs" : logPath)}.");
+            }
             if (await ProbeHealthAsync(CancellationToken.None))
             {
                 Status = "started";
+                Console.WriteLine("[sofia.desktop] Sofia.Server is healthy on " + BaseUrl);
                 return;
             }
             await Task.Delay(500, ct);
         }
+        Console.WriteLine("[sofia.desktop] Sofia.Server did not become healthy within 30s.");
         throw new TimeoutException("Sofia.Server did not become healthy within 30s.");
     }
 

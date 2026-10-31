@@ -28,12 +28,16 @@ public partial class MainWindow : Window
         ShowError(false);
         try
         {
+            Console.WriteLine("[sofia.desktop] Starting server…");
             await _server.StartAsync(_cts.Token);
             _ownsServer = _server.IsOwned;
-            SetStatus(_server.Status == "reused" ? "Reusing running server…" : "Server ready. Loading UI…");
+            var status = _server.Status == "reused" ? "Reusing running server…" : "Server ready. Loading UI…";
+            Console.WriteLine("[sofia.desktop] " + status);
+            SetStatus(status);
             WebView.IsVisible = true;
             WebView.NavigationCompleted += (_, e) =>
             {
+                Console.WriteLine("[sofia.desktop] WebView navigation completed. Success=" + e.IsSuccess);
                 if (!e.IsSuccess)
                 {
                     ShowError(true);
@@ -41,10 +45,12 @@ public partial class MainWindow : Window
                 }
             };
             ShowLoader(false);
+            Console.WriteLine("[sofia.desktop] Loading UI from " + ServerProcess.BaseUrl);
             WebView.Source = new Uri(ServerProcess.BaseUrl);
         }
         catch (Exception ex)
         {
+            Console.WriteLine("[sofia.desktop] ERROR: " + ex);
             ShowLoader(false);
             ShowError(true);
             ErrorText.Text = ex.Message;

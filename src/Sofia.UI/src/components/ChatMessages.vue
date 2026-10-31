@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import logoUrl from '@/assets/logo.png'
+import logoUrl from '@/assets/logo_128.png'
 import { useHarness } from '@/composables/useHarness'
 import { useI18n } from '@/i18n'
 import ChatMessageItem from '@/components/ChatMessageItem.vue'

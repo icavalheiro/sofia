@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref } from 'vue'
 
-import logoUrl from '@/assets/logo.png'
+import logoUrl from '@/assets/logo_42.png'
 import { useHarness } from '@/composables/useHarness'
 import { useSound } from '@/composables/useSound'
 import { sessionBadge as liveBadge } from '@/composables/useSessionStatus'
