@@ -926,7 +926,7 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
 
 .composer-inner {
   position: relative;
-  max-width: 880px;
+  max-width: 1232px;
   margin: 0 auto;
 }
 

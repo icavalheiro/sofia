@@ -961,7 +961,7 @@ function closeLightbox(): void {
   flex-direction: column;
   align-items: flex-end;
   flex: 0 1 auto;
-  max-width: min(680px, 82%);
+  max-width: min(952px, 82%);
 }
 
 .msg-meta {
@@ -1144,9 +1144,10 @@ function closeLightbox(): void {
   overflow-wrap: anywhere;
 }
 
-/* Keep prose at a readable measure even though the body spans full width. */
+/* Keep prose at a readable measure even though the body spans full width.
+   Widened by 40% (74ch -> 104ch) so markdown tables get more room. */
 .msg--assistant .msg-text {
-  max-width: 74ch;
+  max-width: 104ch;
 }
 
 .msg-text--md {

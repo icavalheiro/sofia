@@ -268,7 +268,7 @@ watch(
 }
 
 .messages-inner {
-  max-width: 880px;
+  max-width: 1232px;
   margin: 0 auto;
   /* Reserve room for the frosted composer that overlays the transcript. The
      height comes from the composer itself, so the gap never grows stale when
