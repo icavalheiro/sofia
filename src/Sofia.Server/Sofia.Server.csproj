@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Sofia.Server</RootNamespace>
     <AssemblyName>Sofia.Server</AssemblyName>
-    <Version>0.5.0</Version>
+    <Version>0.5.1</Version>
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
