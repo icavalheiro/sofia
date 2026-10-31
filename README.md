@@ -97,7 +97,9 @@ volume; put the folders the agent should work on in `./workspaces` (mounted at
 `/workspaces`, override with `SOFIA_WORKSPACES`). Host runtimes such as Ollama
 are reachable at `host.docker.internal` (see `SOFIA_LOCAL_ENDPOINTS` in
 `docker-compose.yml`). Per-platform self-contained builds ship with every
-release tag (see above); a single-click installer / app window remains future
+release tag (see above). A native desktop shell (`src/Sofia.Desktop`) wraps the
+server and renders the web UI in the OS native WebView (WebView2 on Windows,
+WebKit on macOS, WebKitGTK on Linux); a single-click installer remains future
 work.
 
 ## Quickstart
@@ -132,8 +134,35 @@ dotnet test Sofia.slnx
 cd src/Sofia.UI && npm run typecheck
 ```
 
+## Desktop app
+
+A native desktop shell (`src/Sofia.Desktop`) wraps the server and renders the web
+UI in the OS native WebView. It launches the published `Sofia.Server` binary as
+a child process (or reuses one already answering on port 5199) and owns its
+lifecycle.
+
+Prerequisites:
+
+- .NET 10 SDK (to build).
+- The UI built (`cd src/Sofia.UI && npm run build`) so the server serves `wwwroot`,
+  or run the Vite dev server.
+- OS WebView runtime: WebView2 on Windows (preinstalled on Windows 10 1803+ with
+  Edge), WebKitGTK (`libwebkit2gtk-4.1`) on Linux, WKWebView built into macOS.
+
+Run:
+
+```bash
+dotnet run --project src/Sofia.Desktop
+```
+
+The shell probes `http://127.0.0.1:5199/api/health`; if healthy it reuses that
+server, otherwise it launches the resolved `Sofia.Server` binary
+(`SOFIA_SERVER_PATH` overrides discovery). Set `SOFIA_SERVER_PATH` if the binary
+cannot be located in dev.
+
 ## Layout
 
+- `src/Sofia.Desktop/` — Avalonia 12 native shell hosting the web UI in a platform WebView
 - `src/Sofia.Server/` — the harness backend (agent loop, tools, providers, MCP, storage, API)
 - `src/Sofia.Server.Tests/` — xUnit tests, including an in-process agent-loop test
 - `src/Sofia.UI/` — the web interface

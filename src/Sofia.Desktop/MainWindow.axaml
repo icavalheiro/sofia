@@ -1,0 +1,20 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:web="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.WebView"
+        x:Class="Sofia.Desktop.MainWindow"
+        Title="Sofia"
+        Width="1280" Height="800"
+        Icon="/Assets/sofia.ico">
+    <Grid>
+        <web:NativeWebView x:Name="WebView" IsVisible="False" />
+        <StackPanel x:Name="Loader" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+            <TextBlock Text="Sofia" FontSize="32" FontWeight="Bold" HorizontalAlignment="Center" />
+            <ProgressBar IsIndeterminate="True" Width="200" />
+            <TextBlock x:Name="StatusText" Text="Starting server…" HorizontalAlignment="Center" />
+        </StackPanel>
+        <StackPanel x:Name="ErrorPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" IsVisible="False">
+            <TextBlock x:Name="ErrorText" Text="" TextWrapping="Wrap" MaxWidth="480" HorizontalAlignment="Center" />
+            <Button x:Name="RetryButton" Content="Retry" HorizontalAlignment="Center" Click="OnRetryClick" />
+        </StackPanel>
+    </Grid>
+</Window>

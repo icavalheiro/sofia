@@ -12,8 +12,10 @@ steer/follow-up, compaction), extended with workspaces, permission modes,
 questions, parallel subagents, MCP, change tracking/revert, local runtime
 auto-discovery and OpenAI/Anthropic compatibility.
 Per-platform self-contained `.zip` releases (win-x64, linux-x64, osx-arm64,
-osx-x64) are built by `.github/workflows/release.yml` on `v*` tags; a
-single-click desktop installer / app window is still out of scope.
+osx-x64) are built by `.github/workflows/release.yml` on `v*` tags; a native
+desktop shell (`src/Sofia.Desktop`, Avalonia 12) now exists (embeds the server
+as a child process and renders the UI in the OS native WebView). A single-click
+installer remains future work.
 
 - API contract: `docs/server_api.md` (keep it in sync with both sides).
 - Server architecture: `docs/project_init.md`.
@@ -34,6 +36,11 @@ single-click desktop installer / app window is still out of scope.
 - Providers: OpenAI Chat Completions + Anthropic Messages streaming clients;
   local discovery of Unsloth (`:8888`), Ollama (`:11434`), LM Studio (`:1234`),
   llama.cpp (`:8080`), vLLM (`:8000`); cloud keys from env or Settings.
+- Desktop: `src/Sofia.Desktop` (Avalonia 12 + XAML, net10.0) native shell that
+  launches `Sofia.Server` as a child process and renders the web UI in a
+  platform-native WebView (`Avalonia.Controls.WebView`). Run with
+  `dotnet run --project src/Sofia.Desktop`. Prerequisites: OS WebView runtime
+  (WebView2 on Windows, WebKitGTK on Linux, WKWebView on macOS).
 - UI: Vue 3.5 + Vite + TypeScript, Mantine Vue (`@mantine-vue/core`),
   `@microsoft/signalr`. Backend client in `src/Sofia.UI/src/services/sofia.ts`,
   shared shapes in `src/Sofia.UI/src/types.ts`, store in
@@ -54,6 +61,7 @@ single-click desktop installer / app window is still out of scope.
 dotnet build Sofia.slnx
 dotnet test Sofia.slnx
 dotnet run --project src/Sofia.Server     # http://127.0.0.1:5199, serves src/Sofia.UI/dist when built
+dotnet run --project src/Sofia.Desktop    # native desktop shell (Avalonia + WebView) wrapping the server
 dotnet publish src/Sofia.Server -c Release -o out   # also builds Sofia.UI into out/wwwroot (-p:BuildUiOnPublish=false to skip)
 dotnet publish src/Sofia.Server -c Release -r win-x64 --self-contained true -p:InvariantGlobalization=true -o out   # per-platform release build (RIDs: win-x64, linux-x64, osx-arm64, osx-x64)
 
