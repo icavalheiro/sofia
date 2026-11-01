@@ -288,6 +288,47 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         }
     }
 
+    /// <summary>Regenerates the next assistant step from the current history without adding a user turn.</summary>
+    public string Continue(string sessionId)
+    {
+        var (session, workspace) = Load(sessionId);
+        if (IsActive(sessionId)) throw new ConflictException("Stop the running reply before continuing.");
+        var prompt = PendingPrompt.Continue();
+        lock (_gate)
+        {
+            StartRun(session, workspace, prompt);
+        }
+        return prompt.MessageId;
+    }
+
+    /// <summary>
+    /// Retries the exact message the user clicked: for a user message it is removed and re-sent; for an assistant
+    /// (LLM) message the reply is regenerated from the history up to that point. Files are restored either way.
+    /// </summary>
+    public string Retry(string sessionId, string messageId)
+    {
+        var (session, _) = Load(sessionId);
+        if (IsActive(sessionId)) throw new ConflictException("Stop the running reply before retrying.");
+        var target = Db.Messages.FindById(messageId);
+        if (target is null || target.SessionId != sessionId) throw new NotFoundException("Message not found in this session.");
+
+        Revert(sessionId, messageId);
+
+        if (target.Role == "user")
+        {
+            var attachments = target.Attachments?.Select(a => a.Id).ToList();
+            return Prompt(sessionId, new PromptInput(target.Text, attachments, Delivery: "prompt"));
+        }
+
+        var (session2, workspace2) = Load(sessionId);
+        var prompt = PendingPrompt.Continue();
+        lock (_gate)
+        {
+            StartRun(session2, workspace2, prompt);
+        }
+        return prompt.MessageId;
+    }
+
     public (List<string> Removed, List<string> Restored) Revert(string sessionId, string messageId)
     {
         var (session, _) = Load(sessionId);

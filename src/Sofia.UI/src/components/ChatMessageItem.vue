@@ -857,7 +857,7 @@ function closeLightbox(): void {
           v-if="failed && !message.local"
           class="msg-revert msg-revert--retry"
           type="button"
-          title="Retry: rewinds to the prompt that triggered this failure and sends it again"
+          title="Retry: retries this exact message (regenerates an LLM reply, or resends a user prompt)"
           :disabled="retrying"
           @click="askRetry"
         >

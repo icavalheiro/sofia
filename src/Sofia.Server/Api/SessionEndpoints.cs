@@ -219,6 +219,12 @@ public static class SessionEndpoints
             return Results.NoContent();
         });
 
+        api.MapPost("/sessions/{id}/continue", (string id, AgentService agents) =>
+            Results.Ok(new { messageId = agents.Continue(id) }));
+
+        api.MapPost("/sessions/{id}/retry", (string id, RevertRequest body, AgentService agents) =>
+            Results.Ok(new { messageId = agents.Retry(id, body.MessageId) }));
+
         api.MapPost("/sessions/{id}/revert", (string id, RevertRequest body, AgentService agents) =>
         {
             var (removed, restored) = agents.Revert(id, body.MessageId);

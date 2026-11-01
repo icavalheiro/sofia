@@ -1589,14 +1589,16 @@ export function useHarness ()
       return null;
     }
 
-    const trigger = conv.messages.slice( 0, index ).reverse().find( ( m ) => m.role === 'user' );
-    if ( !trigger ) return 'There is no prompt to retry.';
-    const text = trigger.text;
-    const attachments: PendingAttachment[] = ( trigger.attachments ?? [] ).map( ( a ) => ( { ...a, uploadedId: a.id } ) );
-    const error = await revertTo( conv, trigger.id );
-    if ( error ) return error;
-    await submitPrompt( conv, text, attachments, false );
-    return null;
+    // Retry the exact message that was clicked, not the root prompt that started the loop.
+    // A user message is removed and sent again; an LLM message is regenerated from the history up to it.
+    try
+    {
+      await api( 'POST', `/api/sessions/${ conv.id }/retry`, { messageId } );
+      return null;
+    } catch ( e )
+    {
+      return errorText( e );
+    }
   }
 
   /** Resolves a permission card (optimistic; reverted when the reply fails). */

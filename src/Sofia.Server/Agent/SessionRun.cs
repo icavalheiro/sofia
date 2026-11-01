@@ -21,6 +21,9 @@ public sealed record PendingPrompt(string MessageId, string Kind, string Text, s
     public bool Announce { get; init; } = true;
 
     public static PendingPrompt Compact() => new(Ids.New("msg"), "compact", "", null, []);
+
+    /// <summary>Regenerates the next assistant step from the current history without adding a user turn.</summary>
+    public static PendingPrompt Continue() => new(Ids.New("msg"), "continue", "", null, []);
 }
 
 /// <summary>Services shared by every run (resolved once from DI).</summary>
@@ -171,11 +174,19 @@ public sealed class SessionRun : IToolHost
                     // A new turn: re-read the live facts once (frozen prompt reused, changes become context notes).
                     _turnPrompt = null;
                     _askedAboutUnfinished = false;
-                    var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), ct);
-                    AddUserMessage(next, contextNotes: notes);
-                    // Only after the message is persisted: a crash replays the change once more instead of losing it.
-                    CommitFacts();
-                    await RunTurnAsync(ct);
+                    if (next.Kind == "continue")
+                    {
+                        // Regenerate from the current history without adding a new user turn (retry of an LLM message).
+                        await RunTurnAsync(ct);
+                    }
+                    else
+                    {
+                        var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), ct);
+                        AddUserMessage(next, contextNotes: notes);
+                        // Only after the message is persisted: a crash replays the change once more instead of losing it.
+                        CommitFacts();
+                        await RunTurnAsync(ct);
+                    }
                 }
                 finally
                 {
