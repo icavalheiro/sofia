@@ -521,7 +521,7 @@ Stream messages from the server: **binary** = one JPEG frame of the active tab
 
 ```ts
 { type: 'state', url, title, loading, agentBusy,
-  viewport: { width, height }, tabs: { index, url, active }[] }
+  viewport: { width, height }, mode, tabs: { index, url, active }[] }
 { type: 'cursor', x, y, action }        // where the agent is acting (viewport px)
 { type: 'error', message, fatal? }      // fatal: the browser could not start
 ```
@@ -531,6 +531,7 @@ Messages from the client (JSON, ignored while `agentBusy` is true):
 ```ts
 { type: 'navigate', url } | { type: 'back' } | { type: 'forward' } | { type: 'reload' }
 { type: 'resize', width, height }       // viewport in CSS px (320–2560)
+{ type: 'resize', mode }               // desktop | desktop1080 | mobile | mobilePortrait | mobileLandscape (sets viewport + mobile emulation)
 { type: 'mouse', action: 'move'|'down'|'up'|'wheel', x, y, button?, deltaX?, deltaY? }  // viewport px
 { type: 'key', key }                    // 'a', 'Enter', 'Control+a' (Playwright key names)
 { type: 'text', text }                  // paste / IME text

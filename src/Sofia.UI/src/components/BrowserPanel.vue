@@ -23,6 +23,7 @@ interface BrowserMessage {
   loading?: boolean
   agentBusy?: boolean
   viewport?: { width: number; height: number }
+  mode?: string
   tabs?: BrowserTab[]
   x?: number
   y?: number
@@ -39,10 +40,6 @@ const { activeConversation } = useHarness()
 const MODE_KEY = 'sofia.browser.mode'
 const WIDTH_KEY = 'sofia.browser.width'
 const DESKTOP_WIDTH = 1280
-const IPHONE16_WIDTH = 393
-const IPHONE16_HEIGHT = 852
-const FULLHD_WIDTH = 1920
-const FULLHD_HEIGHT = 1080
 
 const sessionId = computed(() => activeConversation.value?.id ?? null)
 
@@ -59,10 +56,10 @@ const view = reactive({
 const address = ref('')
 const addressFocused = ref(false)
 const storedMode = localStorage.getItem(MODE_KEY)
-const initialMode = storedMode === 'fit' || storedMode === 'desktop' || storedMode === 'iphone16' || storedMode === 'desktop1080'
+const initialMode = storedMode === 'fit' || storedMode === 'desktop' || storedMode === 'mobile' || storedMode === 'mobileLandscape' || storedMode === 'desktop1080'
   ? storedMode
   : (localStorage.getItem('sofia.browser.fit') === '1' ? 'fit' : 'desktop')
-const mode = ref<'fit' | 'desktop' | 'iphone16' | 'desktop1080'>(initialMode as 'fit' | 'desktop' | 'iphone16' | 'desktop1080')
+const mode = ref<'fit' | 'desktop' | 'mobile' | 'mobileLandscape' | 'desktop1080'>(initialMode as 'fit' | 'desktop' | 'mobile' | 'mobileLandscape' | 'desktop1080')
 const panelWidth = ref(Math.min(900, Math.max(360, Number(localStorage.getItem(WIDTH_KEY)) || 560)))
 
 const screen = ref<HTMLElement | null>(null)
@@ -211,21 +208,21 @@ function sendResize(): void {
     case 'fit':
       width = stageSize.width
       height = stageSize.height
-      break
+      send({ type: 'resize', width: Math.round(width), height: Math.round(height) })
+      return
     case 'desktop':
-      width = DESKTOP_WIDTH
-      height = Math.round((DESKTOP_WIDTH * stageSize.height) / stageSize.width)
-      break
-    case 'iphone16':
-      width = IPHONE16_WIDTH
-      height = IPHONE16_HEIGHT
-      break
+      send({ type: 'resize', mode: 'desktop' })
+      return
+    case 'mobile':
+      send({ type: 'resize', mode: 'mobile' })
+      return
+    case 'mobileLandscape':
+      send({ type: 'resize', mode: 'mobileLandscape' })
+      return
     case 'desktop1080':
-      width = FULLHD_WIDTH
-      height = FULLHD_HEIGHT
-      break
+      send({ type: 'resize', mode: 'desktop1080' })
+      return
   }
-  send({ type: 'resize', width: Math.round(width), height: Math.round(height) })
 }
 
 function measure(): void {
@@ -433,11 +430,20 @@ onBeforeUnmount(() => {
       <button
         class="bp-fit"
         type="button"
-        :class="{ 'bp-fit--on': mode === 'iphone16' }"
-        :title="t('browser.iphone')"
-        @click="mode = 'iphone16'"
+        :class="{ 'bp-fit--on': mode === 'mobile' }"
+        :title="t('browser.mobile')"
+        @click="mode = 'mobile'"
       >
-        {{ t('browser.iphone') }}
+        {{ t('browser.mobile') }}
+      </button>
+      <button
+        class="bp-fit"
+        type="button"
+        :class="{ 'bp-fit--on': mode === 'mobileLandscape' }"
+        :title="t('browser.mobileLandscape')"
+        @click="mode = 'mobileLandscape'"
+      >
+        {{ t('browser.mobileLandscape') }}
       </button>
       <button
         class="bp-fit"

@@ -207,6 +207,9 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     public const int DefaultWidth = 1280;
     public const int DefaultHeight = 800;
 
+    private const string DesktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+    private const string MobileUserAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
+
     private readonly List<IPage> _pages = [];
     private readonly List<BrowserViewer> _viewers = [];
     private readonly List<string> _notes = [];
@@ -225,6 +228,11 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     public SemaphoreSlim Gate { get; } = new(1, 1);
     public int Width { get; private set; } = DefaultWidth;
     public int Height { get; private set; } = DefaultHeight;
+    public string Mode { get; private set; } = "desktop";
+    private bool _mobile;
+    private string _userAgent = DesktopUserAgent;
+    private string _platform = "Win32";
+    private int _deviceScaleFactor = 1;
 
     public IPage Page => _page ?? throw new InvalidOperationException("The browser has no open page.");
 
@@ -315,6 +323,7 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
                 // The page navigated away while the dialog was open.
             }
         };
+        _ = ApplyEmulationAsync(page);
         _ = ActivateAsync(page);
     }
 
@@ -420,6 +429,107 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         PushState();
     }
 
+    /// <summary>Switches the browser's viewport + device emulation mode (desktop / mobile portrait / mobile landscape).</summary>
+    public async Task SetModeAsync(string mode, CancellationToken ct = default)
+    {
+        var normalized = mode.Trim().ToLowerInvariant() switch
+        {
+            "desktop" => "desktop",
+            "desktop1080" or "desktop-1080" or "1080p" or "fullhd" or "full-hd" => "desktop1080",
+            "mobile" or "mobileportrait" or "mobile-portrait" or "mobile_portrait" or "portrait" or "iphone" or "iphone16" => "mobilePortrait",
+            "mobilelandscape" or "mobile-landscape" or "mobile_landscape" or "landscape" => "mobileLandscape",
+            _ => throw new ArgumentException($"Unknown browser mode '{mode}'. Use desktop, desktop1080, mobilePortrait or mobileLandscape."),
+        };
+
+        (int w, int h, bool mobile, string ua, string platform) = normalized switch
+        {
+            "desktop" => (1280, 800, false, DesktopUserAgent, "Win32"),
+            "desktop1080" => (1920, 1080, false, DesktopUserAgent, "Win32"),
+            "mobilePortrait" => (393, 852, true, MobileUserAgent, "Linux armv8l"),
+            "mobileLandscape" => (852, 393, true, MobileUserAgent, "Linux armv8l"),
+            _ => throw new ArgumentException("Unknown browser mode."),
+        };
+
+        Mode = normalized;
+        _mobile = mobile;
+        _userAgent = ua;
+        _platform = platform;
+        _deviceScaleFactor = mobile ? 2 : 1;
+
+        await ResizeAsync(w, h);
+        foreach (var page in Pages)
+            await ApplyEmulationAsync(page);
+        Touch();
+        PushState();
+    }
+
+    private async Task ApplyEmulationAsync(IPage page)
+    {
+        try
+        {
+            var cdp = await context.NewCDPSessionAsync(page);
+            try
+            {
+                var orientation = Width >= Height ? "landscapePrimary" : "portraitPrimary";
+                var metrics = new Dictionary<string, object>
+                {
+                    ["width"] = Width,
+                    ["height"] = Height,
+                    ["deviceScaleFactor"] = _deviceScaleFactor,
+                    ["mobile"] = _mobile,
+                    ["screenWidth"] = Width,
+                    ["screenHeight"] = Height,
+                    ["screenOrientation"] = new Dictionary<string, object>
+                    {
+                        ["angle"] = Width >= Height ? 90 : 0,
+                        ["type"] = orientation,
+                    },
+                };
+                await cdp.SendAsync("Emulation.setDeviceMetricsOverride", metrics);
+                var uaMetadata = _mobile
+                    ? new Dictionary<string, object>
+                    {
+                        ["brands"] = new[] { new Dictionary<string, object> { ["brand"] = "Chromium", ["version"] = "129" }, new Dictionary<string, object> { ["brand"] = "Not=A?Brand", ["version"] = "8" } },
+                        ["fullVersion"] = "129.0.0.0",
+                        ["platform"] = "Android",
+                        ["platformVersion"] = "14.0.0",
+                        ["architecture"] = "arm",
+                        ["model"] = "Pixel 8",
+                        ["mobile"] = true,
+                    }
+                    : new Dictionary<string, object>
+                    {
+                        ["brands"] = new[] { new Dictionary<string, object> { ["brand"] = "Chromium", ["version"] = "129" }, new Dictionary<string, object> { ["brand"] = "Not=A?Brand", ["version"] = "8" } },
+                        ["fullVersion"] = "129.0.0.0",
+                        ["platform"] = "Windows",
+                        ["platformVersion"] = "10.0.0",
+                        ["architecture"] = "x86",
+                        ["model"] = "",
+                        ["mobile"] = false,
+                    };
+                await cdp.SendAsync("Emulation.setUserAgentOverride", new Dictionary<string, object>
+                {
+                    ["userAgent"] = _userAgent,
+                    ["platform"] = _platform,
+                    ["userAgentMetadata"] = uaMetadata,
+                });
+                await cdp.SendAsync("Emulation.setTouchEmulationEnabled", new Dictionary<string, object>
+                {
+                    ["enabled"] = _mobile,
+                    ["maxTouchPoints"] = _mobile ? 5 : 0,
+                });
+            }
+            finally
+            {
+                try { await cdp.DetachAsync(); } catch (PlaywrightException) { }
+            }
+        }
+        catch (PlaywrightException)
+        {
+            // Page closed meanwhile.
+        }
+    }
+
     // --- user input --------------------------------------------------------------
 
     public async Task HandleInputAsync(JsonElement message)
@@ -446,7 +556,14 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
                     await page.ReloadAsync();
                     break;
                 case "resize":
-                    await ResizeAsync((int)Num("width"), (int)Num("height"));
+                    if (message.TryGetProperty("mode", out var modeEl) && modeEl.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(modeEl.GetString()))
+                    {
+                        await SetModeAsync(modeEl.GetString()!);
+                    }
+                    else
+                    {
+                        await ResizeAsync((int)Num("width"), (int)Num("height"));
+                    }
                     break;
                 case "mouse":
                     await HandleMouseAsync(page, Str("action"), Num("x"), Num("y"), Str("button"), Num("deltaX"), Num("deltaY"));
@@ -681,6 +798,7 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
             loading = _loading,
             agentBusy = _agentBusy,
             viewport = new { width = Width, height = Height },
+            mode = Mode,
             tabs = pages.Select((p, i) => new { index = i, url = p.Url, active = p == _page }).ToList(),
         }, Json.Options);
     }

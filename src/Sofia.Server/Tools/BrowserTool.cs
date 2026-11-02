@@ -20,7 +20,7 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
     private static readonly string[] Actions =
     [
         "navigate", "snapshot", "screenshot", "click", "hover", "type", "select", "press", "scroll", "wait",
-        "back", "forward", "reload", "evaluate", "tabs", "new_tab", "switch_tab", "close_tab", "close",
+        "back", "forward", "reload", "evaluate", "tabs", "new_tab", "switch_tab", "close_tab", "close", "resize",
     ];
 
     public string Name => "browser";
@@ -30,13 +30,16 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         "where interactive elements have refs (e1, e2…), then click, type, select, press keys and scroll. " +
         "Typical loop: navigate, read the snapshot, act on a ref, read the new snapshot. Refs are renumbered by every snapshot, so use refs from the latest one. " +
         "Use it for JavaScript-heavy sites, forms, logins (the user can take over in the UI) and checking web apps you build; prefer web_fetch/web_search for plain reading. " +
-        "Use screenshot to actually look at a page (layout, charts, images, visual bugs); it only helps if you can see images, otherwise rely on snapshot.";
+        "Use screenshot to actually look at a page (layout, charts, images, visual bugs); it only helps if you can see images, otherwise rely on snapshot. " +
+        "Use the resize action to switch the browser mode: desktop1080 (1920x1080 desktop), mobilePortrait (393x852 mobile) or mobileLandscape (852x393 mobile). " +
+        "Mobile modes emulate a mobile user agent, touch and mobile detection (navigator.userAgent, maxTouchPoints, viewport).";
 
     public ToolKind Kind => ToolKind.Browser;
 
     public JsonObject Parameters => Schema.Object(
         ("action", Schema.Enum("What to do. navigate (url) · snapshot · screenshot (ref?, full_page?) · click (ref) · hover (ref) · type (ref?, text, submit?) · select (ref, value) · press (key, ref?) · " +
-            "scroll (direction up|down|top|bottom, amount?, ref?) · wait (seconds? or text?) · back · forward · reload · evaluate (script) · tabs · new_tab (url?) · switch_tab (tab) · close_tab (tab?) · close.", Actions), true),
+            "scroll (direction up|down|top|bottom, amount?, ref?) · wait (seconds? or text?) · back · forward · reload · evaluate (script) · tabs · new_tab (url?) · switch_tab (tab) · close_tab (tab?) · close · " +
+            "resize (mode? or width? height?).", Actions), true),
         ("url", Schema.String("Address for navigate/new_tab. Bare hosts get https://; plain text becomes a web search."), false),
         ("ref", Schema.String("Element ref from the latest snapshot, e.g. e12."), false),
         ("text", Schema.String("Text to type (type) or to wait for (wait)."), false),
@@ -48,7 +51,10 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         ("amount", Schema.Integer("Pixels to scroll (default: most of a screen)."), false),
         ("seconds", Schema.Integer("Seconds to wait (max 30)."), false),
         ("script", Schema.String("JavaScript expression or function to evaluate in the page; the result is returned as JSON."), false),
-        ("tab", Schema.Integer("Tab number from the tabs action (0-based)."), false));
+        ("tab", Schema.Integer("Tab number from the tabs action (0-based)."), false),
+        ("mode", Schema.Enum("Browser viewport/emulation mode for the resize action.", "desktop", "desktop1080", "mobile", "mobilePortrait", "mobileLandscape"), false),
+        ("width", Schema.Integer("Viewport width for the resize action (ignored when mode is given)."), false),
+        ("height", Schema.Integer("Viewport height for the resize action (ignored when mode is given)."), false));
 
     public string Summarize(JsonObject args)
     {
@@ -191,6 +197,22 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 if (index < 0 || index >= pages.Count) throw new ArgumentException($"No tab {index}. {TabList(session)}");
                 await pages[index].CloseAsync();
                 done = $"Closed tab {index}.";
+                break;
+            }
+            case "resize":
+            {
+                if (Args.Optional(args, "mode") is { Length: > 0 } mode)
+                {
+                    await session.SetModeAsync(mode, ct);
+                    done = $"Switched browser to {session.Mode} mode ({session.Width}x{session.Height}).";
+                }
+                else
+                {
+                    var w = Args.Int(args, "width") ?? session.Width;
+                    var h = Args.Int(args, "height") ?? session.Height;
+                    await session.ResizeAsync(w, h);
+                    done = $"Resized browser to {session.Width}x{session.Height}.";
+                }
                 break;
             }
             default:
