@@ -243,6 +243,7 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `POST` | `/api/sessions/{id}/skills` | `{ skillId }` | `SessionDto` |
 | `DELETE` | `/api/sessions/{id}/skills/{skillId}` | – | `SessionDto` |
 | `GET` | `/api/sessions/{id}/tasks` | – | `TaskDto[]` (the conversation's task list, managed by the `tasks` tool) |
+| `DELETE` | `/api/sessions/{id}/tasks` | – | `204` (clears the conversation's task list; broadcasts `tasks.updated`) |
 | `GET` | `/api/sessions/{id}/export` | – | `{ version: 1, info: SessionDto, messages: MessageDto[] }` |
 | `POST` | `/api/sessions/import` | `{ workspaceId?, info, messages }` | `SessionDto` |
 | `GET` | `/api/stats` | – | `{ sessions, prompts, steps, tokens: { input, output }, cost, activeDays, streak }` |
@@ -533,7 +534,7 @@ Messages from the client (JSON, ignored while `agentBusy` is true):
 { type: 'mouse', action: 'move'|'down'|'up'|'wheel', x, y, button?, deltaX?, deltaY? }  // viewport px
 { type: 'key', key }                    // 'a', 'Enter', 'Control+a' (Playwright key names)
 { type: 'text', text }                  // paste / IME text
-{ type: 'tab', index } | { type: 'closeTab', index }
+{ type: 'tab', index } | { type: 'closeTab', index } | { type: 'newTab', url? }
 ```
 
 Only `http(s)` pages (and `about:blank`) can be opened; bare hosts get a scheme

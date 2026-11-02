@@ -282,6 +282,17 @@ public static class SessionEndpoints
         api.MapGet("/sessions/{id}/tasks", (string id, SofiaDb db) =>
             Results.Ok(db.Tasks.Find(t => t.SessionId == id).OrderBy(t => t.Order).ThenBy(t => t.CreatedAt).ToList()));
 
+        api.MapDelete("/sessions/{id}/tasks", (string id, SofiaDb db, AgentService agents, Events.IEventBus bus) =>
+        {
+            var (session, workspace) = agents.Load(id);
+            db.Tasks.DeleteMany(t => t.SessionId == id);
+            var remaining = db.Tasks.Find(t => t.SessionId == id).OrderBy(t => t.Order).ThenBy(t => t.CreatedAt)
+                .Select(t => new { id = t.Id, title = t.Title, status = t.Status, createdAt = t.CreatedAt, updatedAt = t.UpdatedAt })
+                .ToList();
+            bus.Publish(Events.EventTypes.TasksUpdated, new { sessionId = id, tasks = remaining }, id, workspace.Id);
+            return Results.NoContent();
+        });
+
         api.MapGet("/sessions/{id}/export", (string id, AgentService agents, SofiaDb db) =>
         {
             var (session, _) = agents.Load(id);

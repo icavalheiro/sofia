@@ -467,6 +467,13 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
                     var closing = (int)Num("index");
                     if (closing >= 0 && closing < open.Count && open.Count > 1) await open[closing].CloseAsync();
                     break;
+                case "newTab":
+                {
+                    var fresh = await context.NewPageAsync();
+                    if (!string.IsNullOrWhiteSpace(Str("url"))) await GotoAsync(Str("url"));
+                    PushState();
+                    break;
+                }
             }
         }
         catch (Exception ex) when (ex is PlaywrightException or ArgumentException)

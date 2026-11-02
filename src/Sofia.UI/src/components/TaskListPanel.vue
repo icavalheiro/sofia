@@ -153,6 +153,27 @@ const statusIcon: Record<string, string> = {
 
 const completed = computed( () => tasks.value.filter( ( t: TaskDto ) => t.status === 'completed' ).length )
 
+const clearing = ref( false )
+
+async function clearTasks (): Promise<void>
+{
+  if ( clearing.value || !tasks.value.length ) return
+  const id = activeConversation.value?.id
+  if ( !id ) return
+  clearing.value = true
+  try
+  {
+    await api( 'DELETE', `/api/sessions/${ id }/tasks` )
+    tasks.value = []
+  } catch ( e )
+  {
+    // Swallow; the server event will resync if it succeeded.
+  } finally
+  {
+    clearing.value = false
+  }
+}
+
 // Auto-open is handled in the server-event handler below, so loading an existing
 // task list while switching chats does not reopen a panel the user closed.
 </script>
@@ -168,6 +189,18 @@ const completed = computed( () => tasks.value.filter( ( t: TaskDto ) => t.status
       <SofiaIcon name="list" :size="'0.9rem'" />
       <span class="tf-title">Tasks</span>
       <span v-if="tasks.length" class="tf-count">{{ completed }}/{{ tasks.length }}</span>
+      <button
+        v-if="tasks.length"
+        class="tf-clear"
+        type="button"
+        :title="t( 'panel.tasksClear' )"
+        :aria-label="t( 'panel.tasksClear' )"
+        :disabled="clearing"
+        @click="clearTasks"
+      >
+        <SofiaIcon name="trash" :size="'0.8rem'" />
+        <span>{{ tasks.length }}</span>
+      </button>
       <button class="tf-close" type="button" :aria-label="t( 'panel.close' )" @click="emit( 'close' )">
         <SofiaIcon name="x" :size="'0.8rem'" />
       </button>
@@ -241,6 +274,26 @@ const completed = computed( () => tasks.value.filter( ( t: TaskDto ) => t.status
 }
 
 .tf-close:hover { background: var(--sofia-surface-3); color: var(--sofia-text); }
+
+.tf-clear {
+  border: none;
+  background: transparent;
+  color: var(--sofia-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 0.25rem;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.tf-clear:hover:not(:disabled) { background: var(--sofia-surface-3); color: var(--sofia-err); }
+.tf-clear:disabled { opacity: 0.5; cursor: default; }
 
 .tf-body {
   padding: 0.5rem 0.7rem 0.6rem;

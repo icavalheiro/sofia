@@ -322,6 +322,9 @@ public static class HistoryBuilder
     };
 
     public static List<ChatMessage> Build(IEnumerable<Message> messages, ModelInfo model)
+        => Build(messages, model, true);
+
+    public static List<ChatMessage> Build(IEnumerable<Message> messages, ModelInfo model, bool includeImages)
     {
         var ordered = messages.Where(m => !m.Synthetic).OrderBy(m => m.Seq).ToList();
         var result = new List<ChatMessage>();
@@ -340,6 +343,13 @@ public static class HistoryBuilder
             .TakeLast(ImagesKept)
             .ToHashSet();
 
+        var recentUserMedia = ordered
+            .Where(m => !m.Compacted && m.Summary != true && m.Role == "user"
+                && m.Attachments is { Count: > 0 } && m.Attachments.Any(a => a.Kind is "image" or "audio" or "video"))
+            .TakeLast(ImagesKept)
+            .Select(m => m.Id)
+            .ToHashSet();
+
         foreach (var m in ordered)
         {
             if (m.Compacted || m.Summary == true) continue;
@@ -353,7 +363,7 @@ public static class HistoryBuilder
                         $"\n\n<user_steering>\n{m.Expanded ?? m.Text}\n</user_steering>\nThe user sent the message above while you were working. Treat it as their latest instruction."));
                     continue;
                 }
-                result.Add(new ChatMessage { Role = "user", Content = UserContent(m, model) });
+                result.Add(new ChatMessage { Role = "user", Content = UserContent(m, model, recentUserMedia.Contains(m.Id), includeImages) });
                 if (m.ContextNotes is { Count: > 0 })
                 {
                     result[^1].Content.Add(ContentPart.FromText(
@@ -387,7 +397,7 @@ public static class HistoryBuilder
 
             // Tool results are text-only, so screenshots travel in a user turn right after the results.
             var shots = calls.Where(c => c.Images is { Count: > 0 }).ToList();
-            if (shots.Count > 0) result.Add(new ChatMessage { Role = "user", Content = ScreenshotContent(shots, recentShots, model) });
+            if (shots.Count > 0) result.Add(new ChatMessage { Role = "user", Content = ScreenshotContent(shots, recentShots, model, includeImages) });
         }
         return result;
     }
@@ -395,7 +405,7 @@ public static class HistoryBuilder
     /// <summary>Only the latest screenshots are resent as images; every earlier one costs tokens on each turn.</summary>
     private const int ImagesKept = 2;
 
-    private static List<ContentPart> ScreenshotContent(List<ToolCall> calls, HashSet<string> recent, ModelInfo model)
+    private static List<ContentPart> ScreenshotContent(List<ToolCall> calls, HashSet<string> recent, ModelInfo model, bool includeImages = true)
     {
         var parts = new List<ContentPart>();
         var canSee = model.Vision || ModelLimits.Known(model.ModelId) is null;
@@ -405,14 +415,15 @@ public static class HistoryBuilder
             {
                 var noun = image.Kind switch { "audio" => "Audio", "video" => "Video", _ => "Image" };
                 var label = $"[{noun} from the `{call.Name}` tool call {call.Id}: {image.Name}]";
+                var isRecent = includeImages && recent.Contains(call.Id);
                 if (image.Kind is "audio" or "video")
                 {
-                    var media = recent.Contains(call.Id) ? MediaPart(image, model) : null;
+                    var media = isRecent ? MediaPart(image, model) : null;
                     if (media is not null) parts.AddRange([ContentPart.FromText(label), media]);
-                    else parts.Add(ContentPart.FromText($"{label} ({MediaNote(image, model, recent.Contains(call.Id))})"));
+                    else parts.Add(ContentPart.FromText($"{label} ({MediaNote(image, model, isRecent)})"));
                 }
                 else if (!canSee) parts.Add(ContentPart.FromText($"{label} (the current model cannot see images)"));
-                else if (!recent.Contains(call.Id) || !File.Exists(image.StoragePath)) parts.Add(ContentPart.FromText($"{label} (older image, not resent)"));
+                else if (!isRecent || !File.Exists(image.StoragePath)) parts.Add(ContentPart.FromText($"{label} (older image, not resent)"));
                 else
                 {
                     parts.Add(ContentPart.FromText(label));
@@ -452,7 +463,7 @@ public static class HistoryBuilder
         return $"only wav and mp3 audio can be sent, this is {a.Mime}";
     }
 
-    private static List<ContentPart> UserContent(Message m, ModelInfo model)
+    private static List<ContentPart> UserContent(Message m, ModelInfo model, bool recentMedia = true, bool includeImages = true)
     {
         var parts = new List<ContentPart>();
         var text = m.Expanded ?? m.Text;
@@ -467,6 +478,11 @@ public static class HistoryBuilder
             // Vision flags come from name heuristics and runtime metadata that are often incomplete, so
             // only withhold images from models known to be text-only.
             var sendImage = model.Vision || ModelLimits.Known(model.ModelId) is null;
+            if (a.Kind == "image" && (!includeImages || !recentMedia))
+            {
+                parts.Add(ContentPart.FromText($"[attached image: {a.Name}, {a.Size} (older image, not resent); saved at {a.StoragePath.Replace('\\', '/')}]"));
+                continue;
+            }
             if (a.Kind == "image" && sendImage && a.Bytes < 15 * 1024 * 1024)
             {
                 parts.Add(new ContentPart { ImageBase64 = Convert.ToBase64String(File.ReadAllBytes(a.StoragePath)), ImageMime = a.Mime });
@@ -474,6 +490,11 @@ public static class HistoryBuilder
             }
             if (a.Kind is "audio" or "video")
             {
+                if (!includeImages || !recentMedia)
+                {
+                    parts.Add(ContentPart.FromText($"[attached {a.Kind}: {a.Name}, {a.Size} ({MediaNote(a, model, false)}); saved at {a.StoragePath.Replace('\\', '/')}]"));
+                    continue;
+                }
                 var media = MediaPart(a, model);
                 if (media is not null) parts.AddRange([ContentPart.FromText($"[{a.Kind}: {a.Name}]"), media]);
                 else parts.Add(ContentPart.FromText($"[attached {a.Kind}: {a.Name}, {a.Size} ({MediaNote(a, model, true)}); saved at {a.StoragePath.Replace('\\', '/')}]"));

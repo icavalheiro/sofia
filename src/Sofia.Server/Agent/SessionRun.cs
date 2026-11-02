@@ -74,6 +74,8 @@ public sealed class SessionRun : IToolHost
     /// <summary>Clock of the request in flight: start → end, minus the time the user spent answering.</summary>
     private readonly TurnClock _turn = new();
     private bool _finished;
+    private bool _dropImages;
+    private bool _compactedOnTooLarge;
     private Message? _current;
     private bool _askedAboutUnfinished;
     private DateTime _lastProgressPublish = DateTime.MinValue;
@@ -392,8 +394,11 @@ public sealed class SessionRun : IToolHost
             var config = _s.Db.GetConfig();
             Session.Context.Limit = model.ContextLength;
             var (system, tools, _) = await TurnContextAsync(config, ct);
-            var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model);
-            var estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments)));
+            var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages);
+            var imageCount = _s.Db.SessionMessages(Session.Id)
+                .SelectMany(m => (m.Attachments ?? []).Concat((m.ToolCalls ?? []).SelectMany(c => c.Images ?? [])))
+                .Count(a => a.Kind == "image");
+            var estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments))) + imageCount * 1000;
 
             // `Context.Used` only reflects the previous response; tool results and the new user message added since then
             // are not in it. Compare against the estimate of what is about to be sent as well, otherwise a large tool
@@ -429,7 +434,33 @@ public sealed class SessionRun : IToolHost
             });
             _current = assistant;
 
-            var (calls, finish) = await StreamStepAsync(provider, model, request, assistant, tools, estimatedInput, ct);
+            List<ToolCall> calls = [];
+            string finish = "stop";
+            try
+            {
+                (calls, finish) = await StreamStepAsync(provider, model, request, assistant, tools, estimatedInput, ct);
+            }
+            catch (Exception ex) when (RetryPolicy.IsRequestTooLarge(ex))
+            {
+                // Drop the failed (empty) assistant card and retry without the heaviest parts of the request.
+                _current = null;
+                try { _s.Store.DeleteMessages(Session, [assistant.Id]); } catch { }
+
+                if (!_dropImages)
+                {
+                    _dropImages = true;
+                    _s.Log.LogWarning("Request too large; retrying without inline images.");
+                    continue;
+                }
+                if (!_compactedOnTooLarge)
+                {
+                    _compactedOnTooLarge = true;
+                    try { await CompactAsync(auto: true, ct); } catch { }
+                    _s.Log.LogWarning("Request too large; retrying after compaction.");
+                    continue;
+                }
+                throw;
+            }
             if (calls.Count == 0)
             {
                 if (finish == "length")
@@ -1233,7 +1264,8 @@ public sealed class SessionRun : IToolHost
 
     private static int Estimate(Message m) =>
         Text.EstimateTokens(m.Expanded ?? m.Text) + Text.EstimateTokens(m.Reasoning)
-        + (m.ToolCalls ?? []).Sum(c => Text.EstimateTokens(c.Arguments) + Text.EstimateTokens(c.Result ?? c.Output ?? c.Error));
+        + (m.ToolCalls ?? []).Sum(c => Text.EstimateTokens(c.Arguments) + Text.EstimateTokens(c.Result ?? c.Output ?? c.Error))
+        + ((m.Attachments ?? []).Count(a => a.Kind == "image") + (m.ToolCalls ?? []).SelectMany(c => c.Images ?? []).Count(a => a.Kind == "image")) * 1000;
 
     /// <summary>
     /// How long one request took: a stopwatch that ignores the time the user was answering. Waits nest (a subagent

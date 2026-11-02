@@ -366,7 +366,7 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
 
                 var known = ModelLimits.Known(id);
                 var runtimeCtx = Int(item["context_length"]) ?? Int(item["max_context_length"]) ?? Int(item["max_model_len"])
-                    ?? Int(item["meta"]?["n_ctx_train"]) ?? Int(item["context_window"]) ?? Int(item["inputTokenLimit"]);
+                    ?? Int(item["meta"]?["n_ctx"]) ?? Int(item["meta"]?["n_ctx_train"]) ?? Int(item["context_window"]) ?? Int(item["inputTokenLimit"]);
                 if (runtimeCtx is { } reported) provider.KnownContext[id] = reported;
                 var (ctx, maxOut) = Limits(provider, id, runtimeCtx,
                     Int(item["top_provider"]?["max_completion_tokens"]),

@@ -36,9 +36,13 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const { t } = useI18n()
 const { activeConversation } = useHarness()
 
-const FIT_KEY = 'sofia.browser.fit'
+const MODE_KEY = 'sofia.browser.mode'
 const WIDTH_KEY = 'sofia.browser.width'
 const DESKTOP_WIDTH = 1280
+const IPHONE16_WIDTH = 393
+const IPHONE16_HEIGHT = 852
+const FULLHD_WIDTH = 1920
+const FULLHD_HEIGHT = 1080
 
 const sessionId = computed(() => activeConversation.value?.id ?? null)
 
@@ -54,7 +58,11 @@ const view = reactive({
 })
 const address = ref('')
 const addressFocused = ref(false)
-const fit = ref(localStorage.getItem(FIT_KEY) === '1')
+const storedMode = localStorage.getItem(MODE_KEY)
+const initialMode = storedMode === 'fit' || storedMode === 'desktop' || storedMode === 'iphone16' || storedMode === 'desktop1080'
+  ? storedMode
+  : (localStorage.getItem('sofia.browser.fit') === '1' ? 'fit' : 'desktop')
+const mode = ref<'fit' | 'desktop' | 'iphone16' | 'desktop1080'>(initialMode as 'fit' | 'desktop' | 'iphone16' | 'desktop1080')
 const panelWidth = ref(Math.min(900, Math.max(360, Number(localStorage.getItem(WIDTH_KEY)) || 560)))
 
 const screen = ref<HTMLElement | null>(null)
@@ -197,9 +205,27 @@ const cursorStyle = computed(() => ({
 
 function sendResize(): void {
   if (!stageSize.width || !stageSize.height) return
-  const width = fit.value ? stageSize.width : DESKTOP_WIDTH
-  const height = fit.value ? stageSize.height : Math.round((DESKTOP_WIDTH * stageSize.height) / stageSize.width)
-  send({ type: 'resize', width: Math.round(width), height })
+  let width = 0
+  let height = 0
+  switch (mode.value) {
+    case 'fit':
+      width = stageSize.width
+      height = stageSize.height
+      break
+    case 'desktop':
+      width = DESKTOP_WIDTH
+      height = Math.round((DESKTOP_WIDTH * stageSize.height) / stageSize.width)
+      break
+    case 'iphone16':
+      width = IPHONE16_WIDTH
+      height = IPHONE16_HEIGHT
+      break
+    case 'desktop1080':
+      width = FULLHD_WIDTH
+      height = FULLHD_HEIGHT
+      break
+  }
+  send({ type: 'resize', width: Math.round(width), height: Math.round(height) })
 }
 
 function measure(): void {
@@ -220,8 +246,8 @@ watch(screen, (el) => {
   measure()
 })
 
-watch(fit, (value) => {
-  localStorage.setItem(FIT_KEY, value ? '1' : '0')
+watch(mode, (value) => {
+  localStorage.setItem(MODE_KEY, value)
   sendResize()
 })
 
@@ -392,14 +418,35 @@ onBeforeUnmount(() => {
         @blur="addressFocused = false; address = isBlank ? '' : view.url"
         @keydown.enter="navigate"
       />
+      <button class="bp-icon" type="button" :title="t('browser.newTab')" :aria-label="t('browser.newTab')" :disabled="view.agentBusy || status !== 'live'" @click="send({ type: 'newTab' })">
+        <SofiaIcon name="plus" :size="'1rem'" />
+      </button>
       <button
         class="bp-fit"
         type="button"
-        :class="{ 'bp-fit--on': fit }"
-        :title="fit ? t('browser.fitOn') : t('browser.fitOff')"
-        @click="fit = !fit"
+        :class="{ 'bp-fit--on': mode === 'fit' }"
+        :title="mode === 'fit' ? t('browser.fitOff') : t('browser.fitOn')"
+        @click="mode = mode === 'fit' ? 'desktop' : 'fit'"
       >
-        {{ fit ? t('browser.fit') : t('browser.desktop') }}
+        {{ mode === 'fit' ? t('browser.fit') : t('browser.desktop') }}
+      </button>
+      <button
+        class="bp-fit"
+        type="button"
+        :class="{ 'bp-fit--on': mode === 'iphone16' }"
+        :title="t('browser.iphone')"
+        @click="mode = 'iphone16'"
+      >
+        {{ t('browser.iphone') }}
+      </button>
+      <button
+        class="bp-fit"
+        type="button"
+        :class="{ 'bp-fit--on': mode === 'desktop1080' }"
+        :title="t('browser.fullhd')"
+        @click="mode = 'desktop1080'"
+      >
+        {{ t('browser.fullhd') }}
       </button>
     </div>
 

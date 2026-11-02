@@ -42,6 +42,28 @@ public static class RetryPolicy
         _ => false,
     };
 
+    /// <summary>Whether the failure means the request body (usually accumulated images) exceeded the provider's size
+    /// or context limit. Such a request cannot succeed by repeating it unchanged, but it can succeed once the
+    /// heaviest parts (old images) are dropped.</summary>
+    private static readonly string[] TooLargeText =
+    [
+        "too large", "request too large", "request entity too large", "payload too large",
+        "context length", "context_length", "prompt is too long", "maximum context", "max_tokens",
+        "too many tokens", "token limit",
+    ];
+
+    public static bool IsRequestTooLarge(Exception ex)
+    {
+        if (ex is not ProviderException p) return false;
+        if (p.Status is 413 or 400) { /* fall through to text check */ }
+        else if (p.Status is not null) return false;
+        var message = p.Message ?? "";
+        foreach (var marker in TooLargeText)
+            if (message.Contains(marker, StringComparison.OrdinalIgnoreCase)) return true;
+        // A bare 413 is always "too large" regardless of wording.
+        return p.Status == 413;
+    }
+
     /// <summary>Fixed 5s wait between attempts.</summary>
 
     public static TimeSpan Delay(int attempt) => TimeSpan.FromSeconds(5);
