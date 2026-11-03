@@ -820,4 +820,238 @@ public class RetryPolicyTests
     }
 }
 
+public class HistoryPruningTests
+{
+    private static Message Step(int seq, string result, Attachment? image = null) => new()
+    {
+        Id = $"a{seq}", Role = "assistant", Seq = seq,
+        ToolCalls =
+        [
+            new ToolCall
+            {
+                Id = $"c{seq}", Name = "read", Arguments = "{}", Summary = $"f{seq}.txt", Result = result, Status = "success", Completed = true,
+                Images = image is null ? null : [image],
+            },
+        ],
+    };
+
+    private static List<Message> Steps() =>
+    [
+        new() { Id = "u1", Role = "user", Text = "go", Seq = 0 },
+        Step(1, new string('x', 5_000)),
+        Step(2, new string('y', 4_000)),
+        Step(3, new string('z', 500)),   // below the min-chars threshold: never pruned
+    ];
+
+    [Fact]
+    public void PrunesLargeOldResultsAndKeepsRecentSmallAndNewer()
+    {
+        var history = HistoryBuilder.Build(Steps(), new ModelInfo { ModelId = "m" }, true,
+            new HistoryBuilder.PruneOptions(ThroughSeq: 2, MinChars: 2_000));
+
+        var tools = history.Where(m => m.Role == "tool").ToList();
+        Assert.Equal(3, tools.Count);
+        Assert.StartsWith("[pruned: read f1.txt", tools[0].TextContent);
+        Assert.DoesNotContain("xxxx", tools[0].TextContent);
+        Assert.StartsWith("[pruned: read f2.txt", tools[1].TextContent);
+        // seq 3 is after the watermark and its result is below the threshold: untouched.
+        Assert.Equal(new string('z', 500), tools[2].TextContent);
+    }
+
+    [Fact]
+    public void WithoutAWatermarkNothingIsPruned()
+    {
+        var history = HistoryBuilder.Build(Steps(), new ModelInfo { ModelId = "m" });
+        Assert.Equal(new string('x', 5_000), history.Single(m => m.Role == "tool" && m.TextContent.Contains("xx")).TextContent);
+    }
+
+    [Fact]
+    public void TwoBuildsWithTheSameWatermarkAreByteIdentical()
+    {
+        var model = new ModelInfo { ModelId = "m" };
+        var options = new HistoryBuilder.PruneOptions(ThroughSeq: 2, MinChars: 2_000);
+        List<Message> Steps() =>
+        [
+            new() { Id = "u1", Role = "user", Seq = 0, Text = "go" },
+            new() { Id = "a1", Role = "assistant", Seq = 1, ToolCalls = [new ToolCall { Id = "c1", Name = "read", Arguments = "{\"path\":\"f1.cs\"}", Result = new string('x', 8_000), Status = "success", Completed = true }] },
+            new() { Id = "a2", Role = "assistant", Seq = 2, ToolCalls = [new ToolCall { Id = "c2", Name = "read", Arguments = "{\"path\":\"f2.cs\"}", Result = new string('y', 8_000), Status = "success", Completed = true }] },
+            new() { Id = "a3", Role = "assistant", Seq = 3, Text = "done" },
+        ];
+        // The placeholder is deterministic from persisted state: two builds of equal messages with the same watermark
+        // produce byte-identical model-facing history (prompt-cache prefix stability between prunes).
+        var a = HistoryBuilder.Build(Steps(), model, true, options).Select(m => (m.Role, m.TextContent)).ToList();
+        var b = HistoryBuilder.Build(Steps(), model, true, options).Select(m => (m.Role, m.TextContent)).ToList();
+        Assert.Equal(a, b);
+    }
+
+    [Fact]
+    public void WatermarkLandsJustBeforeTheLastKeptStepsAndIsMonotonic()
+    {
+        Message Step(int seq, string result) => new()
+        {
+            Id = $"a{seq}", Role = "assistant", Seq = seq,
+            ToolCalls = [new ToolCall { Id = $"c{seq}", Name = "read", Arguments = "{}", Result = new string('x', 8_000), Status = "success", Completed = true }],
+        };
+        var messages = Enumerable.Range(1, 14).Select(n => Step(n * 2, n.ToString())).ToList();   // 14 tool steps at seqs 2..28
+
+        // Keep the last 6 steps (seqs 18..28): the watermark lands on seq 16, just before them.
+        var (watermark, saved) = SessionRun.ComputePruneWatermark(messages, currentWatermark: 0, keepSteps: 6, minChars: 2_000, contextLength: 131_072);
+        Assert.Equal(16, watermark);
+        Assert.True(saved >= 13_107);   // hysteresis floor: 10% of the window (8 pruned × ~1970 tokens)
+
+        // No headroom over the current watermark: nothing to do.
+        Assert.Null(SessionRun.ComputePruneWatermark(messages, currentWatermark: 16, keepSteps: 6, minChars: 2_000, contextLength: 131_072).ThroughSeq);
+
+        // Hysteresis: small results never pay for a cache invalidation.
+        var tiny = messages.Select(m => new Message { Id = m.Id, Role = m.Role, Seq = m.Seq, ToolCalls = [new ToolCall { Id = "t", Name = "read", Arguments = "{}", Result = "ok", Status = "success", Completed = true }] }).ToList();
+        Assert.Null(SessionRun.ComputePruneWatermark(tiny, 0, 6, 2_000, 131_072).ThroughSeq);
+
+        // Compact the prefix: it no longer counts toward the watermark — only 4 steps remain, below the keep-steps.
+        var compacted = messages.Select(m => new Message { Id = m.Id, Role = m.Role, Seq = m.Seq, Compacted = m.Seq <= 20, ToolCalls = m.ToolCalls }).ToList();
+        Assert.Null(SessionRun.ComputePruneWatermark(compacted, 0, 6, 2_000, 131_072).ThroughSeq);
+    }
+
+    [Fact]
+    public void PrunedScreenshotsFallBackToTheNotResentLabel()
+    {
+        var path = Path.GetTempFileName();
+        File.WriteAllBytes(path, [1, 2, 3]);
+        try
+        {
+            var shot = Step(1, "saw it", new Attachment { Id = "i1", Name = "s.jpg", Kind = "image", Mime = "image/jpeg", Bytes = 3, StoragePath = path });
+            var fresh = Step(2, "fresh", new Attachment { Id = "i2", Name = "t.jpg", Kind = "image", Mime = "image/jpeg", Bytes = 3, StoragePath = path });
+            // A vision-capable model would normally resend the latest screenshot.
+            var history = HistoryBuilder.Build([new() { Id = "u1", Role = "user", Text = "go", Seq = 0 }, shot, fresh],
+                new ModelInfo { ModelId = "unknown-local-model" }, true, new HistoryBuilder.PruneOptions(ThroughSeq: 1, MinChars: 2_000));
+
+            var users = history.Where(m => m.Role == "user").ToList();
+            var prunedUser = users[1];   // the screenshot turn after step 1 (step 2's follows)
+            Assert.Contains("not resent", prunedUser.TextContent);
+            Assert.DoesNotContain(prunedUser.Content, p => p.ImageBase64 is not null);
+
+            var freshUser = users[^1];
+            Assert.True(freshUser.Content.Any(p => p.ImageBase64 is not null));
+        }
+        finally { File.Delete(path); }
+    }
+}
+
+public class SubfolderInstructionsTests
+{
+    private static readonly ContextFiles Ctx = new(new SofiaOptions { DataDir = Path.GetTempPath() });
+
+    private static string MakeWorkspace(string agents = "# root rules", string subAgents = "# strict: no console.log", string? leafClaude = null)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sofia-sub-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "src", "deep"));
+        if (agents is not null) File.WriteAllText(Path.Combine(root, "AGENTS.md"), agents);
+        if (subAgents is not null) File.WriteAllText(Path.Combine(root, "src", "CLAUDE.md"), subAgents);
+        if (leafClaude is not null) File.WriteAllText(Path.Combine(root, "src", "deep", "CLAUDE.md"), leafClaude);
+        return root;
+    }
+
+    private static void DeleteDir(string dir)
+    {
+        try { Directory.Delete(dir, true); }
+        catch (IOException) { /* best effort on Windows */ }
+    }
+
+    [Fact]
+    public void DiscoversInstructionFilesBetweenRootAndTouchedPath()
+    {
+        var root = MakeWorkspace();
+        try
+        {
+            var files = Ctx.SubfolderFiles(root, PathUtil.Resolve(root, "src/deep/x.ts"));
+            // Only folders strictly between the workspace root and the touched file; closest to the file last.
+            Assert.Equal([Path.GetFullPath(Path.Combine(root, "src", "CLAUDE.md"))], files.Select(f => Path.GetFullPath(f.Path)));
+            Assert.Contains("# strict: no console.log", files.Single().Content);
+        }
+        finally { DeleteDir(root); }
+    }
+
+    [Fact]
+    public void PrefersAgentsMdOverClaudeMdInTheSameFolder()
+    {
+        var root = MakeWorkspace();
+        File.WriteAllText(Path.Combine(root, "src", "AGENTS.md"), "# agents wins");
+        try
+        {
+            var files = Ctx.SubfolderFiles(root, PathUtil.Resolve(root, "src/x.ts"));
+            Assert.Equal([Path.GetFullPath(Path.Combine(root, "src", "AGENTS.md"))], files.Select(f => Path.GetFullPath(f.Path)));
+            Assert.Contains("# agents wins", files.Single().Content);
+        }
+        finally { DeleteDir(root); }
+    }
+
+    [Fact]
+    public void RootInstructionFileIsNeverReturned()
+    {
+        var root = MakeWorkspace();
+        try
+        {
+            var files = Ctx.SubfolderFiles(root, PathUtil.Resolve(root, "x.ts"));
+            Assert.Empty(files.Select(f => f.Path).Where(p => string.Equals(p, Path.Combine(root, "AGENTS.md"), StringComparison.OrdinalIgnoreCase)));
+        }
+        finally { DeleteDir(root); }
+    }
+
+    [Fact]
+    public void PathsOutsideTheWorkspaceReturnNothing()
+    {
+        var root = MakeWorkspace();
+        try
+        {
+            Assert.Empty(Ctx.SubfolderFiles(root, Path.Combine(Path.GetTempPath(), "elsewhere", "x.ts")));
+            Assert.Empty(Ctx.SubfolderFiles(root, Path.Combine(root, "..", "sibling", "x.ts")));
+        }
+        finally { DeleteDir(root); }
+    }
+
+    [Fact]
+    public void BuildAnnouncesSubfolderInstructionEditsAndRemovalsExactlyOnce()
+    {
+        PromptSnapshot Snap(string content) => ContextUpdates.Snapshot([new ContextFile("repo/AGENTS.md", "root")], [], [], [], null, "ask", "en", "pwsh", (null, null),
+            new DateTime(2026, 10, 27));
+
+        // First delivery: the frozen facts were seeded with what the model saw in the tool result — no announcement.
+        var frozen = Snap("v1").Facts;
+        frozen["sub:src/CLAUDE.md"] = Text.Sha256("rules A");
+        Assert.Null(ContextUpdates.Build(frozen, WithSub(Snap("v1"), "rules A")));
+
+        // An edit earns exactly one refresh line.
+        var edited = ContextUpdates.Build(frozen, WithSub(Snap("v1"), "rules B"))!;
+        Assert.Contains(edited, l => l.Contains("src/CLAUDE.md") && l.Contains("changed"));
+
+        // A deletion (empty fact) earns exactly one removal line.
+        var removed = ContextUpdates.Build(frozen, WithSub(Snap("v1"), null))!;
+        Assert.Contains(removed, l => l.Contains("src/CLAUDE.md") && l.Contains("removed"));
+
+        // After the facts are committed (CommitFacts), neither repeats.
+        Assert.Null(ContextUpdates.Build(WithSub(Snap("v1"), "rules B").Facts, WithSub(Snap("v1"), "rules B")));
+
+        PromptSnapshot WithSub(PromptSnapshot snap, string? content)
+        {
+            var facts = new Dictionary<string, string>(snap.Facts);
+            if (content is null) facts["sub:src/CLAUDE.md"] = "";   // deleted file: tombstone fact
+            else facts["sub:src/CLAUDE.md"] = Text.Sha256(content);
+            return new PromptSnapshot(facts, snap.ContextFiles, snap.Skills, snap.ActiveSkills, snap.Notes, snap.Branch, snap.Mode, snap.Language, snap.Shell);
+        }
+    }
+
+    [Fact]
+    public void RenderEmitsAProjectInstructionsBlock()
+    {
+        var block = ContextUpdates.RenderSubfolderInstructions("src/CLAUDE.md", "# rules");
+        Assert.StartsWith("\n\n<project_instructions path=\"src/CLAUDE.md\" scope=\"applies to files under src/\">", block);
+        Assert.Contains("# rules", block);
+        Assert.EndsWith("</project_instructions>", block.TrimEnd());
+
+        // Over the inline limit: a pointer line instead of the full text.
+        var big = ContextUpdates.RenderSubfolderInstructions("src/CLAUDE.md", new string('x', ContextUpdates.MaxInlineContextFileChars + 1));
+        Assert.Contains("read src/CLAUDE.md for the full text", big);
+        Assert.DoesNotContain("xxxx", big);
+    }
+}
+
 

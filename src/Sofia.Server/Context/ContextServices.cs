@@ -293,6 +293,39 @@ public sealed class ContextFiles(SofiaOptions options)
     }
 
     /// <summary>
+    /// The AGENTS.md (preferred) or CLAUDE.md of every folder strictly below <paramref name="workspaceRoot"/> and up
+    /// to the directory that contains <paramref name="path"/> (the path itself, when it is a directory — `ls`/`find`).
+    /// Paths outside the workspace are ignored; the workspace root's own file is skipped because it is already part of
+    /// the frozen system prompt. Each file is capped at 40 KB, like <see cref="Load"/>.
+    /// </summary>
+    public List<ContextFile> SubfolderFiles(string workspaceRoot, string path)
+    {
+        var files = new List<ContextFile>();
+        if (string.IsNullOrWhiteSpace(workspaceRoot) || string.IsNullOrWhiteSpace(path)) return files;
+        try
+        {
+            var root = PathUtil.Normalize(workspaceRoot);
+            var full = PathUtil.Normalize(Path.IsPathRooted(path) ? path : Path.Combine(workspaceRoot, path));
+            // Outside the workspace: no subfolder instructions apply.
+            if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal)) return files;
+
+            var target = Directory.Exists(full) ? full : Path.GetDirectoryName(full);
+            for (var dir = new DirectoryInfo(target); dir is not null; dir = dir.Parent)
+            {
+                // The workspace root itself belongs to the frozen prompt.
+                if (PathUtil.Same(dir.FullName, root)) break;
+                if (!TryAdd(files, Path.Combine(dir.FullName, "AGENTS.md"))) TryAdd(files, Path.Combine(dir.FullName, "CLAUDE.md"));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            // Unresolvable paths simply get no subfolder instructions.
+        }
+        files.Reverse();   // closest to the touched file last, like Load() walks root → workspace.
+        return files;
+    }
+
+    /// <summary>
     /// Returns (replacement, addendum) from the workspace's `SYSTEM.md` / `APPEND_SYSTEM.md` — Sofia's own
     /// <see cref="ConfigPaths.ProjectFolder"/> first, then the shared <see cref="ConfigPaths.SharedProjectFolder"/> —
     /// over the harness-home ones.

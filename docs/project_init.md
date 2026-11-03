@@ -161,6 +161,22 @@ When context use crosses the threshold (or on `/compact`), older messages are
 summarized by the same model. The summary is stored as a `summary` message and
 the folded messages are kept for the transcript but skipped in model history.
 
+### Tool-result pruning
+
+Before compaction, and cheaper than it, old tool results can be pruned: when the
+estimated input crosses `pruneThreshold` (default 0.6, always kept at least 5%
+below `compactThreshold`), a persisted watermark (`Session.PrunedThroughSeq`) is
+advanced in one batch to just before the last `pruneKeepSteps` assistant steps
+that call tools (default 6). Every request after that sends those results as a
+one-line `[pruned: …]` placeholder instead of the full output, and their
+screenshots/attachments fall back to the "older image" labels. The transcript is
+never touched — `ToolCall.Output` still holds the display text and the UI keeps
+the full result. Hysteresis: a prune only fires when the estimated savings are
+at least 10% of the context window, so each cache invalidation buys real space
+and happens rarely. Settings: `pruneToolResults`, `pruneThreshold`,
+`pruneKeepSteps`, `pruneMinChars` (results shorter than this — default 2000
+chars — are never pruned).
+
 ## Web search
 
 `web_search` (`Tools/WebSearchTool.cs`, `ToolKind.Network`, so it needs no
@@ -333,6 +349,16 @@ finishes, the setting is turned off or the server stops.
 
 - Context files: `~/.sofia/AGENTS.md`, then `AGENTS.md` (or `CLAUDE.md`) in
   every directory from the filesystem root down to the workspace.
+- Subfolder instructions (`ContextFiles.SubfolderFiles`): when a file tool
+  touches a path below the workspace root, the `AGENTS.md`/`CLAUDE.md` of each
+  folder strictly between the root and that file is appended to the model-facing
+  tool result as a `<project_instructions>` block — once per conversation per
+  file (tracked by hash in `Session.SubContextFiles`, persisted), refreshed when
+  the file changes, re-injected after compaction or pruning removed the message
+  that carried it. Entries join the volatile context facts as `sub:` keys, so an
+  edit or deletion of a loaded file is announced at the next turn start through
+  the standard `<context_updates>` path. The transcript keeps the plain output;
+  only the model history (the tool result) carries the instructions.
 - `.sofia/SYSTEM.md` replaces the preamble; `APPEND_SYSTEM.md` appends to it.
 - Skills: `SKILL.md` folders under `~/.sofia/skills` and the workspace's
   `.sofia/skills` (other harnesses' folders such as `.claude`, `.agents` or

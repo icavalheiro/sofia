@@ -194,6 +194,7 @@ public sealed class SofiaInfoTool(
         sb.AppendLine($"- defaultModel: \"{c.DefaultModel}\" ('' = first connected model)");
         sb.AppendLine($"- shell: \"{c.Shell}\" ('' = pwsh/powershell on Windows, bash elsewhere)");
         sb.AppendLine($"- autoCompact: {Json(c.AutoCompact)}; compactThreshold: {c.CompactThreshold} (fraction of the context window, 0.3–0.98)");
+        sb.AppendLine($"- pruneToolResults: {Json(c.PruneToolResults)}; pruneThreshold: {c.PruneThreshold} (context fraction that triggers pruning old tool results, kept at least 5% below compactThreshold); pruneKeepSteps: {c.PruneKeepSteps} (assistant steps whose tool results stay intact); pruneMinChars: {c.PruneMinChars} (results shorter than this are never pruned)");
         sb.AppendLine($"- discovery: {Json(c.Discovery)} (probe local runtimes)");
         sb.AppendLine($"- maxToolOutput: {c.MaxToolOutput}");
         sb.AppendLine($"- keepScreenAwake: {Json(c.KeepScreenAwake)}");
@@ -210,6 +211,7 @@ public sealed class SofiaInfoTool(
         sb.AppendLine("# Context files");
         sb.AppendLine($"- Global instructions added to every conversation: {Mark(options.GlobalAgentsFile)}");
         sb.AppendLine("- Project instructions: AGENTS.md (or CLAUDE.md) in the project folder and in every parent folder; they follow the global file.");
+        sb.AppendLine("- Subfolder instructions: when you read, write or edit a file below the project root, the AGENTS.md/CLAUDE.md of each folder between the root and that file is appended to the tool result once per conversation (refreshed if the file changes).");
         sb.AppendLine($"- {Mark(Path.Combine(options.DataDir, "SYSTEM.md"))} replaces the system-prompt preamble; {Mark(Path.Combine(options.DataDir, "APPEND_SYSTEM.md"))} appends to it. A project can have its own in <project>/.sofia/ or <project>/.agents/.");
         if (project is not null) sb.AppendLine($"- Current project: {project}");
         sb.AppendLine("All of them are plain Markdown, re-read on every message. Keep them short: they cost context on every request.");
