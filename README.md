@@ -194,3 +194,7 @@ dotnet publish src/Sofia.Desktop -c Release -r win-x64 --self-contained true -o 
 - `docs/project_init.md` — server architecture
 - `docs/front_end_init.md` — frontend architecture and conventions
 - `brand/` — logo and visual identity
+
+## Use Sofia from your editor (ACP)
+
+Sofia ships an ACP bridge (`sofia-acp`) so editors like Zed, JetBrains IDEs and Neovim can drive it over stdio. See `docs/acp.md`.

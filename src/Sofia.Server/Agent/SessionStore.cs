@@ -60,7 +60,7 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
     /// start on the workspace model even when the workspace has other chats. A model that is gone or hidden in Settings
     /// never survives: the server default takes over.
     /// </summary>
-    public Session CreateSession(Workspace workspace, string? title = null, Session? template = null, string? parentId = null, string? agent = null, bool workspaceModelFirst = false)
+    public Session CreateSession(Workspace workspace, string? title = null, Session? template = null, string? parentId = null, string? agent = null, bool workspaceModelFirst = false, string? origin = null)
     {
         var modelId = workspaceModelFirst
             ? FirstNonEmpty(workspace.ModelId, template?.ModelId)
@@ -77,6 +77,7 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
             PermissionMode = template?.PermissionMode ?? "ask",
             ReasoningMode = template?.ReasoningMode ?? "medium",
             Language = template?.Language,
+            Origin = origin,
         };
         if (providers.Resolve(session.ModelId) is { } resolved) session.Context.Limit = resolved.Model.ContextLength;
         db.Sessions.Insert(session);

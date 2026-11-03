@@ -41,6 +41,9 @@ public sealed class McpManager(SofiaDb db, IEventBus bus, ILoggerFactory loggers
 
     private readonly ConcurrentDictionary<string, Connection> _connections = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    // Ephemeral (session-scoped) MCP servers: config id -> config, plus session -> list of ids.
+    private readonly ConcurrentDictionary<string, McpServerConfig> _ephemeralConfigs = new();
+    private readonly ConcurrentDictionary<string, List<string>> _ephemeralBySession = new();
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -97,9 +100,62 @@ public sealed class McpManager(SofiaDb db, IEventBus bus, ILoggerFactory loggers
         _connections.TryRemove(id, out _);
     }
 
+    /// <summary>Registers a session-scoped (ephemeral, not persisted) MCP server. Dedupes by name+transport+command/url against global servers.</summary>
+    public async Task<McpServerView> AddEphemeralAsync(string sessionId, McpServerConfig config, CancellationToken ct)
+    {
+        // Dedupe against global servers.
+        var globalMatch = db.McpServers.FindAll().FirstOrDefault(g =>
+            g.Name == config.Name && g.Transport == config.Transport &&
+            (g.Transport == "web" ? g.Url == config.Url : g.Command == config.Command));
+        if (globalMatch is not null)
+        {
+            if (globalMatch.Enabled) return View(globalMatch);
+            await ConnectAsync(globalMatch.Id, ct);
+            return View(db.McpServers.FindById(globalMatch.Id));
+        }
+        // Dedupe within the same session.
+        if (_ephemeralBySession.TryGetValue(sessionId, out var existingIds))
+        {
+            foreach (var id in existingIds)
+            {
+                if (_ephemeralConfigs.TryGetValue(id, out var existing) &&
+                    existing.Name == config.Name && existing.Transport == config.Transport &&
+                    (existing.Transport == "web" ? existing.Url == config.Url : existing.Command == config.Command))
+                {
+                    if (_connections.TryGetValue(id, out var c) && c.Status == "connected") return View(existing);
+                    await ConnectAsync(id, ct);
+                    return View(existing);
+                }
+            }
+        }
+        config.Id = Ids.New("mcp");
+        config.Enabled = true;
+        _ephemeralConfigs[config.Id] = config;
+        var ids = _ephemeralBySession.GetOrAdd(sessionId, _ => new List<string>());
+        lock (ids) ids.Add(config.Id);
+        await ConnectAsync(config.Id, ct);
+        bus.Publish(EventTypes.McpUpdated, View(config));
+        return View(config);
+    }
+
+    /// <summary>Removes all ephemeral MCP servers registered for a session.</summary>
+    public async Task RemoveSessionAsync(string sessionId)
+    {
+        if (!_ephemeralBySession.TryRemove(sessionId, out var ids)) return;
+        foreach (var id in ids.ToList())
+        {
+            await DisconnectAsync(id, persist: false);
+            _ephemeralConfigs.TryRemove(id, out _);
+            _connections.TryRemove(id, out _);
+        }
+    }
+
+    private McpServerConfig? FindConfig(string id) =>
+        db.McpServers.FindById(id) ?? (_ephemeralConfigs.TryGetValue(id, out var cfg) ? cfg : null);
+
     public async Task<McpServerView?> ConnectAsync(string id, CancellationToken ct)
     {
-        var config = db.McpServers.FindById(id);
+        var config = FindConfig(id);
         if (config is null) return null;
         var gate = _locks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
@@ -150,7 +206,7 @@ public sealed class McpManager(SofiaDb db, IEventBus bus, ILoggerFactory loggers
 
     public async Task<McpServerView?> DisconnectAsync(string id, bool persist = true)
     {
-        var config = db.McpServers.FindById(id);
+        var config = FindConfig(id);
         if (config is null) return null;
         if (_connections.TryGetValue(id, out var conn))
         {
@@ -163,7 +219,7 @@ public sealed class McpManager(SofiaDb db, IEventBus bus, ILoggerFactory loggers
             conn.Status = "stopped";
             conn.Error = null;
         }
-        if (persist && config.Enabled)
+        if (persist && config.Enabled && db.McpServers.FindById(config.Id) is not null)
         {
             config.Enabled = false;
             db.McpServers.Update(config);
@@ -232,11 +288,17 @@ public sealed class McpManager(SofiaDb db, IEventBus bus, ILoggerFactory loggers
         return parts;
     }
 
-    /// <summary>Tools of every connected server, named `server__tool`.</summary>
-    public List<ITool> Tools()
+    /// <summary>Tools of every connected server, named `server__tool`. When <paramref name="sessionId"/> is given, includes session-scoped (ephemeral) servers for that session.</summary>
+    public List<ITool> Tools(string? sessionId = null)
     {
         var result = new List<ITool>();
-        foreach (var config in db.McpServers.Find(s => s.Enabled))
+        var configs = new List<McpServerConfig>(db.McpServers.Find(s => s.Enabled));
+        if (sessionId is not null && _ephemeralBySession.TryGetValue(sessionId, out var ids))
+        {
+            foreach (var id in ids)
+                if (_ephemeralConfigs.TryGetValue(id, out var cfg) && cfg.Enabled) configs.Add(cfg);
+        }
+        foreach (var config in configs)
         {
             if (!_connections.TryGetValue(config.Id, out var conn) || conn.Client is null || conn.Status != "connected") continue;
             foreach (var tool in conn.Tools) result.Add(new McpTool(config.Name, conn.Client, tool));

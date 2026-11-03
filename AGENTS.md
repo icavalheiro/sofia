@@ -36,6 +36,7 @@ installer remains future work.
 - Providers: OpenAI Chat Completions + Anthropic Messages streaming clients;
   local discovery of Unsloth (`:8888`), Ollama (`:11434`), LM Studio (`:1234`),
   llama.cpp (`:8080`), vLLM (`:8000`); cloud keys from env or Settings.
+- ACP: `src/Sofia.Acp` (net10.0) stdio bridge for editors (Zed, JetBrains, Neovim); `dotnet run --project src/Sofia.Acp`.
 - Desktop: `src/Sofia.Desktop` (Avalonia 12 + XAML, net10.0) native shell that
   launches `Sofia.Server` as a child process (or, if one is already running on
   port 5199, connects to it as an external, permanent service it does not own

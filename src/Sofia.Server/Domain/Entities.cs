@@ -73,6 +73,8 @@ public sealed class Session
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string ModelId { get; set; } = "";
     public string Agent { get; set; } = "build";
+    /// <summary>Origin of the session: 'ui' (default) or 'acp' when created by an editor bridge.</summary>
+    public string? Origin { get; set; }
     public string PermissionMode { get; set; } = "ask";
     public string ReasoningMode { get; set; } = "medium";
     /// <summary>Override the workspace/server sandbox setting for this session (null = inherit).</summary>

@@ -544,7 +544,7 @@ public sealed class SessionRun : IToolHost
     {
         if (_turnPrompt is { } cached && cached.Agent == Session.Agent) return (cached.System, cached.Tools, cached.Delta);
         var agent = _s.AgentCatalog.Get(Session.Agent, Workspace.IsFolder ? Workspace.Path : null);
-        var tools = _s.Tools.For(agent, Workspace);
+        var tools = _s.Tools.For(agent, Workspace, Session.Id);
         // Subagents never ask the user or spawn further subagents.
         if (Session.ParentId is not null) tools.RemoveAll(t => t.Kind is ToolKind.Agent or ToolKind.Interactive);
         var fingerprint = Text.Sha256(string.Join("\n", tools.Select(t => t.Name + "\u0000" + Text.FirstLine(t.Description, 400))));

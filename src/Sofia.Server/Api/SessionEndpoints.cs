@@ -10,6 +10,7 @@ using Sofia.Server.Context;
 using Sofia.Server.Data;
 using Sofia.Server.Domain;
 using Sofia.Server.Infrastructure;
+using Sofia.Server.Mcp;
 using Sofia.Server.Providers;
 using Sofia.Server.Security;
 using Sofia.Server.Vcs;
@@ -18,7 +19,7 @@ namespace Sofia.Server.Api;
 
 public sealed record CreateWorkspaceRequest(string? Kind, string? Path, string? Name, string? Icon, string? ModelId);
 public sealed record UpdateWorkspaceRequest(string? Name, string? Icon, string? ModelId, bool? Expanded, int? Order, bool? Sandbox = null);
-public sealed record CreateSessionRequest(string? Title);
+public sealed record CreateSessionRequest(string? Title, string? Origin = null);
 public sealed record ReorderRequest(List<string>? Ids);
 public sealed record UpdateSessionRequest(string? Title, string? ModelId, string? Agent, string? PermissionMode, string? ReasoningMode, bool? Sandbox = null);
 public sealed record CommandRequest(string Name, string? Arguments, List<string>? Attachments = null);
@@ -26,6 +27,7 @@ public sealed record RevertRequest(string MessageId);
 public sealed record PermissionReplyRequest(string Decision);
 public sealed record AnswerRequest(List<JsonElement?> Answers);
 public sealed record SkillRequest(string SkillId);
+public sealed record SessionMcpRequest(string? Name, string? Transport, string? Command, List<string>? Args, string? Url, string? Token, Dictionary<string, string>? Env);
 public sealed record ImportRequest(string? WorkspaceId, Session Info, List<Message>? Messages);
 
 public static class SessionEndpoints
@@ -131,7 +133,7 @@ public static class SessionEndpoints
             // Modes still come from the workspace's most recent chat; the model does not: a new chat starts on the
             // workspace's base model (see SessionStore.CreateSession).
             var template = db.Sessions.Find(s => s.WorkspaceId == id && s.ParentId == null).OrderByDescending(s => s.UpdatedAt).FirstOrDefault();
-            return Results.Ok(store.CreateSession(workspace, body?.Title, template, workspaceModelFirst: true));
+            return Results.Ok(store.CreateSession(workspace, body?.Title, template, workspaceModelFirst: true, origin: body?.Origin));
         });
 
         api.MapPut("/workspaces/order", (ReorderRequest body, SessionStore store) =>
@@ -163,10 +165,11 @@ public static class SessionEndpoints
             return Results.Ok(agents.ApplySettings(session, body.ModelId, body.Agent, body.PermissionMode, body.ReasoningMode, body.Title, body.Sandbox));
         });
 
-        api.MapDelete("/sessions/{id}", (string id, AgentService agents, SessionStore store) =>
+        api.MapDelete("/sessions/{id}", async (string id, AgentService agents, SessionStore store, McpManager mcp) =>
         {
             var (session, _) = agents.Load(id);
             agents.Abort(id);
+            await mcp.RemoveSessionAsync(id);
             store.DeleteSession(session);
             return Results.NoContent();
         });
@@ -297,6 +300,36 @@ public static class SessionEndpoints
                 .Select(t => new { id = t.Id, title = t.Title, status = t.Status, createdAt = t.CreatedAt, updatedAt = t.UpdatedAt })
                 .ToList();
             bus.Publish(Events.EventTypes.TasksUpdated, new { sessionId = id, tasks = remaining }, id, workspace.Id);
+            return Results.NoContent();
+        });
+
+        // Session-scoped (ephemeral) MCP servers supplied by an editor bridge (ACP).
+        api.MapPost("/sessions/{id}/mcp", async (string id, SessionMcpRequest body, AgentService agents, McpManager mcp, CancellationToken ct) =>
+        {
+            agents.Load(id);
+            var transport = body.Transport == "web" ? "web" : "command";
+            if (string.IsNullOrWhiteSpace(body.Name)) throw new ArgumentException("Name is required.");
+            if (transport == "command" && string.IsNullOrWhiteSpace(body.Command) && (body.Args is null || body.Args.Count == 0))
+                throw new ArgumentException("Command is required.");
+            if (transport == "web" && !Uri.TryCreate(body.Url, UriKind.Absolute, out _)) throw new ArgumentException("A valid URL is required.");
+            var command = body.Command?.Trim() ?? "";
+            if (body.Args is { Count: > 0 })
+                command = (command + " " + string.Join(" ", body.Args)).Trim();
+            var view = await mcp.AddEphemeralAsync(id, new McpServerConfig
+            {
+                Name = body.Name.Trim(),
+                Transport = transport,
+                Command = command,
+                Url = body.Url?.Trim() ?? "",
+                Token = string.IsNullOrWhiteSpace(body.Token) ? null : body.Token.Trim(),
+                Env = body.Env ?? [],
+            }, ct);
+            return Results.Ok(view);
+        });
+
+        api.MapDelete("/sessions/{id}/mcp", async (string id, McpManager mcp) =>
+        {
+            await mcp.RemoveSessionAsync(id);
             return Results.NoContent();
         });
 
