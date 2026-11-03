@@ -10,6 +10,7 @@ using Sofia.Server.Events;
 using Sofia.Server.Infrastructure;
 using Sofia.Server.Mcp;
 using Sofia.Server.Providers;
+using Sofia.Server.Search;
 using Sofia.Server.Security;
 using Sofia.Server.Vcs;
 
@@ -89,7 +90,10 @@ builder.Services.AddSingleton<RunServices>();
 builder.Services.AddSingleton<AgentService>();
 
 // Event-driven pieces: the dispatcher feeds handlers; the broadcaster feeds SignalR clients.
+builder.Services.AddSingleton<ISessionSearch, SessionSearchIndex>();
 builder.Services.AddSingleton<IEventHandler, TitleHandler>();
+builder.Services.AddSingleton<IEventHandler, SearchIndexHandler>();
+builder.Services.AddHostedService<SearchIndexRebuildService>();
 builder.Services.AddHostedService<EventDispatcher>();
 builder.Services.AddHostedService<HubBroadcaster>();
 builder.Services.AddHostedService<MaintenanceService>();
@@ -127,6 +131,7 @@ if (options.UiPath.Length > 0)
 }
 
 app.MapSessionApi();
+app.MapSearchApi();
 app.MapPlatformApi();
 app.MapBrowserApi();
 app.MapProcessApi();

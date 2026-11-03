@@ -248,6 +248,7 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `GET` | `/api/sessions/{id}/tasks` | – | `TaskDto[]` (the conversation's task list, managed by the `tasks` tool) |
 | `DELETE` | `/api/sessions/{id}/tasks` | – | `204` (clears the conversation's task list; broadcasts `tasks.updated`) |
 | `GET` | `/api/sessions/{id}/export` | – | `{ version: 1, info: SessionDto, messages: MessageDto[] }` |
+| `GET` | `/api/search` | `q, workspaceId?, includeArchived?, includeSubagents?, limit?` | `{ results: [{ sessionId, workspaceId, title, updatedAt, archived, score, hits: [{ messageId, seq, role, createdAt, snippet, highlights:[[start,len]] }] }] }` (400 on empty q, 404 unknown workspaceId) |
 | `POST` | `/api/sessions/import` | `{ workspaceId?, info, messages }` | `SessionDto` |
 | `GET` | `/api/stats` | – | `{ sessions, prompts, steps, tokens: { input, output }, cost, activeDays, streak }` |
 
@@ -262,6 +263,7 @@ interface PromptRequest {
   reasoningMode?: string
   sandbox?: boolean | null
   sandboxEffective?: boolean
+  references?: { kind: 'session', id: string, title: string }[]
 }
 ```
 
@@ -479,6 +481,19 @@ interface KnowledgeNote {
 }
 ```
 
+## Session search
+
+`GET /api/search` runs an in-memory inverted index (BM25) over user/assistant message text, rebuilt from LiteDB on startup and kept current by `message.created`, debounced `message.updated`, `message.deleted` and `session.deleted` events. Tokenizer: lowercase + diacritic folding; the last query term matches by prefix (`sess` -> `session`); quoted phrases are matched verbatim. Results are grouped by session (best score first, up to 3 snippets per session, each with `[start, len]` highlight ranges relative to its snippet) and filtered by `workspaceId` (all workspaces when omitted), `includeArchived` (default false) and `includeSubagents` (default false: sessions whose parent is another session are excluded).
+
+Agents get two read-only tools over the same index (available to every built-in agent, allowed in plan mode):
+
+- `session_search` - `query`, `scope` (`workspace` default | `all`), `limit` (<= 50). Session-grouped snippets; the calling session is excluded.
+- `session_read` - `sessionId`, optional `fromSeq`, `around` (a message id: reads a window around it), `maxMessages` (<= 40), `scope`. Returns the transcript as `[role #seq] text` lines wrapped in `<session_transcript>`; restricted to the calling session's workspace unless `scope: 'all'`.
+
+Both redact secret-like strings (API keys, tokens, `api_key = ...` assignments) from their output.
+
+The composer's `@session` mention sends `references: [{ kind: 'session', id, title }]` with the prompt; the server appends a hidden hint - one `<session_reference id="..." title="..." />` per reference - instructing the model to fetch the referenced session with `session_read`.
+
 ## MCP servers
 
 | Method | Path | Body | Response |
@@ -604,6 +619,6 @@ interface ConfigDto {
 
 ## Session-scoped MCP (ACP)
 
-- `POST /api/sessions/{id}/mcp` � register an ephemeral MCP server for one session.
-- `DELETE /api/sessions/{id}/mcp` � remove all ephemeral MCP servers for the session.
+- `POST /api/sessions/{id}/mcp` � register an ephemeral MCP server for one session.
+- `DELETE /api/sessions/{id}/mcp` � remove all ephemeral MCP servers for the session.
 

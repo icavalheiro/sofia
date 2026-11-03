@@ -34,6 +34,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'session.prev', combo: 'Alt+ArrowUp', group: 'navigation', icon: 'chevronUp' },
   { id: 'session.next', combo: 'Alt+ArrowDown', group: 'navigation', icon: 'chevronDown' },
   { id: 'workspace.add', combo: 'Ctrl+O', group: 'navigation', icon: 'folder' },
+  { id: 'search', combo: 'Ctrl+K', group: 'navigation', icon: 'search' },
   { id: 'panel.toggle', combo: 'Ctrl+\\', group: 'navigation', icon: 'panelRight' },
   { id: 'settings.open', combo: 'Ctrl+,', group: 'app', icon: 'gear' },
   { id: 'shortcuts.show', combo: 'Ctrl+/', group: 'app', icon: 'keyboard' },
@@ -173,11 +174,22 @@ export function useShortcut(id: string, handler: () => void): void {
   onScopeDispose(registerShortcut(id, handler))
 }
 
+/**
+ * A shortcut bound to Ctrl+X also fires on Cmd+X (and vice versa), so the same
+ * default works on Windows/Linux and macOS without a separate Mac binding.
+ */
+function matchShortcut(combo: string): ShortcutDef | undefined {
+  const candidates = [ combo ]
+  if (combo.startsWith('Ctrl+')) candidates.push(`Meta${ combo.slice(4) }`)
+  else if (combo.startsWith('Meta+')) candidates.push(`Ctrl${ combo.slice(5) }`)
+  return SHORTCUTS.find((s) => candidates.includes(bindingOf(s.id)))
+}
+
 function onKeydown(event: KeyboardEvent): void {
   if (control.recording || control.suspended || event.isComposing) return
   const combo = comboFromEvent(event)
   if (!combo) return
-  const def = SHORTCUTS.find((s) => bindingOf(s.id) === combo)
+  const def = matchShortcut(combo)
   if (!def) return
   // Swallow the event even when nothing handles it, so the browser never reacts.
   event.preventDefault()

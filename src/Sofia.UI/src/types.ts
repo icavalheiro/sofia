@@ -218,6 +218,27 @@ export interface MetricsDto
   context: ContextDto;
 }
 
+export interface SearchHitDto
+{
+  messageId: string;
+  seq: number;
+  role: string;
+  createdAt: string;
+  snippet: string;
+  highlights: number[][];
+}
+
+export interface SearchResultDto
+{
+  sessionId: string;
+  workspaceId: string;
+  title: string;
+  updatedAt: string;
+  archived: boolean;
+  score: number;
+  hits: SearchHitDto[];
+}
+
 export interface FileDiffDto
 {
   file: string;

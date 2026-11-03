@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } 
 
 import { useHarness } from '@/composables/useHarness'
 import { useShortcut } from '@/composables/useShortcuts'
-import { api, useBackend } from '@/services/sofia'
+import { api, searchSessions, useBackend } from '@/services/sofia'
 import { hitPercent } from '@/services/cacheHealth'
 import { useI18n } from '@/i18n'
 import {
@@ -12,8 +12,10 @@ import {
   type AgentDto,
   type CommandDto,
   type ConfigDto,
+  type Conversation,
   type PermissionModeId,
   type ReasoningModeId,
+  type SearchResultDto,
   type UsageDto,
 } from '@/types'
 import SofiaIcon from '@/components/SofiaIcon.vue'
@@ -35,6 +37,9 @@ const {
   sendSteered,
   runCommand,
   cancelReply,
+  sessionReferences,
+  addSessionReference,
+  removeSessionReference,
 } = useHarness()
 const { state: backend } = useBackend()
 const { t } = useI18n()
@@ -465,17 +470,113 @@ const filteredFileMentions = computed(() => {
     : workspaceFiles.value
   return list.slice(0, 40)
 })
+
+// --- "@session" references ------------------------------------------------------
+// Picking a past session attaches it to the next prompt as a hidden reference (the
+// server injects a <session_reference> hint and the agent reads it with session_read).
+const recentSessions = ref<Conversation[]>([])
+const matchedSessions = ref<SearchResultDto[]>([])
+const sessionsLoading = ref(false)
+let sessionSeq = 0
+let sessionTimer: number | undefined
+
+async function refreshRecentSessions(): Promise<void> {
+  const ws = activeWorkspace.value
+  if (!ws) {
+    recentSessions.value = []
+    return
+  }
+  recentSessions.value = [...ws.conversations]
+    .filter((c) => !c.parentId && c.id !== state.activeConversationId)
+    .sort((a, b) => (b.updatedAtIso ?? '').localeCompare(a.updatedAtIso ?? ''))
+    .slice(0, 6)
+}
+
+function scheduleSessionSearch(): void {
+  window.clearTimeout(sessionTimer)
+  const q = mentionQuery.value.trim()
+  if (!q) {
+    sessionSeq++
+    sessionsLoading.value = false
+    matchedSessions.value = []
+    return
+  }
+  // While the query is in flight the recent list would read as (stale) results.
+  sessionsLoading.value = true
+  sessionTimer = window.setTimeout(async () => {
+    const seq = ++sessionSeq
+    try {
+      const results = await searchSessions(q, { includeArchived: true, limit: 6 })
+      if (seq !== sessionSeq) return
+      const current = state.activeConversationId
+      matchedSessions.value = results.filter((r) => r.sessionId !== current)
+    } catch {
+      if (seq === sessionSeq) matchedSessions.value = []
+    } finally {
+      if (seq === sessionSeq) sessionsLoading.value = false
+    }
+  }, 180)
+}
+
+/** A past session the popup can reference (recent or matched by the typed query). */
+interface SessionMention { id: string; title: string; archived?: boolean }
+
+// With a query the server's ranked results stand as-is (content matches whose titles do not
+// contain the query are exactly what @session is for); without one, show recent sessions.
+const filteredSessionMentions = computed<SessionMention[]>(() => {
+  const q = mentionQuery.value.trim()
+  if (q) return sessionsLoading.value ? [] : matchedSessions.value.map((r) => ({ id: r.sessionId, title: r.title, archived: r.archived }))
+  return recentSessions.value.map((s) => ({ id: s.id, title: s.title, archived: s.archived }))
+})
+
 type MentionItem =
   | { kind: 'agent'; agent: AgentDto }
+  | { kind: 'session'; session: SessionMention }
   | { kind: 'file'; path: string }
 const mentionItems = computed<MentionItem[]>(() => [
   ...filteredMentions.value.map((a) => ({ kind: 'agent' as const, agent: a })),
+  ...filteredSessionMentions.value.map((s) => ({ kind: 'session' as const, session: s })),
   ...filteredFileMentions.value.map((p) => ({ kind: 'file' as const, path: p })),
 ])
 const mentionVisible = computed(() => mentionOpen.value && mentionItems.value.length > 0)
+
+/**
+ * The popup's rows: a section header before the first row of each non-empty group
+ * (agents / sessions / files), then the items themselves, so one v-for renders both.
+ */
+type MentionRow = { type: 'header'; label: string } | { type: 'item'; item: MentionItem }
+const mentionRows = computed<MentionRow[]>(() => {
+  if (!mentionOpen.value) return []
+  const rows: MentionRow[] = []
+  const group = (label: string, items: MentionItem[]) => {
+    if (!items.length) return
+    rows.push({ type: 'header', label })
+    for (const item of items) rows.push({ type: 'item', item })
+  }
+  group(t('composer.mentionAgents'), filteredMentions.value.map((a) => ({ kind: 'agent' as const, agent: a })))
+  group(t('composer.mentionSessions'), filteredSessionMentions.value.map((s) => ({ kind: 'session' as const, session: s })))
+  group(t('composer.mentionFiles'), filteredFileMentions.value.map((p) => ({ kind: 'file' as const, path: p })))
+  return rows
+})
+
+/** First selectable row (rows may start with a section header). */
+function firstMentionRow(): number {
+  const rows = mentionRows.value
+  for (let i = 0; i < rows.length; i++) if (rows[i].type === 'item') return i
+  return 0
+}
+
+/** The next selectable row from `from` in direction `dir`, skipping section headers. */
+function nextMentionRow(from: number, dir: 1 | -1): number {
+  const rows = mentionRows.value
+  for (let i = from + dir; i >= 0 && i < rows.length; i += dir) if (rows[i].type === 'item') return i
+  return from
+}
+
 watch(mentionQuery, () => {
-  mentionIndex.value = 0
-  scrollActiveItemIntoView(mentionList, 0)
+  mentionIndex.value = firstMentionRow()
+  scrollActiveMention()
+  scheduleSessionSearch()
 })
 
 /** Keeps the highlighted row of a popup list inside its scroll viewport. */
@@ -485,12 +586,28 @@ function scrollActiveItemIntoView(list: Ref<HTMLElement | null>, index: number):
   })
 }
 
-watch(mentionIndex, (next) => scrollActiveItemIntoView(mentionList, next))
+/** The mention popup interleaves section headers, so the active row's button ordinal is derived. */
+function scrollActiveMention(): void {
+  const rows = mentionRows.value
+  let ordinal = -1
+  for (let i = 0; i <= mentionIndex.value && i < rows.length; i++) if (rows[i].type === 'item') ordinal++
+  if (ordinal < 0) return
+  scrollActiveItemIntoView(mentionList, ordinal)
+}
+
+watch(mentionIndex, scrollActiveMention)
 watch(paletteIndex, (next) => scrollActiveItemIntoView(paletteList, next))
+
+// Session results arrive async: if the active row vanished or became a header, snap to the nearest item.
+watch(mentionRows, () => {
+  const row = mentionRows.value[mentionIndex.value]
+  if (!row || row.type !== 'item') mentionIndex.value = firstMentionRow()
+})
 
 function closeMention(): void {
   mentionOpen.value = false
   mentionRange = null
+  window.clearTimeout(sessionTimer)
 }
 
 /** Opens the popup when the caret sits right after a "@word" that starts a word. */
@@ -507,13 +624,14 @@ function updateMention(): void {
   mentionRange = { start: caret - match[2].length - 1, end: caret }
   mentionQuery.value = match[2]
   mentionOpen.value = true
-  // Re-opening the popup must start from the first row (the watcher above only
-  // fires when the query text itself changes).
-  if (!wasOpen) mentionIndex.value = 0
-  // Agents and files may have changed since the popup last opened: re-read them.
+  // Re-opening the popup must start from the first selectable row (the watcher
+  // above only fires when the query text itself changes).
+  if (!wasOpen) mentionIndex.value = firstMentionRow()
+  // Agents, files and past sessions may have changed since the popup last opened.
   if (!wasOpen) {
     void refreshAgents()
     void refreshFiles()
+    void refreshRecentSessions()
   }
 }
 
@@ -529,6 +647,20 @@ function onKeyup(event: KeyboardEvent): void {
 function pickMention(item: MentionItem): void {
   const range = mentionRange
   if (!range) return
+  // A session reference is attached to the prompt, not typed into it.
+  if (item.kind === 'session') {
+    addSessionReference(item.session.id, item.session.title)
+    closeMention()
+    nextTick(() => {
+      const el = textarea.value
+      if (el) {
+        el.focus()
+        el.selectionStart = el.selectionEnd = range.start
+      }
+      autoResize()
+    })
+    return
+  }
   const insertion = item.kind === 'agent' ? `@${item.agent.id} ` : `@${item.path} `
   state.composerText = state.composerText.slice(0, range.start) + insertion + state.composerText.slice(range.end)
   closeMention()
@@ -617,21 +749,20 @@ function onKeydown(event: KeyboardEvent): void {
     return
   }
   if (mentionVisible.value) {
-    const count = mentionItems.value.length
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      mentionIndex.value = Math.min(mentionIndex.value + 1, count - 1)
+      mentionIndex.value = nextMentionRow(mentionIndex.value, 1)
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      mentionIndex.value = Math.max(mentionIndex.value - 1, 0)
+      mentionIndex.value = nextMentionRow(mentionIndex.value, -1)
       return
     }
     if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
       event.preventDefault()
-      const chosen = mentionItems.value[mentionIndex.value]
-      if (chosen) pickMention(chosen)
+      const row = mentionRows.value[mentionIndex.value]
+      if (row?.type === 'item') pickMention(row.item)
       return
     }
   }
@@ -728,26 +859,54 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
         </div>
       </div>
 
-      <div class="input-box">
-        <!-- "@" agent mentions: lists the subagents the request can be handed to. -->
-        <div v-if="mentionVisible" ref="mentionList" class="cmd-palette" role="listbox" aria-label="Agents and files">
+      <!-- Past sessions referenced with "@": attached to the next prompt as hidden hints. -->
+      <div v-if="sessionReferences.length" class="attach-strip ref-strip">
+        <div v-for="r in sessionReferences" :key="r.id" class="attach-chip ref-chip">
+          <SofiaIcon name="chat" :size="'0.9rem'" />
+          <span class="attach-name sofia-truncate" :title="r.title">@{{ r.title }}</span>
           <button
-            v-for="(m, i) in mentionItems"
-            :key="m.kind === 'agent' ? 'agent:' + m.agent.id : 'file:' + m.path"
-            class="cmd-item"
-            :class="{ 'cmd-item--active': i === mentionIndex }"
+            class="attach-remove"
             type="button"
-            role="option"
-            :aria-selected="i === mentionIndex"
-            @mousedown.prevent
-            @mouseenter="mentionIndex = i"
-            @click="pickMention(m)"
+            :aria-label="t('composer.removeSessionRef')"
+            @click="removeSessionReference(r.id)"
           >
-            <span class="cmd-name sofia-mono">@{{ m.kind === 'agent' ? m.agent.id : m.path }}</span>
-            <span v-if="m.kind === 'agent' && m.agent.description" class="cmd-desc sofia-truncate">{{ m.agent.description }}</span>
-            <span v-if="m.kind === 'file'" class="cmd-desc sofia-truncate">workspace file</span>
-            <span v-if="m.kind === 'agent' && m.agent.source && m.agent.source !== 'builtin'" class="cmd-tag">{{ m.agent.source }}</span>
+            <SofiaIcon name="x" :size="'0.7rem'" />
           </button>
+        </div>
+      </div>
+
+      <div class="input-box">
+        <!-- "@" mentions: agents to hand the request to, past sessions to reference, workspace files. -->
+        <div v-if="mentionVisible" ref="mentionList" class="cmd-palette" role="listbox" aria-label="Agents, sessions and files">
+          <template v-for="(row, i) in mentionRows" :key="i">
+            <p v-if="row.type === 'header'" class="cmd-section">{{ row.label }}</p>
+            <button
+              v-else
+              class="cmd-item"
+              :class="{ 'cmd-item--active': i === mentionIndex }"
+              type="button"
+              role="option"
+              :aria-selected="i === mentionIndex"
+              @mousedown.prevent
+              @mouseenter="mentionIndex = i"
+              @click="pickMention(row.item)"
+            >
+              <template v-if="row.item.kind === 'agent'">
+                <span class="cmd-name sofia-mono">@{{ row.item.agent.id }}</span>
+                <span v-if="row.item.agent.description" class="cmd-desc sofia-truncate">{{ row.item.agent.description }}</span>
+                <span v-if="row.item.agent.source && row.item.agent.source !== 'builtin'" class="cmd-tag">{{ row.item.agent.source }}</span>
+              </template>
+              <template v-else-if="row.item.kind === 'session'">
+                <span class="cmd-name sofia-truncate">@{{ row.item.session.title }}</span>
+                <span class="cmd-desc">{{ t('composer.sessionRef') }}</span>
+                <span v-if="row.item.session.archived" class="cmd-tag">{{ t('composer.archived') }}</span>
+              </template>
+              <template v-else>
+                <span class="cmd-name sofia-mono">@{{ row.item.path }}</span>
+                <span class="cmd-desc sofia-truncate">workspace file</span>
+              </template>
+            </button>
+          </template>
         </div>
 
         <!-- SOF-14: "/" command palette popover, anchored above the input. -->
@@ -1100,6 +1259,20 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
   margin: 0.2rem 0.35rem;
   font-size: 0.75rem;
   color: var(--sofia-text-faint);
+}
+
+.cmd-section {
+  margin: 0.15rem 0.35rem 0.1rem;
+  padding-top: 0.2rem;
+  font-size: 0.625rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sofia-text-faint);
+}
+
+.cmd-section:first-child {
+  padding-top: 0;
 }
 
 .cmd-item {

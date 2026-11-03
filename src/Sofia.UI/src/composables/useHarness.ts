@@ -68,6 +68,19 @@ interface HarnessState
   error: string | null;
 }
 
+/** The message the chat view should scroll to and flash once its transcript is rendered (search jump). */
+const pendingScrollMessageId = ref<string | null>(null);
+
+/** Past-session references attached to the next prompt from the composer's `@session` mention. */
+export interface SessionReference
+{
+  kind: 'session';
+  id: string;
+  title: string;
+}
+
+const sessionReferences = reactive<SessionReference[]>( [] );
+
 // --- helpers ------------------------------------------------------------------
 
 function uid ( prefix: string ): string
@@ -290,8 +303,8 @@ watch(
 
 // --- per-conversation composer drafts and modes ---------------------------------
 
-/** Unsent prompt (text + attachments) of every conversation other than the open one. */
-const drafts = new Map<string, { text: string; attachments: PendingAttachment[]; }>();
+/** Unsent prompt (text + attachments + session references) of every conversation other than the open one. */
+const drafts = new Map<string, { text: string; attachments: PendingAttachment[]; references: SessionReference[]; }>();
 
 // Switching chats parks the composer content with the chat it belongs to and
 // loads the other chat's own draft; permission/reasoning follow the chat too.
@@ -299,14 +312,16 @@ watch(
   () => state.activeConversationId,
   ( id, previous ) =>
   {
-    if ( previous && ( state.composerText || state.attachments.length ) )
+    if ( previous && ( state.composerText || state.attachments.length || sessionReferences.length ) )
     {
-      drafts.set( previous, { text: state.composerText, attachments: state.attachments } );
+      drafts.set( previous, { text: state.composerText, attachments: state.attachments, references: [ ...sessionReferences ] } );
     }
     const draft = id ? drafts.get( id ) : undefined;
     if ( id ) drafts.delete( id );
     state.composerText = draft?.text ?? '';
     state.attachments = draft?.attachments ?? [];
+    sessionReferences.length = 0;
+    for ( const r of draft?.references ?? [] ) sessionReferences.push( r );
     const conv = findConversation( id );
     if ( conv?.permissionMode ) state.permissionMode = conv.permissionMode;
     if ( conv?.reasoningMode ) state.reasoningMode = conv.reasoningMode;
@@ -314,17 +329,26 @@ watch(
   { flush: 'sync' },
 );
 
-/** Gives a failed prompt back to its chat: the composer when open, else its parked draft. */
-function restoreDraft ( conv: Conversation, text: string, attachments: PendingAttachment[] ): void
+/**
+ * Gives a failed prompt back to its chat: the composer when open, else its parked draft.
+ * `mergeRefs` is false when the failed prompt already detached the references from this chat's
+ * composer (they were captured for the request), so they are put back without being added twice.
+ */
+function restoreDraft ( conv: Conversation, text: string, attachments: PendingAttachment[], references: SessionReference[] = [], mergeRefs = true ): void
 {
   if ( conv.id === state.activeConversationId )
   {
     if ( !state.composerText ) state.composerText = text;
     if ( !state.attachments.length ) state.attachments = attachments;
+    for ( const r of references ) if ( !sessionReferences.some( ( x ) => x.id === r.id ) ) sessionReferences.push( { kind: 'session', id: r.id, title: r.title } );
     return;
   }
   const draft = drafts.get( conv.id );
-  if ( !draft?.text ) drafts.set( conv.id, { text, attachments: draft?.attachments.length ? draft.attachments : attachments } );
+  if ( !draft?.text )
+  {
+    const refs = mergeRefs ? [ ...sessionReferences, ...references ] : references;
+    drafts.set( conv.id, { text, attachments: draft?.attachments.length ? draft.attachments : attachments, references: refs } );
+  }
 }
 
 /** Bumped whenever a tool call finishes; the workspace panel refreshes its file list on it. */
@@ -1077,6 +1101,40 @@ export function useHarness ()
     await selectConversation( conv.workspaceId, conv.id );
   }
 
+  /**
+   * Opens a session and asks the chat view to scroll to `messageId` once its transcript is rendered.
+   * The message lives in the loaded transcript (the model always sees it); if the windowed view has
+   * elided it from the DOM, the view scrolls as close as it can — see ChatMessages.vue.
+   */
+  async function openSessionAt ( sessionId: string, messageId?: string ): Promise<void>
+  {
+    pendingScrollMessageId.value = messageId ?? null;
+    await openConversation( sessionId );
+  }
+
+  /** The message the chat view should jump to (consumed by ChatMessages on render). */
+  function takePendingScrollTarget (): string | null
+  {
+    const id = pendingScrollMessageId.value;
+    pendingScrollMessageId.value = null;
+    return id;
+  }
+
+  // --- @session references -----------------------------------------------------
+
+  /** Adds a past-session reference to the next prompt (the composer's `@session` mention). */
+  function addSessionReference ( id: string, title: string ): void
+  {
+    if ( sessionReferences.some( ( r ) => r.id === id ) ) return;
+    sessionReferences.push( { kind: 'session', id, title } );
+  }
+
+  function removeSessionReference ( id: string ): void
+  {
+    const at = sessionReferences.findIndex( ( r ) => r.id === id );
+    if ( at !== -1 ) sessionReferences.splice( at, 1 );
+  }
+
   function toggleWorkspace ( workspaceId: string ): void
   {
     const ws = findWorkspace( workspaceId );
@@ -1383,20 +1441,23 @@ export function useHarness ()
   {
     const text = state.composerText.trim();
     const pending = [ ...state.attachments ];
+    // A reference alone is not a prompt: the server rejects empty-text prompts without attachments.
     if ( ( !text && !pending.length ) || state.isReplying || sendingPrompt ) return;
     const conv = activeConversation.value;
     if ( !conv ) return;
 
+    const references = [ ...sessionReferences ];
     state.composerText = '';
     state.attachments = [];
-    await submitPrompt( conv, text, pending, true );
+    sessionReferences.length = 0;
+    await submitPrompt( conv, text, pending, true, references );
   }
 
   /**
    * Uploads `pending` and prompts `conv`. On failure the prompt is handed back
    * to its chat's composer (`restore`), and an error card is shown.
    */
-  async function submitPrompt ( conv: Conversation, text: string, pending: PendingAttachment[], restore: boolean ): Promise<void>
+  async function submitPrompt ( conv: Conversation, text: string, pending: PendingAttachment[], restore: boolean, references: SessionReference[] = [] ): Promise<void>
   {
     if ( sendingPrompt ) return;
     sendingPrompt = true;
@@ -1417,12 +1478,14 @@ export function useHarness ()
         permissionMode: conv.permissionMode ?? state.permissionMode,
         reasoningMode: conv.reasoningMode ?? state.reasoningMode,
         language: settings.language,
+        references: references.length ? references : undefined,
       } );
       for ( const a of pending ) if ( a.previewUrl ) URL.revokeObjectURL( a.previewUrl );
     } catch ( e )
     {
       if ( conv.status === 'working' ) setStatusLocal( conv, previous === 'done' ? 'idle' : previous );
-      if ( restore ) restoreDraft( conv, text, pending );
+      // The references were captured for this request; the parked draft already holds them.
+      if ( restore ) restoreDraft( conv, text, pending, references, false );
       pushLocalError( conv, errorText( e ) );
     } finally
     {
@@ -1722,6 +1785,12 @@ export function useHarness ()
     patchActiveSession,
     selectConversation,
     openConversation,
+    openSession: openConversation,
+    openSessionAt,
+    takePendingScrollTarget,
+    sessionReferences,
+    addSessionReference,
+    removeSessionReference,
     archiveConversation,
     pinConversation,
     renameConversation,

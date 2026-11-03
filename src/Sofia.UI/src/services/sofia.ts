@@ -12,7 +12,7 @@
 import { reactive } from 'vue'
 import { HubConnectionBuilder, LogLevel, type HubConnection } from '@microsoft/signalr'
 
-import type { AttachmentDto, SofiaEvent } from '@/types'
+import type { AttachmentDto, SearchResultDto, SofiaEvent } from '@/types'
 
 export type BackendPhase = 'checking' | 'needs-connection' | 'ready' | 'error'
 
@@ -272,6 +272,17 @@ export async function pairWithCode(url: string, code: string): Promise<void> {
     throw new Error(state.error)
   }
   await connect(target, token)
+}
+
+export async function searchSessions(q: string, options: { workspaceId?: string; includeArchived?: boolean; includeSubagents?: boolean; limit?: number } = {}): Promise<SearchResultDto[]> {
+  const params = new URLSearchParams()
+  params.set('q', q)
+  if (options.workspaceId) params.set('workspaceId', options.workspaceId)
+  if (options.includeArchived) params.set('includeArchived', 'true')
+  if (options.includeSubagents) params.set('includeSubagents', 'true')
+  if (options.limit) params.set('limit', String(options.limit))
+  const res = await api<{ results: SearchResultDto[] }>('GET', `/api/search?${params.toString()}`)
+  return res?.results ?? []
 }
 
 export function useBackend(): { state: BackendState } {
