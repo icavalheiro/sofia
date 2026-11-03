@@ -27,6 +27,9 @@ public sealed class SofiaDb : IDisposable
         _compactMarker = string.IsNullOrEmpty(connection.Filename) || connection.Filename == ":memory:" || connection.Filename == ":temp:"
             ? null
             : connection.Filename + ".compact";
+        // LiteDB's rebuild leaves behind `-temp`/`-backup` copies (and never deletes the previous backup). Clean
+        // stale temp files from interrupted rebuilds up front so they do not accumulate.
+        if (_compactMarker is not null) CleanupTempArtifacts(connection.Filename);
         RebuildIfFlagged(_compactMarker, connection);
         Open(connection);
     }
@@ -158,6 +161,8 @@ public sealed class SofiaDb : IDisposable
         {
             try
             {
+                // Delete any leftover backup/temp copies before creating new ones: at most one backup is kept.
+                CleanupAllRebuildArtifacts(_connection.Filename);
                 _db.Rebuild();
                 try { if (File.Exists(_compactMarker)) File.Delete(_compactMarker); } catch { }
                 _lastCompactUtc = DateTime.UtcNow;
@@ -168,6 +173,7 @@ public sealed class SofiaDb : IDisposable
                 _log?.LogWarning(ex, "Online database rebuild failed; will retry on next startup");
                 // Rebuild may have disposed the engine; reopen so the instance stays usable.
                 try { _db.Dispose(); } catch { }
+                try { CleanupTempArtifacts(_connection.Filename); } catch { }
                 try { Open(_connection); } catch (Exception reopenEx) { _log?.LogError(reopenEx, "Failed to reopen database after rebuild failure"); }
             }
         }
@@ -198,11 +204,64 @@ public sealed class SofiaDb : IDisposable
         if (!shouldRebuild) return;
         try
         {
+            // Delete any leftover backup/temp copies before creating new ones: at most one backup is kept.
+            CleanupAllRebuildArtifacts(connection.Filename);
             using (var db = new LiteDatabase(connection)) db.Rebuild();
         }
         catch (Exception) { /* keep the data as is */ }
+        try { CleanupTempArtifacts(connection.Filename); } catch { }
         try { if (File.Exists(marker)) File.Delete(marker); } catch (IOException) { }
         try { if (!File.Exists(autoMarker)) File.WriteAllText(autoMarker, ""); } catch (IOException) { }
+    }
+
+    /// <summary>
+    /// LiteDB's rebuild never removes its previous `-backup`/`-temp` copies (and increments their names when they
+    /// already exist), so the data folder keeps growing. These helpers delete every rebuild artifact except the
+    /// active database and its live log, so at most one backup is ever kept and interrupted rebuilds leave nothing
+    /// behind. See https://github.com/mbdavid/LiteDB/issues/2450.
+    /// </summary>
+    private static IEnumerable<string> RebuildArtifactFiles(string filename)
+    {
+        var dir = Path.GetDirectoryName(filename);
+        if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) yield break;
+        var baseName = Path.GetFileNameWithoutExtension(filename);
+        var activeName = Path.GetFileName(filename);
+        var activeLogName = baseName + "-log.db";
+        foreach (var path in Directory.EnumerateFiles(dir))
+        {
+            var name = Path.GetFileName(path);
+            if (string.Equals(name, activeName, StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.Equals(name, activeLogName, StringComparison.OrdinalIgnoreCase)) continue;
+            bool match =
+                name.StartsWith(baseName + "-temp", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith(baseName + "-tmp", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith(baseName + "-backup", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith(baseName + "-log-temp", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith(baseName + "-log-tmp", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith(baseName + "-log-backup", StringComparison.OrdinalIgnoreCase);
+            if (match) yield return path;
+        }
+    }
+
+    private static void CleanupTempArtifacts(string filename)
+    {
+        foreach (var path in RebuildArtifactFiles(filename))
+        {
+            var name = Path.GetFileName(path);
+            if (name.Contains("temp", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("tmp", StringComparison.OrdinalIgnoreCase))
+            {
+                try { if (File.Exists(path)) File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+        }
+    }
+
+    private static void CleanupAllRebuildArtifacts(string filename)
+    {
+        foreach (var path in RebuildArtifactFiles(filename))
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
     }
 
     public void Dispose() => _db.Dispose();
