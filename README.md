@@ -17,6 +17,10 @@
 
 Sofia is a local AI harness—an ASP.NET Core agent server and a Vue web interface, built from scratch (following [pi.dev](https://pi.dev)). It provides a comprehensive environment for AI development, featuring workspaces, parallel subagents, MCP support, change tracking, and local model discovery (Ollama, Unsloth, etc.).
 
+<p align="center">
+  <img src="brand/screenshot.png" alt="Sofia screenshot" />
+</p>
+
 ## How it fits together
 
 ```
