@@ -533,6 +533,20 @@ function saveThreshold(event: Event): void {
   void saveConfig({ compactThreshold: Math.min(0.99, Math.max(0.1, value / 100)) })
 }
 
+function savePruneThreshold(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (!Number.isFinite(value) || !config.value) return
+  // The server clamps to [0.2, compactThreshold - 0.05]; mirror the upper bound here so the input never shows a rejected value.
+  const max = Math.max(0.2, config.value.compactThreshold - 0.05)
+  void saveConfig({ pruneThreshold: Math.min(max, Math.max(0.2, value / 100)) })
+}
+
+function savePruneKeepSteps(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (!Number.isFinite(value)) return
+  void saveConfig({ pruneKeepSteps: Math.min(50, Math.max(1, Math.round(value))) })
+}
+
 function saveShell(): void {
   if (!config.value || shellDraft.value.trim() === config.value.shell) return
   void saveConfig({ shell: shellDraft.value.trim() })
@@ -867,6 +881,55 @@ onBeforeUnmount(stopEvents)
                       :value="Math.round(config.compactThreshold * 100)"
                       :disabled="!config.autoCompact"
                       @change="saveThreshold"
+                    />
+                  </div>
+
+                  <label class="row">
+                    <span class="row-text">
+                      <span class="row-title">Prune old tool results</span>
+                      <span class="row-sub">Replace large tool results from older steps with a one-line placeholder in the model history (the transcript keeps the full output). Cheaper than compaction; runs in batches to protect the prompt cache.</span>
+                    </span>
+                    <button
+                      class="toggle"
+                      :class="{ 'toggle--on': config.pruneToolResults }"
+                      type="button"
+                      role="switch"
+                      :aria-checked="config.pruneToolResults"
+                      @click="saveConfig({ pruneToolResults: !config.pruneToolResults })"
+                    ><span class="knob" /></button>
+                  </label>
+
+                  <div class="row">
+                    <span class="row-text">
+                      <span class="row-title">Prune threshold</span>
+                      <span class="row-sub">Percent of the context window that triggers pruning (capped at 5% below the compact threshold).</span>
+                    </span>
+                    <input
+                      class="field-input cfg-input cfg-input--num"
+                      type="number"
+                      min="20"
+                      :max="Math.max(20, Math.round((config.compactThreshold - 0.05) * 100))"
+                      step="5"
+                      :value="Math.round(config.pruneThreshold * 100)"
+                      :disabled="!config.autoCompact || !config.pruneToolResults"
+                      @change="savePruneThreshold"
+                    />
+                  </div>
+
+                  <div class="row">
+                    <span class="row-text">
+                      <span class="row-title">Prune keep steps</span>
+                      <span class="row-sub">Assistant steps whose tool results stay intact when pruning runs.</span>
+                    </span>
+                    <input
+                      class="field-input cfg-input cfg-input--num"
+                      type="number"
+                      min="1"
+                      max="50"
+                      step="1"
+                      :value="config.pruneKeepSteps"
+                      :disabled="!config.autoCompact || !config.pruneToolResults"
+                      @change="savePruneKeepSteps"
                     />
                   </div>
 

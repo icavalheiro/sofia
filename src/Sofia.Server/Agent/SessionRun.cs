@@ -430,11 +430,25 @@ public sealed class SessionRun : IToolHost
             var config = _s.Db.GetConfig();
             Session.Context.Limit = model.ContextLength;
             var (system, tools, _) = await TurnContextAsync(config, ct);
-            var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages);
+            HistoryBuilder.PruneOptions? prune = Session.PrunedThroughSeq > 0 ? new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars) : null;
+            var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
             var imageCount = _s.Db.SessionMessages(Session.Id)
                 .SelectMany(m => (m.Attachments ?? []).Concat((m.ToolCalls ?? []).SelectMany(c => c.Images ?? [])))
                 .Count(a => a.Kind == "image");
             var estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments))) + imageCount * 1000;
+
+            // Prune old tool results before compaction: cheaper (no model call), and the watermark is batched so the
+            // prompt cache only dies once per prune. Runs at most once per step, then falls through to the compact check.
+            if (config.PruneToolResults && Math.Max(Session.Context.Used, estimatedInput) > config.PruneThreshold * model.ContextLength)
+            {
+                var pruned = await PruneAsync(config, model, estimatedInput, ct);
+                if (pruned is not null)
+                {
+                    prune = new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars);
+                    history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
+                    estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments))) + imageCount * 1000;
+                }
+            }
 
             // `Context.Used` only reflects the previous response; tool results and the new user message added since then
             // are not in it. Compare against the estimate of what is about to be sent as well, otherwise a large tool
@@ -444,7 +458,7 @@ public sealed class SessionRun : IToolHost
             {
                 if (await CompactAsync(auto: true, ct))
                 {
-                    history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model);
+                    history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
                     estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments)));
                 }
             }
@@ -606,6 +620,37 @@ public sealed class SessionRun : IToolHost
         var shell = ProcessRunner.ResolveShell(config.Shell);
         var snapshot = ContextUpdates.Snapshot(_s.ContextFiles.Load(dir), skills, active, _s.Knowledge.ForPrompt(Workspace.Id, Session.Agent),
             branch, Session.PermissionMode, Session.Language, shell.Name, overrides);
+
+        // Subfolder instruction files (injected on demand through tool results) join the volatile facts as `sub:`
+        // entries, so an edit or removal of an already-loaded file is announced at the next turn start through the
+        // standard <context_updates> path. Facts carry "" for a deleted file (announced once as a removal); entries
+        // whose delivering message was compacted or pruned away are dropped entirely — no announcement, the content
+        // is re-injected on the next touch of the folder.
+        if (dir is not null && Session.SubContextFiles is { Count: > 0 } sub)
+        {
+            var live = _s.Db.SessionMessages(Session.Id);
+            var dropped = false;
+            foreach (var key in sub.Keys.ToList())
+            {
+                var entry = sub[key];
+                if (entry.Seq > 0 && live.Any(m => m.Seq == entry.Seq && m.Compacted)) { sub.Remove(key); dropped = true; }
+                else if (entry.Seq <= Session.PrunedThroughSeq) { sub.Remove(key); dropped = true; }
+            }
+            foreach (var key in sub.Keys)
+            {
+                string? content;
+                try { content = File.ReadAllText(Path.Combine(dir, key)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    snapshot.Facts["sub:" + key] = "";   // deleted: announced once, the map entry stays as a tombstone
+                    continue;
+                }
+                // Always present in the current facts (even when unchanged), so Build() compares instead of
+                // announcing a removal; an edit flips Old != Cur and earns exactly one refresh line.
+                snapshot.Facts["sub:" + key] = Text.Sha256(content);
+            }
+            if (dropped) _s.Store.SaveSession(Session);   // persist so a restart does not re-add the dropped entries
+        }
         return (snapshot, overrides, shell);
     }
 
@@ -894,6 +939,23 @@ public sealed class SessionRun : IToolHost
         Complete(assistant, call, result, sw.Elapsed);
     }
 
+    private static readonly HashSet<string> FileTools = new(StringComparer.Ordinal) { "read", "write", "edit", "ls", "find", "grep" };
+
+    /// <summary>The explicit path argument of a file tool, or null (grep/find over the whole tree must not inject).</summary>
+    private static string? TouchedPath(ToolCall call)
+    {
+        if (!FileTools.Contains(call.Name)) return null;
+        try
+        {
+            var args = Args.Parse(call.Arguments);
+            return Args.Optional(args, "path", "file_path", "filePath");
+        }
+        catch (ToolArgumentException)
+        {
+            return null;
+        }
+    }
+
     private void Complete(Message assistant, ToolCall call, ToolResult result, TimeSpan elapsed)
     {
         var max = _s.Db.GetConfig().MaxToolOutput;
@@ -906,9 +968,120 @@ public sealed class SessionRun : IToolHost
             call.Result = Text.Truncate(result.Output, max);
             call.Duration = elapsed == TimeSpan.Zero ? "—" : Text.Duration(elapsed);
             if (result.Images is { Count: > 0 }) call.Images = result.Images;
+            // Subfolder AGENTS.md/CLAUDE.md discovered by this call are appended to the model-facing result only
+            // (the UI keeps the plain output). Appending to the newest tool result keeps the history append-only,
+            // so the prompt cache is never invalidated. The lock above serialises parallel calls of one step.
+            if (!result.IsError && assistant.Seq > 0) InjectSubfolderInstructions(assistant, call);
             call.Completed = true;
         }
         _s.Store.UpdateMessage(Session, assistant);
+    }
+
+    /// <summary>
+    /// Appends the AGENTS.md/CLAUDE.md of every subfolder between the workspace root and the touched file to this
+    /// tool result — once per conversation per file, or again when the file changed (including the agent editing it).
+    /// </summary>
+    private void InjectSubfolderInstructions(Message assistant, ToolCall call)
+    {
+        if (!Workspace.IsFolder) return;
+        var path = TouchedPath(call);
+        if (string.IsNullOrWhiteSpace(path)) return;
+        List<ContextFile> candidates;
+        try
+        {
+            candidates = _s.ContextFiles.SubfolderFiles(Workspace.Path, PathUtil.Resolve(Cwd, path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return;
+        }
+        if (candidates.Count == 0) return;
+
+        var map = Session.SubContextFiles ??= new Dictionary<string, SubContextEntry>();
+        var additions = new List<string>();
+        foreach (var file in candidates)
+        {
+            var key = PathUtil.Relative(Workspace.Path, file.Path).Replace('\\', '/');
+            var hash = Text.Sha256(file.Content);
+            if (map.TryGetValue(key, out var entry) && entry.Hash == hash) continue;
+            map[key] = new SubContextEntry { Hash = hash, Seq = assistant.Seq };
+            additions.Add(ContextUpdates.RenderSubfolderInstructions(key, file.Content));
+            // Seed the frozen facts with what was just delivered, so the next turn's diff does not announce a change
+            // for content the model already saw in this tool result.
+            if (Session.PromptFacts is { } facts) facts["sub:" + key] = hash;
+        }
+        if (additions.Count == 0) return;
+
+        call.Result = (call.Result ?? "") + string.Join("", additions);
+        _s.Store.SaveSession(Session);   // persisted so a resumed session does not re-inject what the model saw
+    }
+
+    /// <summary>Removes injected subfolder instructions whose delivering message is no longer in the model's view.</summary>
+    private void DropDeliveredSubContext(long throughSeq, bool save)
+    {
+        if (Session.SubContextFiles is not { Count: > 0 } map) return;
+        var removed = false;
+        foreach (var key in map.Where(kv => kv.Value.Seq <= throughSeq).Select(kv => kv.Key).ToList())
+        {
+            map.Remove(key);
+            removed = true;
+        }
+        if (removed && save) _s.Store.SaveSession(Session);
+    }
+
+    // --- tool-result pruning -------------------------------------------------------
+
+    /// <summary>
+    /// Advances the persisted pruning watermark to just before the last <c>PruneKeepSteps</c> assistant steps that call
+    /// tools, in one batch. Hysteresis: it only fires when the estimated savings are at least 10% of the context
+    /// window, so a cache invalidation buys real space and happens rarely. Returns the number of pruned results.
+    /// </summary>
+    private async Task<int?> PruneAsync(ServerConfig config, ModelInfo model, int currentEstimate, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var messages = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).OrderBy(m => m.Seq).ToList();
+        var (keepSeq, saved) = ComputePruneWatermark(messages, Session.PrunedThroughSeq, config.PruneKeepSteps, config.PruneMinChars, model.ContextLength);
+        if (keepSeq is null) return null;
+
+        Session.PrunedThroughSeq = keepSeq.Value;
+        // Injected subfolder instructions that lived in pruned results are gone from the model's view: drop them so
+        // the next touch of the folder re-injects them. One save covers both.
+        DropDeliveredSubContext(keepSeq.Value, save: false);
+        _s.Store.SaveSession(Session);
+        var count = messages.Where(m => m.Seq <= keepSeq.Value)
+            .SelectMany(m => m.ToolCalls ?? [])
+            .Count(c => (c.Result ?? c.Output ?? c.Error ?? "").Length > config.PruneMinChars);
+        _s.Log.LogInformation("Pruned {Count} old tool results (~{Tokens} tokens) for session {Session}", count, saved, Session.Id);
+        return count;
+    }
+
+    /// <summary>
+    /// The pruning decision, pure and testable: the watermark to advance to (just before the last <paramref name="keepSteps"/>
+    /// assistant steps that call tools), or null when nothing should be pruned yet — either there is no headroom over the
+    /// current watermark or the hysteresis check fails. The estimated token savings are returned alongside so the caller
+    /// can log them.
+    /// </summary>
+    public static (long? ThroughSeq, int SavedTokens) ComputePruneWatermark(IEnumerable<Message> messages, long currentWatermark,
+        int keepSteps, int minChars, int contextLength)
+    {
+        var ordered = messages.Where(m => !m.Compacted && !m.Synthetic).OrderBy(m => m.Seq).ToList();
+        // Keep the newest steps intact; the watermark lands on the message just before them.
+        var keepSeq = ordered.Where(m => m.Role == "assistant" && (m.ToolCalls?.Count ?? 0) > 0)
+            .SkipLast(Math.Max(1, keepSteps)).Select(m => m.Seq).DefaultIfEmpty(0).Max();
+        if (keepSeq <= currentWatermark) return (null, 0);
+
+        // What the placeholder would save: result size minus its line, plus the images that stop being re-sent.
+        var saved = 0;
+        foreach (var m in ordered.Where(m => m.Seq <= keepSeq))
+            foreach (var call in m.ToolCalls ?? [])
+            {
+                var content = call.Result ?? (call.Status == "error" ? call.Error : call.Output) ?? "";
+                if (content.Length > minChars) saved += Text.EstimateTokens(content) - 30;
+                saved += (call.Images?.Count(a => a.Kind == "image") ?? 0) * 1000;
+            }
+        // Hysteresis: pruning invalidates the cache from the first pruned message on, so it must pay for itself.
+        if (saved < Math.Max(500, contextLength / 10)) return (null, saved);
+        return (keepSeq, saved);
     }
 
     public void ReportProgress(ToolCall call, string chunk)
@@ -1527,6 +1700,10 @@ public sealed class SessionRun : IToolHost
             m.Compacted = true;
             _s.Db.Messages.Update(m);
         }
+        // The folded messages are gone from the model's view: any subfolder instructions they carried must be
+        // re-injected on the next touch of the folder, so drop them (the watermark stays monotonic — pruning is
+        // independent and compaction excludes compacted messages anyway).
+        DropDeliveredSubContext(prefix.Max(m => m.Seq), save: false);
         _s.Store.AddMessage(Session, new Message
         {
             Role = "assistant",

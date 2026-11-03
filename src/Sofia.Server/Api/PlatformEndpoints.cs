@@ -23,19 +23,26 @@ public sealed record CreateWorktreeRequest(string Directory, string Name);
 public sealed record DeleteWorktreeRequest(string Directory, string Worktree, bool? Force);
 public sealed record OpenRequest(string Path, string? App);
 public sealed record PairConnectRequest(string Code);
-public sealed record ConfigPatch(
-    string? DefaultModel,
-    string? Shell,
-    bool? AutoCompact,
-    double? CompactThreshold,
-    bool? Discovery,
-    int? MaxToolOutput,
-    bool? KeepScreenAwake = null,
-    bool? Knowledge = null,
-    string? SearchProvider = null,
-    string? SearxngUrl = null,
-    bool? Sandbox = null,
-    bool? SandboxNetwork = null);
+/// <summary>Partial server-config update. Properties (not constructor parameters) so a partial JSON body binds by name.</summary>
+public sealed record ConfigPatch
+{
+    public string? DefaultModel { get; init; }
+    public string? Shell { get; init; }
+    public bool? AutoCompact { get; init; }
+    public double? CompactThreshold { get; init; }
+    public bool? PruneToolResults { get; init; }
+    public double? PruneThreshold { get; init; }
+    public int? PruneKeepSteps { get; init; }
+    public int? PruneMinChars { get; init; }
+    public bool? Discovery { get; init; }
+    public int? MaxToolOutput { get; init; }
+    public bool? KeepScreenAwake { get; init; }
+    public bool? Knowledge { get; init; }
+    public string? SearchProvider { get; init; }
+    public string? SearxngUrl { get; init; }
+    public bool? Sandbox { get; init; }
+    public bool? SandboxNetwork { get; init; }
+}
 
 public static class PlatformEndpoints
 {
@@ -368,6 +375,14 @@ public static class PlatformEndpoints
             if (body.Shell is { } shell) config.Shell = shell.Trim();
             if (body.AutoCompact is { } auto) config.AutoCompact = auto;
             if (body.CompactThreshold is { } threshold) config.CompactThreshold = Math.Clamp(threshold, 0.3, 0.98);
+            if (body.PruneToolResults is { } pruneEnabled) config.PruneToolResults = pruneEnabled;
+            // Pruning must trigger before compaction: clamp to a band that always stays below the compact threshold.
+            var effectiveCompact = body.CompactThreshold is { } t ? Math.Clamp(t, 0.3, 0.98) : config.CompactThreshold;
+            if (body.PruneThreshold is { } pruneThreshold) config.PruneThreshold = Math.Clamp(pruneThreshold, 0.2, effectiveCompact - 0.05);
+            if (body.PruneKeepSteps is { } keepSteps) config.PruneKeepSteps = Math.Clamp(keepSteps, 1, 50);
+            if (body.PruneMinChars is { } minChars) config.PruneMinChars = Math.Clamp(minChars, 200, 100_000);
+            // A compact threshold that drops below the pruning one invalidates the band: keep the invariant.
+            if (config.PruneThreshold > effectiveCompact - 0.05) config.PruneThreshold = Math.Max(0.2, effectiveCompact - 0.05);
             if (body.Discovery is { } discovery)
             {
                 rediscover = discovery && !config.Discovery;
@@ -431,6 +446,10 @@ public static class PlatformEndpoints
             c.Shell,
             c.AutoCompact,
             c.CompactThreshold,
+            c.PruneToolResults,
+            c.PruneThreshold,
+            c.PruneKeepSteps,
+            c.PruneMinChars,
             c.Discovery,
             c.MaxToolOutput,
             c.KeepScreenAwake,

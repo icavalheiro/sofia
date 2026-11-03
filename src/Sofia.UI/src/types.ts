@@ -254,6 +254,10 @@ export interface ConfigDto
   shell: string;
   autoCompact: boolean;
   compactThreshold: number;
+  pruneToolResults: boolean;
+  pruneThreshold: number;
+  pruneKeepSteps: number;
+  pruneMinChars: number;
   discovery: boolean;
   maxToolOutput: number;
   keepScreenAwake: boolean;

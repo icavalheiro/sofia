@@ -108,6 +108,17 @@ public sealed class Session
     [JsonIgnore] public string? FrozenTools { get; set; }
     /// <summary>Volatile facts baked into the frozen prompt (or already delivered as context updates).</summary>
     [JsonIgnore] public Dictionary<string, string>? PromptFacts { get; set; }
+    /// <summary>
+    /// Subfolder AGENTS.md/CLAUDE.md files already injected into this conversation (normalized path → hash of the
+    /// content delivered and the Seq of the message that carried it). Persisted so a resumed session does not
+    /// re-inject what the model already saw, until compaction or pruning removes the delivering message.
+    /// </summary>
+    [JsonIgnore] public Dictionary<string, SubContextEntry>? SubContextFiles { get; set; }
+    /// <summary>
+    /// Tool-result pruning watermark: messages with Seq at or below this are sent to the model with their large tool
+    /// results replaced by a placeholder (the transcript keeps the full output). Monotonic; advanced in batches.
+    /// </summary>
+    [JsonIgnore] public long PrunedThroughSeq { get; set; }
     [BsonIgnore] public int Queued { get; set; }
     /// <summary>Prompts accepted while a run is busy but not yet sent to the model (steer first, then queued). Replaced, never mutated.</summary>
     [BsonIgnore] public List<QueuedMessage> QueuedMessages { get; set; } = [];
@@ -123,6 +134,15 @@ public sealed class Session
 
 /// <summary>A user prompt waiting for its turn; <paramref name="Delivery"/> is 'steer' or 'queue'.</summary>
 public sealed record QueuedMessage(string Id, string Text, string Delivery, List<Attachment> Attachments);
+
+/// <summary>One subfolder instruction file a session already delivered to the model (see <see cref="Session.SubContextFiles"/>).</summary>
+public sealed class SubContextEntry
+{
+    /// <summary>SHA-256 of the content that was injected; a change re-injects the file.</summary>
+    public string Hash { get; set; } = "";
+    /// <summary>Seq of the message whose tool result carried the injection (0 before it is persisted).</summary>
+    public long Seq { get; set; }
+}
 
 public sealed class Attachment
 {
@@ -422,6 +442,14 @@ public sealed class ServerConfig
     public string Shell { get; set; } = "";
     public bool AutoCompact { get; set; } = true;
     public double CompactThreshold { get; set; } = 0.8;
+    /// <summary>Replace old large tool results in the model history with a placeholder before compaction would be needed.</summary>
+    public bool PruneToolResults { get; set; } = true;
+    /// <summary>Fraction of the context window that triggers pruning (kept at least 5% below <see cref="CompactThreshold"/>).</summary>
+    public double PruneThreshold { get; set; } = 0.6;
+    /// <summary>Assistant steps whose tool results stay intact when pruning runs.</summary>
+    public int PruneKeepSteps { get; set; } = 6;
+    /// <summary>Tool results shorter than this many characters are never pruned.</summary>
+    public int PruneMinChars { get; set; } = 2_000;
     public bool Discovery { get; set; } = true;
     public int MaxToolOutput { get; set; } = 50_000;
     /// <summary>Keep the display (and system) from sleeping while an agent is working.</summary>

@@ -595,6 +595,24 @@ public sealed class AgentLoopTests : IDisposable
         Assert.Equal(HttpStatusCode.BadRequest, (await http.PatchAsJsonAsync("/api/config", new { searchProvider = "bing" })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await http.PatchAsJsonAsync("/api/config", new { searxngUrl = "not a url" })).StatusCode);
         await http.PatchAsJsonAsync("/api/config", new { keepScreenAwake = false });
+
+        // Tool-result pruning settings round-trip; out-of-band values are clamped, and the prune threshold is kept
+        // at least 5% below the compact threshold (pruning must trigger before compaction).
+        var defaults = await http.GetFromJsonAsync<JsonElement>("/api/config");
+        Assert.True(defaults.GetProperty("pruneToolResults").GetBoolean());
+        Assert.Equal(0.6, defaults.GetProperty("pruneThreshold").GetDouble());
+        Assert.Equal(6, defaults.GetProperty("pruneKeepSteps").GetInt32());
+        Assert.Equal(2_000, defaults.GetProperty("pruneMinChars").GetInt32());
+
+        var pruned = await http.PatchAsJsonAsync("/api/config", new { pruneToolResults = false, pruneThreshold = 0.95, pruneKeepSteps = 99, pruneMinChars = 1 });
+        pruned.EnsureSuccessStatusCode();
+        config = await http.GetFromJsonAsync<JsonElement>("/api/config");
+        Assert.False(config.GetProperty("pruneToolResults").GetBoolean());
+        Assert.Equal(defaults.GetProperty("compactThreshold").GetDouble() - 0.05, config.GetProperty("pruneThreshold").GetDouble());
+        Assert.Equal(50, config.GetProperty("pruneKeepSteps").GetInt32());
+        Assert.Equal(200, config.GetProperty("pruneMinChars").GetInt32());
+
+        await http.PatchAsJsonAsync("/api/config", new { pruneToolResults = true, pruneThreshold = 0.6, pruneKeepSteps = 6, pruneMinChars = 2_000 });
     }
 
     [Fact]

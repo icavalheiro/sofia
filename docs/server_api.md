@@ -599,6 +599,10 @@ interface ConfigDto {
   shell: string                 // '' = pwsh/powershell on Windows, bash elsewhere
   autoCompact: boolean
   compactThreshold: number      // fraction of the context window, e.g. 0.8
+  pruneToolResults: boolean     // replace large old tool results with a one-line placeholder in model history
+  pruneThreshold: number        // context fraction that triggers pruning (clamped to [0.2, compactThreshold - 0.05])
+  pruneKeepSteps: number        // assistant steps whose tool results stay intact (1–50)
+  pruneMinChars: number         // results shorter than this are never pruned (200–100000)
   discovery: boolean            // probe local runtimes
   maxToolOutput: number         // bytes kept per tool result
   keepScreenAwake: boolean      // hold the display awake while any agent run is active (server machine)

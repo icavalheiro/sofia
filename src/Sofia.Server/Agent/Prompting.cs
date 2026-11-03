@@ -241,6 +241,21 @@ public static class ContextUpdates
     private static string RenderSkills(IReadOnlyList<SkillInfo> skills) =>
         string.Join("\n", skills.Select(s => $"- {s.Name}: {Text.FirstLine(s.Description, 200)}"));
 
+    /// <summary>
+    /// The block appended to a tool result when a subfolder's AGENTS.md/CLAUDE.md is injected for the first time (or
+    /// re-delivered after an edit). Files over <see cref="MaxInlineContextFileChars"/> become a pointer line instead,
+    /// like the context-update path. The path is relative to the workspace root with forward slashes.
+    /// </summary>
+    public static string RenderSubfolderInstructions(string relativePath, string content)
+    {
+        var path = NormalizePath(relativePath);
+        var dir = Path.GetDirectoryName(path)?.Replace('\\', '/') ?? ".";
+        var open = "<project_instructions path=\"" + path + "\" scope=\"applies to files under " + dir + "/\">";
+        if (content.Length > MaxInlineContextFileChars)
+            return "\n\n" + open + "The subfolder instructions changed; read " + path + " for the full text.</project_instructions>";
+        return "\n\n" + open + "\n" + content.Trim() + "\n</project_instructions>";
+    }
+
     private static string ModeLine(string mode) => mode switch
     {
         "plan" => "- " + Agents.Get("plan").Addendum,
@@ -297,6 +312,20 @@ public static class ContextUpdates
         foreach (var key in frozen.Keys.Where(k => k.StartsWith("ctx:", StringComparison.Ordinal) && !now.ContainsKey(k)))
             lines.Add($"- The project instructions at {key["ctx:".Length..]} were removed; they no longer apply.");
 
+        // Subfolder instruction files injected through tool results: announce edits and removals the same way. A first-time
+        // injection is not announced here — it rides in the tool result itself; this path only covers changes after that.
+        // The current facts carry "" for a tracked file that was deleted on disk, which distinguishes deletion (Old != "")
+        // from compaction/pruning of the delivering message (no key at all: the content is re-injected on the next touch).
+        foreach (var key in now.Keys.Where(k => k.StartsWith("sub:", StringComparison.Ordinal)))
+        {
+            var old = Old(key);
+            if (old == Cur(key)) continue;
+            var rel = key["sub:".Length..];
+            lines.Add(string.IsNullOrEmpty(Cur(key))
+                ? $"- The subfolder instructions at {rel} were removed; they no longer apply."
+                : $"- The subfolder instructions at {rel} changed since they were shown to you; re-read that file before touching files under its folder.");
+        }
+
         if (Old("overrides") != Cur("overrides"))
             lines.Add("- The system prompt override files (SYSTEM.md / APPEND_SYSTEM.md) changed; read them if this task depends on them.");
 
@@ -317,6 +346,14 @@ public static class ContextUpdates
 
 public static class HistoryBuilder
 {
+    /// <summary>
+    /// Batched tool-result pruning: messages with <c>Seq &lt;= ThroughSeq</c> are sent to the model with their large
+    /// tool results replaced by a one-line placeholder and their images dropped. The watermark is persisted on the
+    /// session, so every request between two prunes sends an identical prefix (prompt-cache stable). The transcript
+    /// (<see cref="ToolCall.Output"/>, <see cref="Message.Attachments"/>) is never touched.
+    /// </summary>
+    public sealed record PruneOptions(long ThroughSeq, int MinChars);
+
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".txt", ".md", ".json", ".xml", ".yaml", ".yml", ".csv", ".log", ".ts", ".tsx", ".js", ".jsx", ".vue", ".cs", ".py", ".rs", ".go",
@@ -326,7 +363,7 @@ public static class HistoryBuilder
     public static List<ChatMessage> Build(IEnumerable<Message> messages, ModelInfo model)
         => Build(messages, model, true);
 
-    public static List<ChatMessage> Build(IEnumerable<Message> messages, ModelInfo model, bool includeImages)
+    public static List<ChatMessage> Build(IEnumerable<Message> messages, ModelInfo model, bool includeImages, PruneOptions? prune = null)
     {
         var ordered = messages.Where(m => !m.Synthetic).OrderBy(m => m.Seq).ToList();
         var result = new List<ChatMessage>();
@@ -337,8 +374,10 @@ public static class HistoryBuilder
                 $"<conversation_summary>\n{summary.Text}\n</conversation_summary>\nThe summary above replaces the earlier part of this conversation. Continue from it."));
         }
 
+        // Pruned steps are excluded from the "recent media" sets, so their screenshots and attachments fall back to
+        // the existing "(older image, not resent)" labels instead of being re-sent as base64.
         var recentShots = ordered
-            .Where(m => !m.Compacted && m.Summary != true)
+            .Where(m => !m.Compacted && m.Summary != true && (prune is null || m.Seq > prune.ThroughSeq))
             .SelectMany(m => m.ToolCalls ?? [])
             .Where(c => c.Images is { Count: > 0 })
             .Select(c => c.Id)
@@ -347,6 +386,7 @@ public static class HistoryBuilder
 
         var recentUserMedia = ordered
             .Where(m => !m.Compacted && m.Summary != true && m.Role == "user"
+                && (prune is null || m.Seq > prune.ThroughSeq)
                 && m.Attachments is { Count: > 0 } && m.Attachments.Any(a => a.Kind is "image" or "audio" or "video"))
             .TakeLast(ImagesKept)
             .Select(m => m.Id)
@@ -387,6 +427,8 @@ public static class HistoryBuilder
             foreach (var call in calls)
             {
                 var content = call.Result ?? (call.Status == "error" ? call.Error : call.Output) ?? "Tool call was interrupted before it completed.";
+                if (prune is not null && m.Seq <= prune.ThroughSeq && content.Length > prune.MinChars)
+                    content = PrunePlaceholder(call);
                 result.Add(new ChatMessage
                 {
                     Role = "tool",
@@ -406,6 +448,16 @@ public static class HistoryBuilder
 
     /// <summary>Only the latest screenshots are resent as images; every earlier one costs tokens on each turn.</summary>
     private const int ImagesKept = 2;
+
+    /// <summary>
+    /// The replacement for a pruned tool result: what the call was, how big it was and the reminder to re-run it.
+    /// Deterministic from persisted state (name, summary, size), so repeated builds with the same watermark are identical.
+    /// </summary>
+    private static string PrunePlaceholder(ToolCall call)
+    {
+        var what = string.IsNullOrWhiteSpace(call.Summary) ? call.Name : $"{call.Name} {Text.FirstLine(call.Summary, 120)}";
+        return $"[pruned: {what}, {Text.HumanSize((long)Math.Max(1, (call.Result ?? call.Output ?? call.Error ?? "").Length))} — re-run the tool if needed]";
+    }
 
     private static List<ContentPart> ScreenshotContent(List<ToolCall> calls, HashSet<string> recent, ModelInfo model, bool includeImages = true)
     {
