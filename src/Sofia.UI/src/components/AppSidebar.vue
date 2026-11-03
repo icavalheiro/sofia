@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 
 import logoUrl from '@/assets/logo_42.png'
 import { useHarness } from '@/composables/useHarness'
 import { useSound } from '@/composables/useSound'
 import { sessionBadge as liveBadge } from '@/composables/useSessionStatus'
-import { triggerShortcut, useShortcut } from '@/composables/useShortcuts'
+import { bindingOf, triggerShortcut, useShortcut } from '@/composables/useShortcuts'
+import { searchSessions } from '@/services/sofia'
 import { useI18n } from '@/i18n'
 import SettingsPanel, { type SettingsTabId } from '@/components/SettingsPanel.vue'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import WorkspaceSettings from '@/components/WorkspaceSettings.vue'
+import type { SearchHitDto, SearchResultDto } from '@/types'
 
 const {
   state,
@@ -28,6 +30,7 @@ const {
   reorderWorkspaces,
   restoreConversation,
   deleteConversation,
+  openSessionAt,
 } = useHarness()
 
 const { playSound } = useSound()
@@ -44,6 +47,125 @@ function openSettings(initialTab?: SettingsTabId): void {
   settingsTab.value = initialTab
   showSettings.value = true
 }
+
+// --- Past-session search (Ctrl/Cmd+K) --------------------------------------------
+// A quick prompt over every conversation in the workspace: type, arrow through the ranked
+// hits, Enter opens the session (and asks the chat view to scroll to the matched message).
+
+interface SearchHitRow {
+  key: string
+  sessionId: string
+  title: string
+  snippet: SearchHitDto
+}
+
+const searchOpen = ref(false)
+const searchQuery = ref('')
+const searching = ref(false)
+const searchRows = ref<SearchHitRow[]>([])
+const searchIndex = ref(0)
+let searchSeq = 0
+let searchTimer: number | undefined
+
+function flattenHits(results: SearchResultDto[]): SearchHitRow[] {
+  const rows: SearchHitRow[] = []
+  for (const r of results) {
+    for (const h of r.hits) rows.push({ key: `${r.sessionId}:${h.messageId}`, sessionId: r.sessionId, title: r.title, snippet: h })
+  }
+  return rows
+}
+
+async function runSearch(): Promise<void> {
+  const q = searchQuery.value.trim()
+  const seq = ++searchSeq
+  if (!q) {
+    searchRows.value = []
+    searching.value = false
+    return
+  }
+  searching.value = true
+  try {
+    const results = await searchSessions(q, { includeArchived: true, includeSubagents: true, limit: 30 })
+    if (seq !== searchSeq) return // a newer query superseded this one
+    searchRows.value = flattenHits(results)
+    if (searchIndex.value >= searchRows.value.length) searchIndex.value = Math.max(0, searchRows.value.length - 1)
+  } finally {
+    if (seq === searchSeq) searching.value = false
+  }
+}
+
+function onSearchInput(): void {
+  window.clearTimeout(searchTimer)
+  searchIndex.value = 0
+  searchTimer = window.setTimeout(runSearch, 180)
+}
+
+function openSearch(): void {
+  searchOpen.value = true
+}
+
+function closeSearch(): void {
+  searchOpen.value = false
+  searchSeq++ // cancel any in-flight request
+  window.clearTimeout(searchTimer)
+}
+
+function onSearchKeydown(event: KeyboardEvent): void {
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    searchIndex.value = Math.min(searchIndex.value + 1, Math.max(0, searchRows.value.length - 1))
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    searchIndex.value = Math.max(searchIndex.value - 1, 0)
+  } else if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
+    const row = searchRows.value[searchIndex.value]
+    if (row) openHit(row)
+  }
+}
+
+function openHit(row: SearchHitRow): void {
+  closeSearch()
+  void openSessionAt(row.sessionId, row.snippet.messageId)
+}
+
+useShortcut('search', () => {
+  if (searchOpen.value) closeSearch()
+  else openSearch()
+})
+
+const searchInputEl = ref<HTMLInputElement | null>(null)
+
+/** Splits a snippet on its `[start, length]` highlight ranges into plain/`<mark>` segments. */
+function snippetParts(h: SearchHitDto): { text: string; mark: boolean }[] {
+  const parts: { text: string; mark: boolean }[] = []
+  let cursor = 0
+  for (const [start, len] of h.highlights ?? []) {
+    if (len <= 0 || start < cursor) continue
+    if (start > cursor) parts.push({ text: h.snippet.slice(cursor, start), mark: false })
+    parts.push({ text: h.snippet.slice(start, start + len), mark: true })
+    cursor = start + len
+  }
+  if (cursor < h.snippet.length) parts.push({ text: h.snippet.slice(cursor), mark: false })
+  return parts
+}
+
+/** The current search shortcut combo ("Ctrl+K" / "⌘K") for the button hint. */
+const searchCombo = computed(() => {
+  const combo = bindingOf('search')
+  if (!combo) return ''
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  return combo.replace(/^Ctrl\+/, isMac ? '⌘' : 'Ctrl+')
+})
+
+watch(searchOpen, (open) => {
+  if (!open) return
+  // Focus and re-run the current query so a reopened panel is always fresh.
+  nextTick(() => {
+    searchInputEl.value?.focus()
+    void runSearch()
+  })
+})
 
 const STATUS_ICON: Record<string, string> = {
   working: 'zap',
@@ -425,6 +547,61 @@ useShortcut('session.next', () => stepSession(1))
         <SofiaIcon name="plus" :size="'0.95rem'" />
         {{ t('nav.workspace') }}
       </button>
+    </div>
+
+    <div class="search-field">
+      <button
+        class="action-btn search-toggle"
+        type="button"
+        :title="t('nav.searchTitle')"
+        :aria-label="t('nav.searchTitle')"
+        @click="playSound('click'); openSearch()"
+      >
+        <SofiaIcon name="search" :size="'0.9rem'" />
+        <span class="search-toggle-label">{{ t('nav.search') }}</span>
+        <kbd v-if="searchCombo" class="sc-hint">{{ searchCombo }}</kbd>
+      </button>
+
+      <!-- Past-session quick prompt: type, arrow through ranked hits, Enter opens the session. -->
+      <div v-if="searchOpen" class="search-pop">
+        <div class="search-pop-input">
+          <SofiaIcon name="search" :size="'0.85rem'" />
+          <input
+            ref="searchInputEl"
+            v-model="searchQuery"
+            class="search-pop-field"
+            type="text"
+            :placeholder="t('nav.searchPlaceholder')"
+            @input="onSearchInput"
+            @keydown="onSearchKeydown"
+            @keydown.esc="closeSearch"
+          />
+          <button v-if="searchQuery" class="search-pop-clear" type="button" aria-label="Clear" @click="searchQuery = ''; onSearchInput()">
+            <SofiaIcon name="x" :size="'0.7rem'" />
+          </button>
+        </div>
+
+        <div class="search-pop-results">
+          <p v-if="searching && !searchRows.length" class="search-pop-note">{{ t('nav.searchLoading') }}</p>
+          <p v-else-if="searchQuery.trim() && !searchRows.length" class="search-pop-note">{{ t('nav.searchEmpty') }}</p>
+          <button
+            v-for="(row, i) in searchRows"
+            :key="row.key"
+            class="search-hit"
+            type="button"
+            :class="{ 'search-hit--active': i === searchIndex }"
+            @mouseenter="searchIndex = i"
+            @click="openHit(row)"
+          >
+            <span class="search-hit-title sofia-truncate">{{ row.title }}</span>
+            <span class="search-hit-snippet">
+              <template v-for="(p, pi) in snippetParts(row.snippet)" :key="pi">
+                <mark v-if="p.mark" class="search-mark">{{ p.text }}</mark><template v-else>{{ p.text }}</template>
+              </template>
+            </span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <div v-if="showAdd" class="add-form">
@@ -813,6 +990,131 @@ useShortcut('session.next', () => stepSession(1))
 
 .action-btn--primary:hover {
   background: var(--sofia-primary-strong);
+}
+
+/* --- past-session search ------------------------------------------------ */
+.search-field {
+  position: relative;
+  padding: 0 0.75rem 0.25rem;
+}
+
+.search-toggle {
+  width: 100%;
+  justify-content: flex-start;
+  color: var(--sofia-text-muted);
+}
+
+.search-toggle:hover {
+  color: var(--sofia-text);
+}
+
+.search-toggle-label {
+  flex: 1;
+  text-align: left;
+}
+
+.search-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0.75rem;
+  right: 0.75rem;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--sofia-surface-2);
+  border: 1px solid var(--sofia-border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.28);
+}
+
+.search-pop-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--sofia-border);
+  color: var(--sofia-text-muted);
+}
+
+.search-pop-field {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--sofia-text);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.search-pop-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sofia-text-muted);
+  cursor: pointer;
+}
+
+.search-pop-clear:hover {
+  background: var(--sofia-surface-3);
+  color: var(--sofia-text);
+}
+
+.search-pop-results {
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
+  padding: 0.3rem;
+}
+
+.search-pop-note {
+  margin: 0;
+  padding: 0.6rem 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--sofia-text-faint);
+}
+
+.search-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sofia-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-hit--active {
+  background: var(--sofia-surface-3);
+}
+
+.search-hit-title {
+  font-size: 0.8125rem;
+  font-weight: 550;
+}
+
+.search-hit-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--sofia-text-muted);
+}
+
+.search-mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--sofia-primary-soft);
+  color: var(--sofia-text);
 }
 
 .add-form {

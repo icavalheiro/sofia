@@ -9,6 +9,8 @@ using Sofia.Server.Providers;
 
 namespace Sofia.Server.Agent;
 
+public sealed record SessionReference(string Id, string Title);
+
 public sealed record PromptInput(
     string Text,
     List<string>? Attachments = null,
@@ -17,7 +19,8 @@ public sealed record PromptInput(
     string? Agent = null,
     string? PermissionMode = null,
     string? ReasoningMode = null,
-    string? Language = null);
+    string? Language = null,
+    List<SessionReference>? References = null);
 
 public sealed class ConflictException(string message) : Exception(message);
 
@@ -108,7 +111,16 @@ public sealed class AgentService(RunServices services, CommandService commands, 
             .ToList();
         if (string.IsNullOrWhiteSpace(input.Text) && attachments.Count == 0) throw new ArgumentException("The prompt is empty.");
 
-        var prompt = new PendingPrompt(Ids.New("msg"), "prompt", input.Text.Trim(), expanded ?? ExpandPrompt(session, workspace, input.Text), attachments);
+        var expandedText = expanded;
+        if (input.References is { Count: > 0 })
+        {
+            var refs = string.Join("\n", input.References.Select(r => $"<session_reference id=\"{r.Id}\" title=\"{r.Title}\" />"));
+            if (expandedText is null) expandedText = ExpandPrompt(session, workspace, input.Text);
+            expandedText = $"{expandedText.TrimEnd()}\n\n<session_references>\n{refs}\nThe user referenced past sessions above. When the request depends on them, read each one with the `session_read` tool (sessionId: the reference's id) before answering.\n</session_references>";
+        }
+        if (expandedText is null) expandedText = ExpandPrompt(session, workspace, input.Text);
+
+        var prompt = new PendingPrompt(Ids.New("msg"), "prompt", input.Text.Trim(), expandedText, attachments);
         var steer = input.Delivery == "steer";
         lock (_gate)
         {

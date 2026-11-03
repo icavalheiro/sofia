@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Sofia.Server.Browser;
 using Sofia.Server.Context;
+using Sofia.Server.Search;
 using Sofia.Server.Events;
 using Sofia.Server.Data;
 using Sofia.Server.Domain;
@@ -14,8 +15,9 @@ namespace Sofia.Server.Agent;
 /// <summary>Builds the tool set for an agent in a workspace.</summary>
 public sealed class ToolRegistry(
     SofiaDb db, SofiaOptions options, McpManager mcp, SkillService skills, CommandService commands, AgentCatalog agents,
-    IHttpClientFactory httpFactory, IServer server, BrowserService browser, KnowledgeService knowledge, ProcessManager processes, IEventBus bus)
+    IHttpClientFactory httpFactory, IServer server, BrowserService browser, KnowledgeService knowledge, ProcessManager processes, IEventBus bus, ISessionSearch search)
 {
+    private readonly ISessionSearch _search = search;
     private readonly IEventBus _bus = bus;
     private static readonly HashSet<string> FolderOnly = ["read", "write", "edit", Agents.ShellToolToken, "grep", "find", "ls", "task", "task:explore"];
 
@@ -46,6 +48,8 @@ public sealed class ToolRegistry(
                 "skill" => new SkillTool(skills),
                 "notes" => new NotesTool(knowledge),
                 "memory" => new MemoryTool(db),
+                "session_search" => new SessionSearchTool(_search, db),
+                "session_read" => new SessionReadTool(db),
                 "current_time" => new CurrentTimeTool(),
                 "time" => new TimeTool(),
                 "now" => new NowTool(),
