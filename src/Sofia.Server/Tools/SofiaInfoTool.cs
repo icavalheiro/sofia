@@ -130,7 +130,7 @@ public sealed class SofiaInfoTool(
         sb.AppendLine("Project folders: <project>/.sofia/agents (Sofia's own) and <project>/.agents/agents — a project agent overrides a global one (or a built-in) with the same name; `.sofia` wins over `.agents`.");
         sb.AppendLine("The name is the file name (letters, digits, '.', '_', '-'), or the `name` field.");
         sb.AppendLine();
-        sb.AppendLine("Format:\n---\ndescription: When to use this agent\nmode: subagent     # subagent (default) | primary | all\ntools: read, grep, find, ls, bash, write, edit, web_fetch, web_search, skill, task, question, notes, sofia_info\nmcp: false         # include MCP tools (default: only when `tools` is omitted)\n---\nYou are … (instructions)");
+        sb.AppendLine("Format:\n---\ndescription: When to use this agent\nmode: subagent     # subagent (default) | primary | all\ntools: read, grep, find, ls, bash, write, edit, web_fetch, web_search, skill, task, question, notes, sofia_info\nmcp: false         # include MCP tools (default: only when `tools` is omitted)\nmodel: provider/model  # optional default model for this agent\nreasoning: medium     # optional default reasoning mode\n---\nYou are … (instructions)");
         sb.AppendLine("When `tools` is omitted the agent gets the default set for its mode. Subagents cannot ask the user questions or spawn further subagents.");
         sb.AppendLine();
         var found = agents.List(project);

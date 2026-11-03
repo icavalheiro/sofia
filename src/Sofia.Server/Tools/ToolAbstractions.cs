@@ -35,12 +35,31 @@ public sealed record ToolResult(string Output, bool IsError = false, List<Attach
 
 public sealed record QuestionRequest(string Prompt, List<string> Options, bool Multi);
 
+public sealed record SubagentRequest(string Agent, string Description, string Prompt, string? Model = null, bool Background = false);
+
+public sealed class SubagentInfo
+{
+    public string Id { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string Agent { get; set; } = "";
+    public string? Model { get; set; }
+    public bool Background { get; set; }
+    public string Status { get; set; } = "running";
+    public int Queued { get; set; }
+    public string? LastReportPreview { get; set; }
+}
+
 /// <summary>Services a tool can call back into while a run is executing.</summary>
 public interface IToolHost
 {
     /// <summary>Shows the question cards on the message that made the call, so they read as part of that reply.</summary>
     Task<List<string>> AskAsync(ToolContext ctx, List<QuestionRequest> questions, CancellationToken ct);
     Task<string> RunSubagentAsync(ToolContext ctx, string agent, string description, string prompt, CancellationToken ct);
+    Task<string> SpawnSubagentAsync(ToolContext ctx, SubagentRequest request, CancellationToken ct);
+    IReadOnlyList<SubagentInfo> ListSubagents(ToolContext ctx);
+    Task<string> SendToSubagentAsync(ToolContext ctx, string id, string text, bool steer, CancellationToken ct);
+    Task<string> WaitSubagentsAsync(ToolContext ctx, List<string>? ids, bool any, int timeoutSeconds, CancellationToken ct);
+    Task<string> InterruptSubagentAsync(ToolContext ctx, string id, CancellationToken ct);
     void ReportProgress(ToolCall call, string chunk);
 }
 

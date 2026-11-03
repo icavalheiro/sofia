@@ -80,6 +80,10 @@ export interface ToolCallDto
   error?: string;
   duration: string;
   childSessionId?: string;
+  /** Model used by the spawned subagent (task tool). */
+  childModelId?: string;
+  /** Whether the subagent was spawned in the background (task tool). */
+  childBackground?: boolean;
   /** Media the tool produced (screenshots, images, audio or video). */
   images?: AttachmentDto[];
 }
@@ -277,6 +281,10 @@ export interface AgentDto
   mode: 'primary' | 'subagent' | 'all';
   source?: 'builtin' | 'global' | 'project';
   path?: string | null;
+  /** Optional default model from frontmatter. */
+  model?: string | null;
+  /** Optional default reasoning from frontmatter. */
+  reasoning?: string | null;
 }
 
 export interface CommandDto
@@ -362,6 +370,10 @@ export interface ToolCall
   duration: string;
   /** Subagent session spawned by this call (task tool). */
   childSessionId?: string;
+  /** Model used by the spawned subagent (task tool). */
+  childModelId?: string;
+  /** Whether the subagent was spawned in the background (task tool). */
+  childBackground?: boolean;
   /** Media the tool produced (screenshots, images, audio or video). */
   images?: Attachment[];
 }

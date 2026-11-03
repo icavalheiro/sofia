@@ -134,6 +134,8 @@ interface ToolCallDto {
   error?: string
   duration: string        // largest unit that has started: '873ms' / '1.2s' / '2.25m' / '1.05h', or 'running…'
   childSessionId?: string // task tool: the subagent session
+  childModelId?: string  // task tool: model used by the subagent
+  childBackground?: boolean // task tool: whether the subagent was spawned in the background
   images?: AttachmentDto[] // media the tool produced: screenshots, or images/audio/video from `read` (served from /api/attachments/{id})
 }
 
@@ -392,7 +394,8 @@ Agents are the built-ins (`build`, `plan`, `general`, `explore`) plus Markdown
 files in `~/.sofia/agents`, `<workspace>/.agents/agents` and
 `<workspace>/.sofia/agents` (other harnesses' folders are not read; `.sofia`
 wins over `.agents`): frontmatter `description`, `mode` (`subagent` default |
-`primary` | `all`), `tools` (comma list, e.g. `read, grep, bash`), `mcp`; the body
+`primary` | `all`), `tools` (comma list, e.g. `read, grep, bash`), `mcp`,
+`model` (default model id), `reasoning` (default reasoning mode); the body
 is the system-prompt addendum. `primary`/`all` agents show in the agent picker
 (`PATCH /api/sessions/{id}` `{ agent }`); `subagent`/`all` ones are `task`
 targets and can be called with `@name` in a prompt: the server keeps the text

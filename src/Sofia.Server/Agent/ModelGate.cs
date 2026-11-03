@@ -23,6 +23,7 @@ public sealed class ModelGate
 
     private readonly object _gate = new();
     private readonly Dictionary<string, State> _models = [];
+    private readonly Dictionary<string, int> _live = [];
     private long _seq;
 
     /// <summary>Waits until <paramref name="owner"/> (root session id) holds the model. Re-entrant for the current owner.</summary>
@@ -149,14 +150,44 @@ public sealed class ModelGate
         }
     }
 
-    /// <summary>Releases every model leased to <paramref name="owner"/> and hands each to the next waiter.</summary>
-    public void Release(string owner)
+    /// <summary>Retains the lease for <paramref name="owner"/> (root conversation) so it survives until the last descendant finishes.</summary>
+    public void Retain(string owner) => Retain(owner, owner);
+
+    /// <summary>Retains the lease for <paramref name="owner"/> on a specific model (model id ignored for ownership; kept for compatibility).</summary>
+    public void Retain(string? modelId, string owner)
+    {
+        lock (_gate) _live[owner] = _live.GetValueOrDefault(owner) + 1;
+    }
+
+    /// <summary>Alias for <see cref="Retain(string)"/>.</summary>
+    public void AddRef(string owner) => Retain(owner);
+    public void AddRef(string modelId, string owner) => Retain(modelId, owner);
+    public void Increment(string owner) => Retain(owner);
+    public void Increment(string modelId, string owner) => Retain(modelId, owner);
+
+    /// <summary>Releases every model leased to <paramref name="owner"/> and hands each to the next waiter once no descendant is live.</summary>
+    public void Release(string owner) => Release(null, owner);
+
+    /// <summary>Releases the lease for <paramref name="owner"/> (optionally scoped to a model) once no descendant is live.</summary>
+    public void Release(string? modelId, string owner)
     {
         lock (_gate)
         {
+            if (_live.TryGetValue(owner, out var c) && c > 1)
+            {
+                _live[owner] = c - 1;
+                return;
+            }
+            _live.Remove(owner);
             foreach (var state in _models.Values.Where(s => s.Owner == owner)) Handoff(state);
         }
     }
+
+    /// <summary>Alias for <see cref="Release(string)"/>.</summary>
+    public void RemoveRef(string owner) => Release(owner);
+    public void RemoveRef(string modelId, string owner) => Release(modelId, owner);
+    public void Decrement(string owner) => Release(owner);
+    public void Decrement(string modelId, string owner) => Release(modelId, owner);
 
     /// <summary>Number of conversations waiting for the model (for diagnostics).</summary>
     public int Waiting(string modelId)

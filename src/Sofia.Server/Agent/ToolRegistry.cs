@@ -59,6 +59,8 @@ public sealed class ToolRegistry(
             };
             if (tool is not null && tools.All(t => t.Name != tool.Name)) tools.Add(tool);
         }
+        if (tools.Any(t => t.Name == "task") && tools.All(t => t.Name != "agents"))
+            tools.Add(new AgentsTool());
         if (agent.IncludeMcp) tools.AddRange(mcp.Tools());
         return tools;
     }

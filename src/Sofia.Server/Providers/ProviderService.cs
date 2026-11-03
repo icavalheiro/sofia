@@ -516,6 +516,12 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         }
     }
 
+    /// <summary>True when the model id resolves to an enabled, usable model.</summary>
+    public bool IsUsable(string? modelId) => !string.IsNullOrWhiteSpace(modelId) && EnabledModelIds().Contains(modelId!);
+
+    /// <summary>Ids of models currently enabled in Settings (for error messages).</summary>
+    public List<string> EnabledModelIds() => Models().Where(m => m.Enabled).Select(m => m.Id).ToList();
+
     public List<ModelInfo> Models()
     {
         var cfg = db.GetConfig();
