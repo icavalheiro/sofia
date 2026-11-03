@@ -77,13 +77,28 @@ public static class ProcessRunner
     }
 
     public static Task<ProcessResult> RunShellAsync(ShellSpec shell, string command, string? cwd, TimeSpan timeout,
-        Action<string>? onOutput, int maxChars, CancellationToken ct) =>
-        RunAsync(StartInfo(shell.Executable, shell.Arguments(command), cwd), timeout, onOutput, maxChars, ct);
+        Action<string>? onOutput, int maxChars, CancellationToken ct, SandboxPolicy? sandbox = null) =>
+        RunAsync(StartInfo(shell.Executable, shell.Arguments(command), cwd), timeout, onOutput, maxChars, ct, sandbox);
 
     public static async Task<ProcessResult> RunAsync(ProcessStartInfo psi, TimeSpan timeout, Action<string>? onOutput,
-        int maxChars, CancellationToken ct)
+        int maxChars, CancellationToken ct, SandboxPolicy? sandbox = null)
     {
-        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        Process process;
+        if (sandbox is not null)
+        {
+            var backend = SandboxFactory.Create();
+            if (backend.Status.Available)
+                process = backend.Start(psi, sandbox);
+            else
+                process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        }
+        else
+        {
+            process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        }
+        // Rewriting backends return a not-yet-started process; launching backends already started theirs.
+        try { process.Start(); } catch (InvalidOperationException) { /* already started */ }
+        using var _processDispose = process;
         var output = new StringBuilder();
         var gate = new object();
         var dropped = 0L;
@@ -134,6 +149,17 @@ public static class ProcessRunner
         int? exit = null;
         try { if (process.HasExited) exit = process.ExitCode; } catch { /* not started */ }
         return new ProcessResult(Text.Truncate(text, maxChars), exit, timedOut, cancelled);
+    }
+
+    public static bool LooksLikeSandboxDenial(string? output, int? exitCode)
+    {
+        if (string.IsNullOrEmpty(output)) return false;
+        var text = output.ToLowerInvariant();
+        return text.Contains("read-only file system")
+            || text.Contains("operation not permitted")
+            || text.Contains("permission denied")
+            || text.Contains("access is denied")
+            || text.Contains("eacces");
     }
 
     public static void Kill(Process process)

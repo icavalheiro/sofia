@@ -221,6 +221,8 @@ function applySessionDetails ( conv: Conversation, s: SessionDto ): void
   conv.agent = s.agent;
   conv.permissionMode = s.permissionMode;
   conv.reasoningMode = s.reasoningMode;
+  if ( s.sandbox !== undefined ) conv.sandbox = s.sandbox;
+  if ( s.sandboxEffective !== undefined ) conv.sandboxEffective = s.sandboxEffective;
   conv.usage = s.usage;
   conv.context = s.context;
   if ( s.lastTurnMs !== undefined ) conv.lastTurnMs = s.lastTurnMs;
@@ -1006,6 +1008,7 @@ export function useHarness ()
     agent?: string;
     permissionMode?: PermissionModeId;
     reasoningMode?: ReasoningModeId;
+    sandbox?: boolean | null;
   } ): Promise<string | null>
   {
     const conv = activeConversation.value;
@@ -1016,6 +1019,7 @@ export function useHarness ()
       agent: conv.agent,
       permissionMode: conv.permissionMode,
       reasoningMode: conv.reasoningMode,
+      sandbox: conv.sandbox,
     };
     Object.assign( conv, patch );
     try

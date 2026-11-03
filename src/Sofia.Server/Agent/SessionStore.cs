@@ -149,6 +149,8 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
 
     public void SaveSession(Session session, bool publish = true)
     {
+        var workspace = db.Workspaces.FindById(session.WorkspaceId);
+        session.SandboxEffective = SandboxPolicy.Resolve(db.GetConfig(), workspace, session) is not null;
         db.Sessions.Update(session);
         if (publish) bus.Publish(EventTypes.SessionUpdated, session, session.Id, session.WorkspaceId);
     }

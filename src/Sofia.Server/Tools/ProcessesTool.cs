@@ -17,7 +17,8 @@ public sealed class ProcessesTool(ProcessManager processes, ShellSpec shell) : I
         ("action", Schema.Enum("What to do.", "start", "list", "output", "kill"), true),
         ("command", Schema.String("Command to run (start)."), false),
         ("id", Schema.String("Process id such as bg_1 (output, kill)."), false),
-        ("tail", Schema.Integer("Lines of output to return (output, default 100)."), false));
+        ("tail", Schema.Integer("Lines of output to return (output, default 100)."), false),
+        ("unsandboxed", Schema.Boolean("Run this process outside the OS sandbox (requires approval)."), false));
 
     public string Summarize(JsonObject args) =>
         $"{Args.Optional(args, "action")} {Text.FirstLine(Args.Optional(args, "command", "id") ?? "", 120)}".Trim();
@@ -27,7 +28,9 @@ public sealed class ProcessesTool(ProcessManager processes, ShellSpec shell) : I
         switch (Args.Required(args, "action").ToLowerInvariant())
         {
             case "start":
-                var info = processes.Start(shell, Args.Required(args, "command", "cmd"), ctx.Cwd, ctx.Session.Id);
+                var unsandboxed = Args.Bool(args, "unsandboxed");
+                var sandbox = unsandboxed ? null : ctx.Sandbox;
+                var info = processes.Start(shell, Args.Required(args, "command", "cmd"), ctx.Cwd, ctx.Session.Id, sandbox);
                 return Task.FromResult(ToolResult.Ok($"Started {info.Id} (pid {info.Pid}). Use output to check it and kill to stop it."));
             case "list":
                 var list = processes.List(ctx.Session.Id);

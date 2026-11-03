@@ -24,6 +24,8 @@ public sealed class Workspace
     public string Path { get; set; } = "";
     /// <summary>'folder' or 'chat'.</summary>
     public string Kind { get; set; } = "folder";
+    /// <summary>Override the server-wide sandbox setting for this workspace (null = inherit).</summary>
+    public bool? Sandbox { get; set; }
     public string Icon { get; set; } = "folder";
     public string ModelId { get; set; } = "";
     public bool Expanded { get; set; } = true;
@@ -73,6 +75,10 @@ public sealed class Session
     public string Agent { get; set; } = "build";
     public string PermissionMode { get; set; } = "ask";
     public string ReasoningMode { get; set; } = "medium";
+    /// <summary>Override the workspace/server sandbox setting for this session (null = inherit).</summary>
+    public bool? Sandbox { get; set; }
+    /// <summary>Resolved effective sandbox state (computed; not user-settable).</summary>
+    [BsonIgnore] public bool SandboxEffective { get; set; }
     /// <summary>UI language code (e.g. "pt") the agent answers in by default.</summary>
     public string? Language { get; set; }
     public string Status { get; set; } = SessionStatus.Idle;
@@ -420,6 +426,10 @@ public sealed class ServerConfig
     public string SearchProvider { get; set; } = "duckduckgo";
     /// <summary>Base URL of the SearXNG instance used when <see cref="SearchProvider"/> is 'searxng'.</summary>
     public string SearxngUrl { get; set; } = "";
+    /// <summary>Run shell/process commands in an OS sandbox by default.</summary>
+    public bool Sandbox { get; set; }
+    /// <summary>Allow network access inside the sandbox.</summary>
+    public bool SandboxNetwork { get; set; } = true;
     /// <summary>Model ids ('providerId/modelId') hidden from the harness: not offered in pickers and never chosen as default.</summary>
     public List<string> DisabledModels { get; set; } = [];
     /// <summary>Model ids that serve one conversation at a time: runs are queued (subagents first) and a conversation keeps the model until its run ends. Local models are single client by default, so they only need to be listed here once they were switched off and back on.</summary>

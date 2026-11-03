@@ -221,7 +221,7 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `POST` | `/api/workspaces/{id}/sessions` | `{ title? }` | `SessionDto` (the new chat starts on the workspace's base model; permission/reasoning modes are copied from the workspace's most recent chat. A model that is unknown or switched off in Settings falls back to the server default) |
 | `GET` | `/api/sessions/status` | – | `{ [sessionId]: SessionStatus }` (non-idle only) |
 | `GET` | `/api/sessions/{id}` | – | `SessionDto` with `messages` |
-| `PATCH` | `/api/sessions/{id}` | `{ title?, modelId?, agent?, permissionMode?, reasoningMode? }` | `SessionDto` |
+| `PATCH` | `/api/sessions/{id}` | `{ title?, modelId?, agent?, permissionMode?, reasoningMode?, sandbox? }` | `SessionDto` |
 | `DELETE` | `/api/sessions/{id}` | – | `204` |
 | `POST` | `/api/sessions/{id}/archive` | – | `SessionDto` (aborts a live run, sets `archived: true`; the UI parks it in the workspace's **Archived** folder) |
 | `POST` | `/api/sessions/{id}/unarchive` | – | `SessionDto` (`archived` cleared) |
@@ -258,6 +258,8 @@ interface PromptRequest {
   agent?: string
   permissionMode?: string
   reasoningMode?: string
+  sandbox?: boolean | null
+  sandboxEffective?: boolean
 }
 ```
 
@@ -585,6 +587,9 @@ interface ConfigDto {
   knowledge: boolean            // distil knowledge notes after each finished conversation
   searchProvider: 'duckduckgo' | 'searxng'  // backend of the web_search tool
   searxngUrl: string            // SearXNG instance base URL ('' when unused)
+  sandbox: boolean              // run shell/process commands in an OS sandbox by default
+  sandboxNetwork: boolean       // allow network access inside the sandbox
+  sandboxStatus: { available: boolean; backend: string; reason?: string }  // read-only
   dataDir: string               // read-only
   configPath: string            // read-only
 }

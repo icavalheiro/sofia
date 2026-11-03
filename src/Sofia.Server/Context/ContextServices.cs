@@ -181,7 +181,7 @@ public sealed partial class CommandService(SofiaOptions options)
     /// <paramref name="runShell"/> allows it, otherwise it stays literal for the model to run under the normal
     /// permission rules) and `@path` references to files inside the workspace are appended as `&lt;file&gt;` blocks.
     /// </summary>
-    public static async Task<string> ExpandDynamicAsync(string text, string? cwd, bool runShell, ShellSpec shell, CancellationToken ct)
+    public static async Task<string> ExpandDynamicAsync(string text, string? cwd, bool runShell, ShellSpec shell, CancellationToken ct, SandboxPolicy? sandbox = null)
     {
         if (string.IsNullOrEmpty(cwd) || !Directory.Exists(cwd)) return text;
 
@@ -192,7 +192,7 @@ public sealed partial class CommandService(SofiaOptions options)
             foreach (Match match in ShellInjection().Matches(text))
             {
                 sb.Append(text, last, match.Index - last);
-                var result = await ProcessRunner.RunShellAsync(shell, match.Groups[1].Value, cwd, TimeSpan.FromSeconds(30), null, 20_000, ct);
+                var result = await ProcessRunner.RunShellAsync(shell, match.Groups[1].Value, cwd, TimeSpan.FromSeconds(30), null, 20_000, ct, sandbox);
                 sb.Append(Text.Truncate(result.Output.TrimEnd(), 20_000));
                 if (result.TimedOut) sb.Append("\n(command timed out)");
                 last = match.Index + match.Length;

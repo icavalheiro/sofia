@@ -73,7 +73,8 @@ public static class SystemPromptBuilder
         (string? Replace, string? Append) overrides,
         ShellSpec shell,
         string? branch,
-        IReadOnlyList<KnowledgeNote>? knowledge = null)
+        IReadOnlyList<KnowledgeNote>? knowledge = null,
+        SandboxPolicy? sandbox = null)
     {
         var folder = workspace.IsFolder;
         var sb = new StringBuilder();
@@ -185,6 +186,7 @@ public static class SystemPromptBuilder
         }
         sb.AppendLine($"Platform: {(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux")}");
         if (folder) sb.AppendLine($"Shell: {shell.Name}");
+        if (sandbox is not null) sb.AppendLine($"Sandbox: commands run in an OS sandbox (writes only inside the workspace and temp; network {(sandbox.AllowNetwork ? "on" : "off")}).");
         sb.AppendLine($"Date: {DateTime.Now:yyyy-MM-dd dddd}");
         sb.AppendLine("</environment>");
 

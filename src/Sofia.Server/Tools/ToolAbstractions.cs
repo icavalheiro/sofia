@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Sofia.Server.Changes;
 using Sofia.Server.Domain;
+using Sofia.Server.Infrastructure;
 
 namespace Sofia.Server.Tools;
 
@@ -53,6 +54,9 @@ public sealed class ToolContext
     public required ServerConfig Config { get; init; }
     public required ChangeTracker Changes { get; init; }
     public required IToolHost Host { get; init; }
+    /// <summary>Effective sandbox policy for this session/workspace, or null when sandboxing is off.</summary>
+    public SandboxPolicy? Sandbox { get; init; }
+    public SandboxPolicy? SandboxPolicy => Sandbox;
 }
 
 public interface ITool
