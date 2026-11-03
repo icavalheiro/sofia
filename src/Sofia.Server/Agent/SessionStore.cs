@@ -119,7 +119,11 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
             m.Seq = db.NextSeq();
             foreach (var call in m.ToolCalls ?? [])
                 if (call.ChildSessionId is { } childId && db.Sessions.FindById(childId) is { } child)
-                    call.ChildSessionId = CloneChild(child, to).Id;
+                {
+                    var cloned = CloneChild(child, to);
+                    call.ChildSessionId = cloned.Id;
+                    call.ChildModelId = cloned.ModelId;
+                }
             db.Messages.Insert(m);
             copies.Add(m);
             newIds[oldId] = m;

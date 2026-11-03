@@ -13,7 +13,7 @@ namespace Sofia.Server.Agent;
 /// 'builtin' | 'global' | 'project'; <see cref="Path"/> is the Markdown file of a custom agent.
 /// </summary>
 public sealed record AgentDefinition(string Id, string Name, string Description, string Mode, string[] Tools, bool IncludeMcp, string? Addendum,
-    string Source = "builtin", string? Path = null)
+    string Source = "builtin", string? Path = null, string? Model = null, string? Reasoning = null)
 {
     public bool IsPrimary => Mode is "primary" or "all";
     public bool IsDelegable => Mode is "subagent" or "all";
@@ -110,7 +110,7 @@ public static class SystemPromptBuilder
             sb.AppendLine("- After changing code, verify it (build/test) when that is cheap.");
         }
         if (tools.Any(t => t.Name == "task"))
-            sb.AppendLine("- Delegate independent research to subagents with `task`; several task calls in one response run in parallel.");
+            sb.AppendLine("- Delegate independent research to subagents with `task`; several task calls in one response run in parallel. Use `task {background:true}` for long work and the `agents` tool (list/send/wait/interrupt) to manage them.");
         if (tools.Any(t => t.Name == "question"))
             sb.AppendLine("- Ask the user with the `question` tool only when a decision is genuinely ambiguous.");
         if (tools.Any(t => t.Name == "notes"))

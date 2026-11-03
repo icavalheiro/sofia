@@ -71,6 +71,7 @@ public sealed class SessionRun : IToolHost
     private readonly Queue<PendingPrompt> _followUps = new();
     private readonly ConcurrentDictionary<string, (TaskCompletionSource<string> Tcs, Message Card)> _permissions = new();
     private readonly ConcurrentDictionary<string, (TaskCompletionSource<List<string>> Tcs, Message Card)> _questions = new();
+    private readonly ConcurrentDictionary<string, (SubagentInfo Info, SessionRun Run, TaskCompletionSource<string?> Completion)> _subagentRuns = new();
     /// <summary>Clock of the request in flight: start → end, minus the time the user spent answering.</summary>
     private readonly TurnClock _turn = new();
     private bool _finished;
@@ -174,6 +175,7 @@ public sealed class SessionRun : IToolHost
     public async Task RunAsync()
     {
         var ct = _cts.Token;
+        _s.Gate.Retain(Root.Session.Id);
         _s.Store.SetStatus(Session, SessionStatus.Working);
         // The composer clock shows how long the request is taking, so it must keep ticking between steps too
         // (metrics are otherwise published only while tokens stream).
@@ -250,7 +252,7 @@ public sealed class SessionRun : IToolHost
                 SyncQueue();
             }
             Cleanup(aborted);
-            if (Root == this) _s.Gate.Release(Session.Id);
+            _s.Gate.Release(Root.Session.Id);
             _agents.Finished(this);
         }
     }
@@ -1179,21 +1181,214 @@ public sealed class SessionRun : IToolHost
 
     // --- subagents ----------------------------------------------------------------
 
-    public async Task<string> RunSubagentAsync(ToolContext ctx, string agent, string description, string prompt, CancellationToken ct)
+    public async Task<string> RunSubagentAsync(ToolContext ctx, string agent, string description, string prompt, CancellationToken ct) =>
+        await SpawnSubagentAsync(ctx, new SubagentRequest(agent, description, prompt, null, false), ct);
+
+    public async Task<string> SpawnSubagentAsync(ToolContext ctx, SubagentRequest request, CancellationToken ct)
     {
-        var child = _s.Store.CreateSession(Workspace, description, template: Session, parentId: Session.Id, agent: agent);
-        lock (ctx.Message) ctx.Call.ChildSessionId = child.Id;
+        var agentId = request.Agent;
+        var description = request.Description;
+        var prompt = request.Prompt;
+        var agentDef = _s.AgentCatalog.Get(agentId, Workspace.IsFolder ? Workspace.Path : null);
+
+        // Model precedence: task param > agent frontmatter > parent model.
+        string? warning = null;
+        string resolvedModel;
+        if (!string.IsNullOrWhiteSpace(request.Model))
+        {
+            if (!_s.Providers.IsUsable(request.Model))
+            {
+                var sample = string.Join(", ", _s.Providers.EnabledModelIds().Take(5));
+                throw new ArgumentException($"Unknown or disabled model '{request.Model}'. Enabled models include: {sample}");
+            }
+            resolvedModel = request.Model!;
+        }
+        else if (!string.IsNullOrWhiteSpace(agentDef.Model))
+        {
+            if (_s.Providers.IsUsable(agentDef.Model)) resolvedModel = agentDef.Model!;
+            else { resolvedModel = Session.ModelId; warning = $"Agent default model '{agentDef.Model}' is not usable; using parent model."; }
+        }
+        else
+        {
+            resolvedModel = Session.ModelId;
+        }
+        if (string.IsNullOrWhiteSpace(resolvedModel)) resolvedModel = _s.Providers.DefaultModelId();
+
+        var child = _s.Store.CreateSession(Workspace, description, template: Session, parentId: Session.Id, agent: agentId);
+        child.ModelId = resolvedModel;
+        if (!string.IsNullOrWhiteSpace(agentDef.Reasoning))
+            child.ReasoningMode = agentDef.Reasoning!;
+        _s.Store.SaveSession(child);
+
+        lock (ctx.Message) { ctx.Call.ChildSessionId = child.Id; ctx.Call.ChildModelId = resolvedModel; ctx.Call.ChildBackground = request.Background; }
         _s.Store.UpdateMessage(Session, ctx.Message, persist: false);
 
-        var run = _agents.CreateChildRun(child, Workspace, Root, ct);
+        var parentToken = request.Background ? Root._cts.Token : ct;
+        var run = _agents.CreateChildRun(child, Workspace, Root, parentToken);
+
+        var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var state = new SubagentInfo
+        {
+            Id = child.Id,
+            Description = description,
+            Agent = agentId,
+            Model = resolvedModel,
+            Background = request.Background,
+            Status = "running",
+        };
+        // store extra in a parallel dictionary? Use Tag via Run? We'll keep a local map on root.
+        Root._subagentRuns[child.Id] = (state, run, completion);
+
         run.TryEnqueue(new PendingPrompt(Ids.New("msg"), "prompt", prompt, null, []) { Announce = false }, steer: false);
-        await run.RunAsync();
-        ct.ThrowIfCancellationRequested();
-        if (run.LastError is not null) throw new InvalidOperationException($"Subagent failed: {run.LastError}");
-        var report = _s.Db.SessionMessages(child.Id).LastOrDefault(m => m.Role == "assistant" && !m.Synthetic && !string.IsNullOrWhiteSpace(m.Text))?.Text;
-        if (child.Status == SessionStatus.Idle && report is null && run.WasAborted)
-            throw new InvalidOperationException("The subagent was stopped by the user.");
-        return report ?? "(The subagent finished without a report.)";
+
+        if (!request.Background)
+        {
+            await run.RunAsync();
+            ct.ThrowIfCancellationRequested();
+            if (run.LastError is not null) throw new InvalidOperationException($"Subagent failed: {run.LastError}");
+            var report = _s.Db.SessionMessages(child.Id).LastOrDefault(m => m.Role == "assistant" && !m.Synthetic && !string.IsNullOrWhiteSpace(m.Text))?.Text;
+            if (child.Status == SessionStatus.Idle && report is null && run.WasAborted)
+                throw new InvalidOperationException("The subagent was stopped by the user.");
+            var final = report ?? "(The subagent finished without a report.)";
+            if (warning is not null) final = warning + "\n" + final;
+            state.Status = run.LastError is null ? "done" : "error";
+            state.LastReportPreview = Text.Truncate(final, 200);
+            Root._subagentRuns[child.Id].Completion.TrySetResult(final);
+            return final;
+        }
+
+        // background
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await run.RunAsync();
+                var report = _s.Db.SessionMessages(child.Id).LastOrDefault(m => m.Role == "assistant" && !m.Synthetic && !string.IsNullOrWhiteSpace(m.Text))?.Text;
+                var final = report ?? "(The subagent finished without a report.)";
+                if (run.LastError is not null) final = $"Subagent failed: {run.LastError}";
+                state.Status = run.LastError is null ? "done" : "error";
+                state.LastReportPreview = Text.Truncate(final, 200);
+                Root._subagentRuns[child.Id].Completion.TrySetResult(final);
+                var notice = $"Subagent {child.Id} finished: {Text.Truncate(final, 1000)}";
+                if (Root.IsFinished) _agents.Prompt(Root.Session.Id, new PromptInput("Subagent finished"), notice);
+                else Root.TryEnqueue(new PendingPrompt(Ids.New("msg"), "prompt", notice, null, []) { Announce = false }, steer: false);
+            }
+            catch (Exception ex)
+            {
+                state.Status = "error";
+                state.LastReportPreview = Text.Truncate(ex.Message, 200);
+                Root._subagentRuns[child.Id].Completion.TrySetException(ex);
+            }
+        }, Root._cts.Token);
+
+        var started = $"Started subagent {child.Id} ({agentId}, model {resolvedModel}).";
+        if (warning is not null) started = warning + "\n" + started;
+        state.Status = "running";
+        return started;
+    }
+
+    public IReadOnlyList<SubagentInfo> ListSubagents(ToolContext ctx)
+    {
+        var list = new List<SubagentInfo>();
+        foreach (var kv in Root._subagentRuns)
+        {
+            var (info, run, _) = kv.Value;
+            info.Status = run.IsFinished ? (run.LastError is null ? "done" : "error") : "running";
+            info.Queued = run.Session.Queued;
+            list.Add(info);
+        }
+        return list;
+    }
+
+    public async Task<string> SendToSubagentAsync(ToolContext ctx, string id, string text, bool steer, CancellationToken ct)
+    {
+        if (!Root._subagentRuns.TryGetValue(id, out var entry))
+            return $"Unknown subagent '{id}'.";
+        if (!entry.Run.IsFinished)
+        {
+            var ok = entry.Run.TryEnqueue(new PendingPrompt(Ids.New("msg"), "prompt", text, null, []) { Announce = false }, steer);
+            if (ok) return $"Queued message to subagent {id}.";
+        }
+        // finished (or race): start a new run on the same session
+        var session = _s.Db.Sessions.FindById(id);
+        if (session is null) return $"Unknown subagent '{id}'.";
+        var newRun = _agents.CreateChildRun(session, Workspace, Root, Root._cts.Token);
+        var newCompletion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newInfo = new SubagentInfo { Id = id, Description = entry.Info.Description, Agent = entry.Info.Agent, Model = entry.Info.Model, Background = entry.Info.Background, Status = "running" };
+        newRun.TryEnqueue(new PendingPrompt(Ids.New("msg"), "prompt", text, null, []) { Announce = false }, steer);
+        Root._subagentRuns[id] = (newInfo, newRun, newCompletion);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await newRun.RunAsync();
+                var report = _s.Db.SessionMessages(id).LastOrDefault(m => m.Role == "assistant" && !m.Synthetic && !string.IsNullOrWhiteSpace(m.Text))?.Text;
+                var final = report ?? "(The subagent finished without a report.)";
+                if (newRun.LastError is not null) final = $"Subagent failed: {newRun.LastError}";
+                newInfo.Status = newRun.LastError is null ? "done" : "error";
+                newInfo.LastReportPreview = Text.Truncate(final, 200);
+                newCompletion.TrySetResult(final);
+            }
+            catch (Exception ex)
+            {
+                newInfo.Status = "error";
+                newInfo.LastReportPreview = Text.Truncate(ex.Message, 200);
+                newCompletion.TrySetException(ex);
+            }
+        }, Root._cts.Token);
+        return $"Started a new run on subagent {id}.";
+    }
+
+    public async Task<string> WaitSubagentsAsync(ToolContext ctx, List<string>? ids, bool any, int timeoutSeconds, CancellationToken ct)
+    {
+        timeoutSeconds = Math.Clamp(timeoutSeconds <= 0 ? 300 : timeoutSeconds, 1, 1800);
+        var targets = (ids is { Count: > 0 } ? ids : Root._subagentRuns.Keys.ToList()).ToList();
+        var entries = targets.Where(id => Root._subagentRuns.ContainsKey(id)).Select(id => (Id: id, Entry: Root._subagentRuns[id])).ToList();
+        if (entries.Count == 0) return "No subagents to wait for.";
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+        if (any)
+        {
+            var tasks = entries.Select(e => e.Entry.Completion.Task).ToList();
+            try { await Task.WhenAny(tasks.Append(Task.Delay(Timeout.Infinite, timeoutCts.Token))); }
+            catch (OperationCanceledException) { }
+        }
+        else
+        {
+            try { await Task.WhenAll(entries.Select(e => e.Entry.Completion.Task)).WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), ct); }
+            catch (TimeoutException) { }
+            catch (OperationCanceledException) { }
+        }
+
+        var sb = new StringBuilder();
+        foreach (var (id, entry) in entries)
+        {
+            if (entry.Completion.Task.IsCompletedSuccessfully)
+            {
+                var report = entry.Completion.Task.Result ?? "(no report)";
+                sb.AppendLine($"[{id}] done: {Text.Truncate(report, 500)}");
+            }
+            else if (entry.Completion.Task.IsFaulted)
+            {
+                sb.AppendLine($"[{id}] error: {entry.Completion.Task.Exception?.GetBaseException().Message}");
+            }
+            else
+            {
+                sb.AppendLine($"[{id}] still running");
+            }
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    public async Task<string> InterruptSubagentAsync(ToolContext ctx, string id, CancellationToken ct)
+    {
+        if (!Root._subagentRuns.TryGetValue(id, out var entry)) return $"Unknown subagent '{id}'.";
+        entry.Run.Abort();
+        try { await entry.Completion.Task.WaitAsync(TimeSpan.FromSeconds(5), ct); } catch { }
+        var preview = entry.Info.LastReportPreview;
+        return preview is null ? $"Interrupted subagent {id}." : $"Interrupted subagent {id}. Partial report: {preview}";
     }
 
     public bool WasAborted => _cts.IsCancellationRequested;

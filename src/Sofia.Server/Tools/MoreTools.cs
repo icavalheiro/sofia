@@ -141,7 +141,9 @@ public sealed class TaskTool(IReadOnlyList<AgentDefinition> targets) : ITool
     public JsonObject Parameters => Schema.Object(
         ("description", Schema.String("Short (3-6 words) label for the task."), true),
         ("prompt", Schema.String("Complete instructions for the subagent."), true),
-        ("agent", Schema.Enum("Subagent type.", targets.Select(a => a.Id).ToArray()), false));
+        ("agent", Schema.Enum("Subagent type.", targets.Select(a => a.Id).ToArray()), false),
+        ("model", Schema.String("Optional model id (provider/model) for this subagent. Overrides the agent's default and the parent's model."), false),
+        ("background", Schema.Boolean("Run the subagent in the background and return its id immediately."), false));
 
     public string Summarize(JsonObject args) => Args.Optional(args, "description") ?? "";
 
@@ -152,8 +154,85 @@ public sealed class TaskTool(IReadOnlyList<AgentDefinition> targets) : ITool
         var requested = Args.Optional(args, "agent", "subagent_type");
         var agent = targets.FirstOrDefault(a => string.Equals(a.Id, requested, StringComparison.OrdinalIgnoreCase))
             ?? targets.FirstOrDefault(a => a.Id == "explore") ?? targets[0];
-        var report = await ctx.Host.RunSubagentAsync(ctx, agent.Id, description, prompt, ct);
-        return ToolResult.Ok(report);
+        var model = Args.Optional(args, "model");
+        var background = Args.Bool(args, "background");
+        try
+        {
+            var report = await ctx.Host.SpawnSubagentAsync(ctx, new SubagentRequest(agent.Id, description, prompt, model, background), ct);
+            return ToolResult.Ok(report);
+        }
+        catch (Exception ex)
+        {
+            return ToolResult.Fail(ex.Message);
+        }
+    }
+}
+
+public sealed class AgentsTool : ITool
+{
+    public string Name => "agents";
+    public string Description =>
+        "Interact with subagents spawned by `task` (especially background ones): list, send a follow-up, wait for completion, or interrupt.";
+    public ToolKind Kind => ToolKind.Agent;
+    public JsonObject Parameters => Schema.Object(
+        ("action", Schema.Enum("Action to perform.", ["list", "send", "wait", "interrupt"]), true),
+        ("id", Schema.String("Subagent id (for send/interrupt)."), false),
+        ("ids", Schema.Array("Subagent ids to wait for (wait).", new JsonObject { ["type"] = "string" }), false),
+        ("message", Schema.String("Message to send (send)."), false),
+        ("steer", Schema.Boolean("Steer instead of queueing (send)."), false),
+        ("any", Schema.Boolean("Wait for any instead of all (wait)."), false),
+        ("timeout", Schema.Integer("Timeout in seconds for wait (default 300, max 1800)."), false));
+
+    public string Summarize(JsonObject args) => Args.Optional(args, "action") ?? "";
+
+    public async Task<ToolResult> ExecuteAsync(ToolContext ctx, JsonObject args, CancellationToken ct)
+    {
+        var action = Args.Required(args, "action");
+        try
+        {
+            switch (action)
+            {
+                case "list":
+                {
+                    var list = ctx.Host.ListSubagents(ctx);
+                    if (list.Count == 0) return ToolResult.Ok("No subagents.");
+                    var lines = list.Select(s => $"{s.Id} · {s.Agent} · {s.Model} · {s.Status}" +
+                        (s.Background ? " (background)" : "") +
+                        (s.Queued > 0 ? $" · {s.Queued} queued" : "") +
+                        (string.IsNullOrWhiteSpace(s.LastReportPreview) ? "" : $" · {s.LastReportPreview}"));
+                    return ToolResult.Ok(string.Join("\n", lines));
+                }
+                case "send":
+                {
+                    var id = Args.Required(args, "id");
+                    var message = Args.Required(args, "message");
+                    var steer = Args.Bool(args, "steer");
+                    var result = await ctx.Host.SendToSubagentAsync(ctx, id, message, steer, ct);
+                    return ToolResult.Ok(result);
+                }
+                case "wait":
+                {
+                    var ids = (args["ids"] as JsonArray)?.Select(x => x?.ToString()).Where(x => !string.IsNullOrEmpty(x)).Cast<string>().ToList();
+                    if (ids is null && Args.Optional(args, "id") is { } single) ids = [single];
+                    var any = Args.Bool(args, "any");
+                    var timeout = Args.Int(args, "timeout") ?? 300;
+                    var result = await ctx.Host.WaitSubagentsAsync(ctx, ids, any, timeout, ct);
+                    return ToolResult.Ok(result);
+                }
+                case "interrupt":
+                {
+                    var id = Args.Required(args, "id");
+                    var result = await ctx.Host.InterruptSubagentAsync(ctx, id, ct);
+                    return ToolResult.Ok(result);
+                }
+                default:
+                    return ToolResult.Fail($"Unknown action '{action}'.");
+            }
+        }
+        catch (Exception ex)
+        {
+            return ToolResult.Fail(ex.Message);
+        }
     }
 }
 

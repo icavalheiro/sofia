@@ -140,6 +140,10 @@ public sealed partial class AgentCatalog(SofiaOptions options)
         var prompt = body.Trim();
         if (mode == "subagent")
             prompt = (prompt + "\n\nYou are a subagent. Complete the task autonomously, then reply with a concise report of what you did and found. The user cannot answer questions.").Trim();
-        return new AgentDefinition(id, id, description, mode, tools, mcp, prompt.Length > 0 ? prompt : null, source, file);
+        var model = fields.TryGetValue("model", out var mm) ? mm.Trim() : null;
+        if (string.IsNullOrWhiteSpace(model)) model = null;
+        var reasoning = fields.TryGetValue("reasoning", out var rr) ? rr.Trim() : null;
+        if (string.IsNullOrWhiteSpace(reasoning)) reasoning = null;
+        return new AgentDefinition(id, id, description, mode, tools, mcp, prompt.Length > 0 ? prompt : null, source, file, model, reasoning);
     }
 }

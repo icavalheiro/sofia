@@ -148,6 +148,10 @@ public sealed class ToolCall
     public string? Error { get; set; }
     public string Duration { get; set; } = "running…";
     public string? ChildSessionId { get; set; }
+    /// <summary>Model used by the spawned subagent (task tool).</summary>
+    public string? ChildModelId { get; set; }
+    /// <summary>Whether the subagent was spawned in the background (task tool).</summary>
+    public bool ChildBackground { get; set; }
     /// <summary>Media the tool produced (browser screenshots, images, audio or video read from disk); also sent to models that accept it.</summary>
     public List<Attachment>? Images { get; set; }
 

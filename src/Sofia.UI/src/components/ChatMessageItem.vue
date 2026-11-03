@@ -497,15 +497,20 @@ function closeLightbox(): void {
               <div class="tool-summary">{{ tc.summary }}</div>
 
               <!-- Subagent run spawned by this call: open its own conversation. -->
-              <button
-                v-if="tc.childSessionId"
-                class="tool-child"
-                type="button"
-                @click="openConversation(tc.childSessionId)"
-              >
-                <SofiaIcon name="chat" :size="'0.75rem'" />
-                {{ t('tool.openSubagent') }}
-              </button>
+              <div v-if="tc.childSessionId" class="tool-child-wrap">
+                <button
+                  class="tool-child"
+                  type="button"
+                  @click="openConversation(tc.childSessionId)"
+                >
+                  <SofiaIcon name="chat" :size="'0.75rem'" />
+                  {{ t('tool.openSubagent') }}
+                </button>
+                <span v-if="tc.childModelId" class="tool-child-model">{{ tc.childModelId.split('/').pop() }}</span>
+                <span class="tool-child-status" :class="tc.childBackground ? 'tool-child-status--bg' : 'tool-child-status--blocking'">
+                  {{ tc.childBackground ? 'background' : 'blocking' }}
+                </span>
+              </div>
 
               <div v-if="tc.input" class="tool-block tool-block--input" :class="{ 'tool-block--folded': !openInputs.has(tc.id) }">
                 <button

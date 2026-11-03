@@ -225,13 +225,16 @@ public sealed class AgentService(RunServices services, CommandService commands, 
 
     internal void Finished(SessionRun run)
     {
+        var childrenLive = false;
         lock (_gate)
         {
             _runs.TryRemove(new KeyValuePair<string, SessionRun>(run.Session.Id, run));
-            awake.SetBusy(!_runs.IsEmpty);
+            childrenLive = _runs.Values.Any(r => r.Session.ParentId == run.Session.Id || (r.Root.Session.Id == run.Session.Id && r.Session.Id != run.Session.Id));
+            awake.SetBusy(!_runs.IsEmpty || childrenLive);
         }
         // Only a top-level run that ended normally is worth learning from; subagents report to their parent.
-        if (run.Root == run && run.Session.ParentId is null && run.LastError is null && !run.WasAborted)
+        // Defer the learning hook while background children are still live.
+        if (run.Root == run && run.Session.ParentId is null && run.LastError is null && !run.WasAborted && !childrenLive)
             _ = ReviewAsync(run.Session.Id, run.Workspace);
     }
 
@@ -265,6 +268,9 @@ public sealed class AgentService(RunServices services, CommandService commands, 
     public void Abort(string sessionId)
     {
         if (_runs.TryGetValue(sessionId, out var run)) run.Abort();
+        // Cascade to all descendant runs (live children).
+        foreach (var child in _runs.Values.Where(r => r.Session.ParentId == sessionId || r.Root.Session.Id == sessionId).ToList())
+            if (child.Session.Id != sessionId) Abort(child.Session.Id);
     }
 
     /// <summary>Removes a follow-up that is still waiting in the inbox (steer or queued) before it reaches the model.</summary>
