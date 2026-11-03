@@ -597,3 +597,13 @@ interface ConfigDto {
   configPath: string            // read-only
 }
 ```
+
+## Session origin
+
+`SessionDto` / `ConversationSummaryDto` now include an optional `origin` field (`'ui'` default, `'acp'` for editor-created sessions).
+
+## Session-scoped MCP (ACP)
+
+- `POST /api/sessions/{id}/mcp` — register an ephemeral MCP server for one session.
+- `DELETE /api/sessions/{id}/mcp` — remove all ephemeral MCP servers for the session.
+

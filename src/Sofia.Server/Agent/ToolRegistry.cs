@@ -19,7 +19,7 @@ public sealed class ToolRegistry(
     private readonly IEventBus _bus = bus;
     private static readonly HashSet<string> FolderOnly = ["read", "write", "edit", Agents.ShellToolToken, "grep", "find", "ls", "task", "task:explore"];
 
-    public List<ITool> For(AgentDefinition agent, Workspace workspace)
+    public List<ITool> For(AgentDefinition agent, Workspace workspace, string? sessionId = null)
     {
         var shell = ProcessRunner.ResolveShell(db.GetConfig().Shell);
         var dir = workspace.IsFolder ? workspace.Path : null;
@@ -61,7 +61,7 @@ public sealed class ToolRegistry(
         }
         if (tools.Any(t => t.Name == "task") && tools.All(t => t.Name != "agents"))
             tools.Add(new AgentsTool());
-        if (agent.IncludeMcp) tools.AddRange(mcp.Tools());
+        if (agent.IncludeMcp) tools.AddRange(mcp.Tools(sessionId));
         return tools;
     }
 

@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Sofia.Acp/Sofia.Acp.csproj" />
+    <Project Path="src/Sofia.Acp.Tests/Sofia.Acp.Tests.csproj" />
     <Project Path="src/Sofia.Desktop/Sofia.Desktop.csproj" />
     <Project Path="src/Sofia.Server.Tests/Sofia.Server.Tests.csproj" />
     <Project Path="src/Sofia.Server/Sofia.Server.csproj" />

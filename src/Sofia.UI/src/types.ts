@@ -34,6 +34,8 @@ export interface ConversationSummaryDto
   updatedAt: string;
   status: SessionStatus;
   parentId?: string;
+  /** Origin of the session: 'ui' (default) or 'acp' for editor-created sessions. */
+  origin?: string;
   /** Parked in the workspace's "Archived" folder; hidden from the normal list. */
   archived?: boolean;
   archivedAt?: string;
