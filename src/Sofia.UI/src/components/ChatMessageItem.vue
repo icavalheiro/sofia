@@ -2,7 +2,6 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 
 import logoUrl from '@/assets/logo_31.png'
-import FadeWords from '@/components/FadeWords.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import { useHarness } from '@/composables/useHarness'
@@ -453,7 +452,7 @@ function closeLightbox(): void {
         </button>
         <div class="collapsible" :class="{ 'collapsible--closed': reasoningCollapsed }">
           <div class="collapsible-inner">
-            <FadeWords class="reasoning-text" :text="message.reasoning ?? ''" :streaming="streaming" />
+            <p class="reasoning-text">{{ message.reasoning }}</p>
           </div>
         </div>
       </div>
@@ -461,15 +460,9 @@ function closeLightbox(): void {
       <!-- Message text comes before the tool cards: the model speaks, then acts. -->
       <template v-if="!message.knowledge?.length">
         <MarkdownText
-          v-if="message.text && message.role === 'assistant' && !streaming"
+          v-if="message.text && message.role === 'assistant'"
           class="msg-text msg-text--md"
           :source="message.text"
-        />
-        <FadeWords
-          v-else-if="message.text && message.role === 'assistant' && streaming"
-          class="msg-text"
-          :text="message.text"
-          :streaming="true"
         />
         <p v-else-if="message.text" class="msg-text">{{ message.text }}</p>
       </template>
