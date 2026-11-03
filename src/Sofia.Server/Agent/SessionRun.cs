@@ -96,6 +96,14 @@ public sealed class SessionRun : IToolHost
     public string? LastError { get; private set; }
     public bool HasPendingQuestion => !_questions.IsEmpty;
 
+    public bool IsFinished
+    {
+        get
+        {
+            lock (_gate) return _finished;
+        }
+    }
+
     private string Cwd => Workspace.IsFolder ? Workspace.Path : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
     // --- queueing ------------------------------------------------------------
@@ -109,6 +117,30 @@ public sealed class SessionRun : IToolHost
             SyncQueue();
         }
         _s.Store.SaveSession(Session);
+        return true;
+    }
+
+    /// <summary>Removes a follow-up that has not reached the model yet (steer or queued). Returns false when it is gone or already sent.</summary>
+    public bool TryRemoveQueued(string messageId)
+    {
+        lock (_gate)
+        {
+            if (_finished) return false;
+            if (!RemoveFromQueue(_steer, messageId) && !RemoveFromQueue(_followUps, messageId)) return false;
+            SyncQueue();
+        }
+        _s.Store.SaveSession(Session);
+        return true;
+    }
+
+    private static bool RemoveFromQueue(Queue<PendingPrompt> queue, string messageId)
+    {
+        var items = queue.ToList();
+        var index = items.FindIndex(p => p.MessageId == messageId);
+        if (index < 0) return false;
+        queue.Clear();
+        for (var i = 0; i < items.Count; i++)
+            if (i != index) queue.Enqueue(items[i]);
         return true;
     }
 

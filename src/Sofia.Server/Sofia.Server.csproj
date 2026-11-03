@@ -8,6 +8,8 @@
     <AssemblyName>Sofia.Server</AssemblyName>
     <Version>0.5.5</Version>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Reuse the Sofia icon so the server executable shows the Sofia logo in Explorer/taskbar. -->
+    <ApplicationIcon>Assets\sofia.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

@@ -213,6 +213,12 @@ public static class SessionEndpoints
             return Results.NoContent();
         });
 
+        api.MapDelete("/sessions/{id}/queued/{messageId}", (string id, string messageId, AgentService agents) =>
+        {
+            agents.RemoveQueuedMessage(id, messageId);
+            return Results.NoContent();
+        });
+
         api.MapPost("/sessions/{id}/compact", (string id, AgentService agents) =>
         {
             agents.Compact(id);

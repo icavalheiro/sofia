@@ -2,6 +2,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 
 import logoUrl from '@/assets/logo_31.png'
+import FadeWords from '@/components/FadeWords.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import { useHarness } from '@/composables/useHarness'
@@ -26,7 +27,7 @@ const props = defineProps<{
   cacheBreak?: CacheBreakInfo | null
 }>()
 const { t } = useI18n()
-const { resolvePermissionRequest, answerFormQuestion, confirmFormQuestions, revertMessage, branchMessage, retryMessage, openConversation } =
+const { resolvePermissionRequest, answerFormQuestion, confirmFormQuestions, revertMessage, branchMessage, retryMessage, openConversation, removeQueuedMessage } =
   useHarness()
 
 // Reasoning is "live" while this message is still streaming and the model has
@@ -212,6 +213,15 @@ const retryConfirmOpen = ref(false)
 const retryConfirmBtn = ref<HTMLButtonElement | null>(null)
 const revertError = ref<string | null>(null)
 const branching = ref(false)
+const removingQueued = ref(false)
+
+async function removeQueued(): Promise<void> {
+  if (removingQueued.value) return
+  removingQueued.value = true
+  const err = await removeQueuedMessage(props.message.id)
+  if (err) revertError.value = err
+  removingQueued.value = false
+}
 
 async function branchOut(): Promise<void> {
   if (branching.value || props.message.local) return
@@ -400,6 +410,17 @@ function closeLightbox(): void {
           <SofiaIcon name="clock" :size="'0.7rem'" />
           {{ pending === 'steer' ? t('chat.pendingSteer') : t('chat.pendingQueue') }}
         </span>
+        <button
+          v-if="pending"
+          class="msg-revert msg-revert--remove-queued"
+          type="button"
+          title="Remove this queued message"
+          :disabled="removingQueued"
+          @click="removeQueued"
+        >
+          <SofiaIcon name="x" :size="'0.8rem'" />
+          <span>{{ removingQueued ? 'Removing…' : 'Remove' }}</span>
+        </button>
         <span v-else class="msg-time">{{ message.time }}</span>
       </div>
 
@@ -432,7 +453,7 @@ function closeLightbox(): void {
         </button>
         <div class="collapsible" :class="{ 'collapsible--closed': reasoningCollapsed }">
           <div class="collapsible-inner">
-            <p class="reasoning-text">{{ message.reasoning }}</p>
+            <FadeWords class="reasoning-text" :text="message.reasoning ?? ''" :streaming="streaming" />
           </div>
         </div>
       </div>
@@ -440,9 +461,15 @@ function closeLightbox(): void {
       <!-- Message text comes before the tool cards: the model speaks, then acts. -->
       <template v-if="!message.knowledge?.length">
         <MarkdownText
-          v-if="message.text && message.role === 'assistant'"
+          v-if="message.text && message.role === 'assistant' && !streaming"
           class="msg-text msg-text--md"
           :source="message.text"
+        />
+        <FadeWords
+          v-else-if="message.text && message.role === 'assistant' && streaming"
+          class="msg-text"
+          :text="message.text"
+          :streaming="true"
         />
         <p v-else-if="message.text" class="msg-text">{{ message.text }}</p>
       </template>

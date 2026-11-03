@@ -12,7 +12,7 @@
     <RootNamespace>Sofia.Desktop</RootNamespace>
     <AssemblyName>Sofia.Desktop</AssemblyName>
     <Version>0.5.5</Version>
-    <ApplicationIcon>Assets\sofia.ico</ApplicationIcon>
+    <ApplicationIcon>..\Sofia.Server\Assets\sofia.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

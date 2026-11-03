@@ -1455,6 +1455,30 @@ export function useHarness ()
     }
   }
 
+  /** Removes a follow-up that is still waiting in the inbox (steer or queued) before it reaches the model. */
+  async function removeQueuedMessage ( messageId: string ): Promise<string | null>
+  {
+    const conv = activeConversation.value;
+    if ( !conv ) return 'No active conversation.';
+    const before = conv.queuedMessages ?? [];
+    const removed = before.find( ( q ) => q.id === messageId );
+    if ( !removed ) return 'This message is no longer queued.';
+    // Optimistic: drop it from the inbox preview at once.
+    conv.queuedMessages = before.filter( ( q ) => q.id !== messageId );
+    conv.queued = Math.max( 0, ( conv.queued ?? 0 ) - 1 );
+    try
+    {
+      await api( 'DELETE', `/api/sessions/${ conv.id }/queued/${ messageId }` );
+      return null;
+    } catch ( e )
+    {
+      // Restore the preview if the server rejected it.
+      conv.queuedMessages = before;
+      conv.queued = before.length;
+      return errorText( e );
+    }
+  }
+
   /** Runs a prompt-template command in the active session. */
   async function runCommand ( name: string, argText: string ): Promise<string | null>
   {
@@ -1716,6 +1740,7 @@ export function useHarness ()
     clearAttachments,
     sendMessage,
     sendSteered,
+    removeQueuedMessage,
     runCommand,
     cancelReply,
     revertMessage,

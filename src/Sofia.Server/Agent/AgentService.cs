@@ -258,6 +258,14 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         if (_runs.TryGetValue(sessionId, out var run)) run.Abort();
     }
 
+    /// <summary>Removes a follow-up that is still waiting in the inbox (steer or queued) before it reaches the model.</summary>
+    public void RemoveQueuedMessage(string sessionId, string messageId)
+    {
+        if (!_runs.TryGetValue(sessionId, out var run)) throw new ConflictException("This message is no longer queued.");
+        if (run.IsFinished) throw new ConflictException("The run has ended.");
+        if (!run.TryRemoveQueued(messageId)) throw new NotFoundException("Queued message not found.");
+    }
+
     public void ReplyPermission(string sessionId, string requestId, string decision)
     {
         if (decision is not ("once" or "always" or "reject")) throw new ArgumentException("decision must be once, always or reject.");

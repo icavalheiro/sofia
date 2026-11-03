@@ -232,6 +232,7 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `POST` | `/api/sessions/{id}/prompt` | `PromptRequest` | `{ messageId }` |
 | `POST` | `/api/sessions/{id}/command` | `{ name, arguments?, attachments?: string[] }` | `{ messageId }` |
 | `POST` | `/api/sessions/{id}/abort` | – | `204` |
+| `DELETE` | `/api/sessions/{id}/queued/{messageId}` | – | `204` (removes a follow-up that is still waiting in the inbox — steer or queued — before it reaches the model; `404` when it is already sent, `409` when the run has ended) |
 | `POST` | `/api/sessions/{id}/compact` | – | `204` (summary arrives as a `message.created` with `summary: true`) |
 | `POST` | `/api/sessions/{id}/revert` | `{ messageId }` | `{ removed: string[], restoredFiles: string[] }` |
 | `POST` | `/api/sessions/{id}/continue` | – | `{ messageId }` (regenerates the next assistant step from the current history without adding a user turn) |
