@@ -17,10 +17,10 @@ using Sofia.Server.Vcs;
 namespace Sofia.Server.Api;
 
 public sealed record CreateWorkspaceRequest(string? Kind, string? Path, string? Name, string? Icon, string? ModelId);
-public sealed record UpdateWorkspaceRequest(string? Name, string? Icon, string? ModelId, bool? Expanded, int? Order);
+public sealed record UpdateWorkspaceRequest(string? Name, string? Icon, string? ModelId, bool? Expanded, int? Order, bool? Sandbox = null);
 public sealed record CreateSessionRequest(string? Title);
 public sealed record ReorderRequest(List<string>? Ids);
-public sealed record UpdateSessionRequest(string? Title, string? ModelId, string? Agent, string? PermissionMode, string? ReasoningMode);
+public sealed record UpdateSessionRequest(string? Title, string? ModelId, string? Agent, string? PermissionMode, string? ReasoningMode, bool? Sandbox = null);
 public sealed record CommandRequest(string Name, string? Arguments, List<string>? Attachments = null);
 public sealed record RevertRequest(string MessageId);
 public sealed record PermissionReplyRequest(string Decision);
@@ -102,6 +102,7 @@ public static class SessionEndpoints
             if (body.ModelId is { } model) workspace.ModelId = model;
             if (body.Expanded is { } expanded) workspace.Expanded = expanded;
             if (body.Order is { } order) workspace.Order = order;
+            if (body.Sandbox is { } sandbox) workspace.Sandbox = sandbox;
             db.Workspaces.Update(workspace);
             store.PublishWorkspace(workspace);
             return Results.Ok(WorkspaceView.From(workspace, null));
@@ -159,7 +160,7 @@ public static class SessionEndpoints
         api.MapPatch("/sessions/{id}", (string id, UpdateSessionRequest body, AgentService agents) =>
         {
             var (session, _) = agents.Load(id);
-            return Results.Ok(agents.ApplySettings(session, body.ModelId, body.Agent, body.PermissionMode, body.ReasoningMode, body.Title));
+            return Results.Ok(agents.ApplySettings(session, body.ModelId, body.Agent, body.PermissionMode, body.ReasoningMode, body.Title, body.Sandbox));
         });
 
         api.MapDelete("/sessions/{id}", (string id, AgentService agents, SessionStore store) =>

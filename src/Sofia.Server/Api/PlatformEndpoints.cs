@@ -33,7 +33,9 @@ public sealed record ConfigPatch(
     bool? KeepScreenAwake = null,
     bool? Knowledge = null,
     string? SearchProvider = null,
-    string? SearxngUrl = null);
+    string? SearxngUrl = null,
+    bool? Sandbox = null,
+    bool? SandboxNetwork = null);
 
 public static class PlatformEndpoints
 {
@@ -386,6 +388,8 @@ public static class PlatformEndpoints
                     throw new ArgumentException("searxngUrl must be an absolute http(s) URL.");
                 config.SearxngUrl = searxng;
             }
+            if (body.Sandbox is { } sandboxSetting) config.Sandbox = sandboxSetting;
+            if (body.SandboxNetwork is { } sandboxNetwork) config.SandboxNetwork = sandboxNetwork;
             db.SaveConfig(config);
             awake.Refresh();
             if (rediscover) await providers.RefreshAsync(discover: true, ct);
@@ -418,19 +422,26 @@ public static class PlatformEndpoints
         });
     }
 
-    private static object ConfigView(ServerConfig c, SofiaOptions options) => new
+    private static object ConfigView(ServerConfig c, SofiaOptions options)
     {
-        c.DefaultModel,
-        c.Shell,
-        c.AutoCompact,
-        c.CompactThreshold,
-        c.Discovery,
-        c.MaxToolOutput,
-        c.KeepScreenAwake,
-        c.Knowledge,
-        c.SearchProvider,
-        c.SearxngUrl,
-        dataDir = options.DataDir,
-        configPath = options.DbPath,
-    };
+        var status = SandboxFactory.Create().Status;
+        return new
+        {
+            c.DefaultModel,
+            c.Shell,
+            c.AutoCompact,
+            c.CompactThreshold,
+            c.Discovery,
+            c.MaxToolOutput,
+            c.KeepScreenAwake,
+            c.Knowledge,
+            c.SearchProvider,
+            c.SearxngUrl,
+            c.Sandbox,
+            c.SandboxNetwork,
+            sandboxStatus = new { available = status.Available, backend = status.Backend, reason = status.Reason },
+            dataDir = options.DataDir,
+            configPath = options.DbPath,
+        };
+    }
 }

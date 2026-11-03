@@ -961,6 +961,36 @@ onBeforeUnmount(stopEvents)
                       @keyup.enter="saveSearxng"
                     />
                   </div>
+
+                  <label class="row">
+                    <span class="row-text">
+                      <span class="row-title">Sandbox commands</span>
+                      <span class="row-sub">Run shell and process commands in an OS sandbox (available: {{ config.sandboxStatus?.available ? config.sandboxStatus.backend : 'no' }}).</span>
+                    </span>
+                    <button
+                      class="toggle"
+                      :class="{ 'toggle--on': config.sandbox }"
+                      type="button"
+                      role="switch"
+                      :aria-checked="config.sandbox"
+                      @click="saveConfig({ sandbox: !config.sandbox })"
+                    ><span class="knob" /></button>
+                  </label>
+
+                  <label class="row">
+                    <span class="row-text">
+                      <span class="row-title">Allow network in sandbox</span>
+                      <span class="row-sub">Let sandboxed commands reach the network.</span>
+                    </span>
+                    <button
+                      class="toggle"
+                      :class="{ 'toggle--on': config.sandboxNetwork }"
+                      type="button"
+                      role="switch"
+                      :aria-checked="config.sandboxNetwork"
+                      @click="saveConfig({ sandboxNetwork: !config.sandboxNetwork })"
+                    ><span class="knob" /></button>
+                  </label>
                 </div>
 
                 <dl class="srv-cfg-list">

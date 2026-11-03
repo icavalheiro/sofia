@@ -93,6 +93,8 @@ public sealed class SessionRun : IToolHost
     public Session Session { get; }
     public Workspace Workspace { get; }
     public SessionRun Root { get; }
+    public SandboxPolicy? Sandbox => SandboxPolicy.Resolve(_s.Db.GetConfig(), Workspace, Session);
+    public SandboxPolicy? EffectiveSandbox => Sandbox;
     public string? LastError { get; private set; }
     public bool HasPendingQuestion => !_questions.IsEmpty;
 
@@ -551,7 +553,7 @@ public sealed class SessionRun : IToolHost
         if (Session.FrozenPrompt is null || Session.FrozenAgent != Session.Agent || Session.FrozenTools != fingerprint)
         {
             system = SystemPromptBuilder.Build(agent, Workspace, Session, tools, snapshot.ContextFiles, snapshot.Skills, overrides, shell,
-                snapshot.Branch, snapshot.Notes);
+                snapshot.Branch, snapshot.Notes, Sandbox);
             Session.FrozenPrompt = system;
             Session.FrozenAgent = Session.Agent;
             Session.FrozenTools = fingerprint;
@@ -868,6 +870,7 @@ public sealed class SessionRun : IToolHost
                         Config = _s.Db.GetConfig(),
                         Changes = _s.Changes,
                         Host = this,
+                        Sandbox = Sandbox,
                     };
                     result = await tool.ExecuteAsync(ctx, args, ct);
                 }
@@ -926,9 +929,23 @@ public sealed class SessionRun : IToolHost
     {
         if (tool.Kind is ToolKind.Read or ToolKind.Network or ToolKind.Interactive or ToolKind.Agent) return null;
         var mode = Session.Agent == "plan" ? "plan" : Session.PermissionMode;
-        if (mode == "full") return null;
+        var unsandboxed = Args.Bool(args, "unsandboxed");
         if (mode is "read-only" or "plan" && tool.Kind is ToolKind.Write or ToolKind.Execute)
             return $"Blocked: the session is in '{mode}' mode, which does not allow `{tool.Name}`. Describe the change instead, or ask the user to switch the permission mode.";
+        // Escalation: running a command outside the sandbox always needs a one-time card, even in full mode.
+        if (unsandboxed && Sandbox is not null && tool.Kind == ToolKind.Execute)
+        {
+            BeginUserWait();
+            try
+            {
+                return await Root.RequestEscalationAsync(tool, call, args, ct);
+            }
+            finally
+            {
+                EndUserWait();
+            }
+        }
+        if (mode == "full") return null;
         BeginUserWait();
         try
         {
@@ -938,6 +955,41 @@ public sealed class SessionRun : IToolHost
         {
             EndUserWait();
         }
+    }
+
+    private async Task<string?> RequestEscalationAsync(ITool tool, ToolCall call, JsonObject args, CancellationToken ct)
+    {
+        var requestId = Ids.New("per");
+        var card = _s.Store.AddMessage(Session, new Message
+        {
+            Role = "assistant",
+            Synthetic = true,
+            Model = ModelLabel(),
+            Text = "I need your approval before I continue.",
+            Permission = new PermissionCard
+            {
+                Tool = tool.Name,
+                Description = $"Run unsandboxed: {DescribeCall(tool, call, args)}",
+                Choices = ["Allow once", "Deny"],
+                RequestId = requestId,
+            },
+        });
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _permissions[requestId] = (tcs, card);
+        RefreshStatus();
+        string decision;
+        try
+        {
+            await using (ct.Register(() => tcs.TrySetCanceled()))
+                decision = await tcs.Task;
+        }
+        finally
+        {
+            _permissions.TryRemove(requestId, out _);
+            if (SettleCard(card)) _s.Store.UpdateMessage(Session, card);
+            RefreshStatus();
+        }
+        return decision == "reject" ? $"The user denied permission to run `{tool.Name}` unsandboxed." : null;
     }
 
     private async Task<string?> RequestPermissionAsync(ITool tool, ToolCall call, JsonObject args, CancellationToken ct)

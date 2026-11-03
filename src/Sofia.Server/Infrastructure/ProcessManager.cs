@@ -6,7 +6,7 @@ namespace Sofia.Server.Infrastructure;
 
 public sealed record BackgroundProcessInfo(
     string Id, string Command, string? Cwd, string? SessionId, int? Pid, string Status, int? ExitCode,
-    DateTimeOffset StartedAt, DateTimeOffset? EndedAt);
+    DateTimeOffset StartedAt, DateTimeOffset? EndedAt, bool Sandboxed = false);
 
 /// <summary>Tracks long-running commands started in the background (dev servers, watchers) so they can be listed, read and killed.</summary>
 public sealed class ProcessManager(ILogger<ProcessManager> log) : IHostedService
@@ -24,6 +24,7 @@ public sealed class ProcessManager(ILogger<ProcessManager> log) : IHostedService
         public string? Cwd { get; init; }
         public string? SessionId { get; init; }
         public required Process Process { get; init; }
+        public SandboxPolicy? Sandbox { get; init; }
         public int? Pid { get; set; }
         public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
         public DateTimeOffset? EndedAt { get; set; }
@@ -32,13 +33,23 @@ public sealed class ProcessManager(ILogger<ProcessManager> log) : IHostedService
         public readonly LinkedList<string> Lines = new();
     }
 
-    public BackgroundProcessInfo Start(ShellSpec shell, string command, string? cwd, string? sessionId)
+    public BackgroundProcessInfo Start(ShellSpec shell, string command, string? cwd, string? sessionId, SandboxPolicy? sandbox = null)
     {
         var psi = ProcessRunner.StartInfo(shell.Executable, shell.Arguments(command), cwd);
-        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        Process process;
+        if (sandbox is not null)
+        {
+            var backend = SandboxFactory.Create();
+            if (backend.Status.Available) process = backend.Start(psi, sandbox);
+            else process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        }
+        else
+        {
+            process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        }
         var entry = new Entry
         {
-            Id = "bg_" + Interlocked.Increment(ref _next), Command = command, Cwd = cwd, SessionId = sessionId, Process = process,
+            Id = "bg_" + Interlocked.Increment(ref _next), Command = command, Cwd = cwd, SessionId = sessionId, Process = process, Sandbox = sandbox,
         };
         void Append(string? line)
         {
@@ -59,7 +70,7 @@ public sealed class ProcessManager(ILogger<ProcessManager> log) : IHostedService
                 try { entry.ExitCode = process.ExitCode; } catch { /* disposed */ }
             }
         };
-        process.Start();
+        try { process.Start(); } catch (InvalidOperationException) { /* already started */ }
         entry.Pid = process.Id;
         process.StandardInput.Close();
         process.BeginOutputReadLine();
@@ -135,7 +146,7 @@ public sealed class ProcessManager(ILogger<ProcessManager> log) : IHostedService
     {
         var running = e.EndedAt is null && !SafeExited(e.Process);
         var status = running ? "running" : e.Killed ? "killed" : "exited";
-        return new BackgroundProcessInfo(e.Id, e.Command, e.Cwd, e.SessionId, e.Pid, status, running ? null : e.ExitCode, e.StartedAt, e.EndedAt);
+        return new BackgroundProcessInfo(e.Id, e.Command, e.Cwd, e.SessionId, e.Pid, status, running ? null : e.ExitCode, e.StartedAt, e.EndedAt, e.Sandbox is not null);
     }
 
     private static bool SafeExited(Process p)

@@ -44,11 +44,12 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         var workspace = Db.Workspaces.FindById(session.WorkspaceId) ?? throw new NotFoundException("Workspace not found.");
         // Active runs own the live session object; always hand that one out while running.
         if (_runs.TryGetValue(sessionId, out var run)) session = run.Session;
+        session.SandboxEffective = SandboxPolicy.Resolve(Db.GetConfig(), workspace, session) is not null;
         return (session, workspace);
     }
 
     /// <summary>Applies per-prompt overrides (model, agent, modes) to the session.</summary>
-    public Session ApplySettings(Session session, string? modelId, string? agent, string? permissionMode, string? reasoningMode, string? title = null)
+    public Session ApplySettings(Session session, string? modelId, string? agent, string? permissionMode, string? reasoningMode, string? title = null, bool? sandbox = null)
     {
         var changed = false;
         if (!string.IsNullOrWhiteSpace(modelId) && modelId != session.ModelId)
@@ -83,6 +84,12 @@ public sealed class AgentService(RunServices services, CommandService commands, 
             session.Title = title.Trim();
             changed = true;
         }
+        if (sandbox != session.Sandbox)
+        {
+            session.Sandbox = sandbox;
+            changed = true;
+        }
+        session.SandboxEffective = SandboxPolicy.Resolve(Db.GetConfig(), Db.Workspaces.FindById(session.WorkspaceId), session) is not null;
         if (changed) Store.SaveSession(session);
         return session;
     }
@@ -90,7 +97,7 @@ public sealed class AgentService(RunServices services, CommandService commands, 
     public string Prompt(string sessionId, PromptInput input, string? expanded = null)
     {
         var (session, workspace) = Load(sessionId);
-        ApplySettings(session, input.ModelId, input.Agent, input.PermissionMode, input.ReasoningMode);
+        ApplySettings(session, input.ModelId, input.Agent, input.PermissionMode, input.ReasoningMode, null, session.Sandbox);
         if (!string.IsNullOrWhiteSpace(input.Language) && input.Language.Trim() != session.Language)
         {
             session.Language = input.Language.Trim();
@@ -146,7 +153,8 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         if (dir is not null)
         {
             var shell = ProcessRunner.ResolveShell(Db.GetConfig().Shell);
-            var withFiles = CommandService.ExpandDynamicAsync(trimmed, dir, false, shell, CancellationToken.None)
+            var sessionSandbox = SandboxPolicy.Resolve(Db.GetConfig(), workspace, session);
+            var withFiles = CommandService.ExpandDynamicAsync(trimmed, dir, false, shell, CancellationToken.None, sessionSandbox)
                 .GetAwaiter().GetResult();
             if (withFiles != trimmed)
             {
@@ -195,7 +203,8 @@ public sealed class AgentService(RunServices services, CommandService commands, 
 
         // Shell injection (!`cmd`) only runs without asking in full-access sessions.
         var text = await CommandService.ExpandDynamicAsync(CommandService.Expand(command.Template, args), dir,
-            session.PermissionMode == "full", ProcessRunner.ResolveShell(Db.GetConfig().Shell), ct);
+            session.PermissionMode == "full", ProcessRunner.ResolveShell(Db.GetConfig().Shell), ct,
+            SandboxPolicy.Resolve(Db.GetConfig(), workspace, session));
 
         // A subtask (or a subagent-only agent) is delegated through `task`; any other agent takes over the session.
         string? delegateTo = null;

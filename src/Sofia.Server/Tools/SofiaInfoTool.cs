@@ -199,6 +199,7 @@ public sealed class SofiaInfoTool(
         sb.AppendLine($"- keepScreenAwake: {Json(c.KeepScreenAwake)}");
         sb.AppendLine($"- knowledge: {Json(c.Knowledge)} (learn short notes from finished conversations; each note must be justified as useful or it is dropped)");
         sb.AppendLine($"- searchProvider: \"{c.SearchProvider}\" (duckduckgo | searxng); searxngUrl: \"{Redact(c.SearxngUrl)}\"");
+        sb.AppendLine($"- sandbox: {Json(c.Sandbox)}; sandboxNetwork: {Json(c.SandboxNetwork)} (OS-level confinement for shell/process commands)");
         sb.AppendLine($"- disabled models: {c.DisabledModels.Count}");
         return sb.ToString();
     }

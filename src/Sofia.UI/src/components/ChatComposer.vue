@@ -11,6 +11,7 @@ import {
   REASONING_MODES,
   type AgentDto,
   type CommandDto,
+  type ConfigDto,
   type PermissionModeId,
   type ReasoningModeId,
   type UsageDto,
@@ -167,6 +168,28 @@ const canSend = computed(() => state.composerText.trim().length > 0 || state.att
 
 // --- git branch -----------------------------------------------------------------
 const currentBranch = ref('')
+const config = ref<ConfigDto | null>(null)
+
+async function refreshConfig(): Promise<void> {
+  try {
+    config.value = await api<ConfigDto>('GET', '/api/config')
+  } catch {
+    config.value = null
+  }
+}
+
+const sandboxAvailable = computed(() => config.value?.sandboxStatus?.available ?? false)
+const sandboxEffective = computed(() => activeConversation.value?.sandboxEffective ?? config.value?.sandbox ?? false)
+const sandboxTooltip = computed(() => {
+  if (!config.value) return 'Sandbox'
+  if (!sandboxAvailable.value) return `Sandbox unavailable: ${config.value.sandboxStatus?.reason ?? 'no backend'}`
+  return `Sandbox ${sandboxEffective.value ? 'on' : 'off'} (${config.value.sandboxStatus?.backend})`
+})
+
+function toggleSandbox(): void {
+  if (!sandboxAvailable.value) return
+  void patchActiveSession({ sandbox: !sandboxEffective.value })
+}
 
 async function refreshBranch(): Promise<void> {
   const dir = directory.value
@@ -184,9 +207,10 @@ async function refreshBranch(): Promise<void> {
 }
 
 watch(
-  () => backend.phase === 'ready' && directory.value,
-  () => {
-    if (backend.phase !== 'ready') return
+  () => backend.phase === 'ready',
+  (ready) => {
+    if (!ready) return
+    void refreshConfig()
     void refreshBranch()
     void refreshAgents()
     void refreshFiles()
@@ -386,6 +410,8 @@ watch(paletteQuery, () => {
 watch(directory, () => {
   commandsLoaded.value = false
   commands.value = []
+  void refreshBranch()
+  void refreshFiles()
 })
 
 // The server watches the config folders (its own home and every workspace's `.sofia` / `.agents`): drop the cached
@@ -848,6 +874,16 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
         </div>
 
         <div class="chip-row">
+          <button
+            class="icon-btn"
+            type="button"
+            :title="sandboxTooltip"
+            :disabled="!sandboxAvailable"
+            :aria-pressed="sandboxEffective"
+            @click="toggleSandbox"
+          >
+            <SofiaIcon name="shield" :size="'0.9rem'" />
+          </button>
           <div v-if="currentBranch" class="branch-chip" title="Git branch">
             <SofiaIcon name="branch" :size="'0.8rem'" />
             <span class="branch-name sofia-truncate">{{ currentBranch }}</span>

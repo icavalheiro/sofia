@@ -18,7 +18,8 @@ public sealed class ShellTool(ShellSpec shell) : ITool
     public ToolKind Kind => ToolKind.Execute;
     public JsonObject Parameters => Schema.Object(
         ("command", Schema.String($"The {shell.Name} command to run."), true),
-        ("timeout", Schema.Integer("Timeout in seconds."), false));
+        ("timeout", Schema.Integer("Timeout in seconds."), false),
+        ("unsandboxed", Schema.Boolean("Run this command outside the OS sandbox (requires approval)."), false));
 
     public string Summarize(JsonObject args) => Text.FirstLine(Args.Optional(args, "command", "cmd") ?? "", 160);
 
@@ -26,9 +27,13 @@ public sealed class ShellTool(ShellSpec shell) : ITool
     {
         var command = Args.Required(args, "command", "cmd");
         var timeout = TimeSpan.FromSeconds(Math.Clamp(Args.Int(args, "timeout") ?? DefaultTimeoutSeconds, 1, 600));
+        var unsandboxed = Args.Bool(args, "unsandboxed");
+        var sandbox = unsandboxed ? null : ctx.Sandbox;
         var result = await ProcessRunner.RunShellAsync(shell, command, ctx.Cwd, timeout,
-            chunk => ctx.Host.ReportProgress(ctx.Call, chunk), ctx.Config.MaxToolOutput, ct);
+            chunk => ctx.Host.ReportProgress(ctx.Call, chunk), ctx.Config.MaxToolOutput, ct, sandbox);
         var output = result.Output.Length == 0 ? "(no output)" : result.Output;
+        if (ProcessRunner.LooksLikeSandboxDenial(output, result.ExitCode) && sandbox is not null)
+            output += "\n\n[The command may have been blocked by the OS sandbox. Retry with unsandboxed: true to run it outside the sandbox (requires approval).]";
         if (result.TimedOut) return ToolResult.Fail($"{output}\n\n[Command timed out after {timeout.TotalSeconds:0}s and was killed.]");
         if (result.Cancelled) return ToolResult.Fail($"{output}\n\n[Command aborted.]");
         if (result.ExitCode is { } code && code != 0) return ToolResult.Fail($"{output}\n\n[Exit code {code}]");

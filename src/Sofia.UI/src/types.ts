@@ -179,6 +179,8 @@ export interface SessionDto extends ConversationSummaryDto
   agent: string;
   permissionMode: PermissionModeId;
   reasoningMode: ReasoningModeId;
+  sandbox?: boolean | null;
+  sandboxEffective?: boolean;
   usage: UsageDto;
   context: ContextDto;
   activeSkills: string[];
@@ -231,6 +233,9 @@ export interface ConfigDto
   knowledge: boolean;
   searchProvider: 'duckduckgo' | 'searxng';
   searxngUrl: string;
+  sandbox: boolean;
+  sandboxNetwork: boolean;
+  sandboxStatus: { available: boolean; backend: string; reason?: string };
   dataDir: string;
   configPath: string;
 }
@@ -466,6 +471,8 @@ export interface Conversation
   agent?: string;
   permissionMode?: PermissionModeId;
   reasoningMode?: ReasoningModeId;
+  sandbox?: boolean | null;
+  sandboxEffective?: boolean;
   usage?: UsageDto;
   context?: ContextDto;
   /** What the last request of this chat took (server-side, user-waiting time excluded). */
