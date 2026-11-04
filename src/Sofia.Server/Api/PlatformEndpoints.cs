@@ -6,6 +6,7 @@ using Sofia.Server.Data;
 using Sofia.Server.Domain;
 using Sofia.Server.Events;
 using Sofia.Server.Infrastructure;
+using Sofia.Server.Lsp;
 using Sofia.Server.Mcp;
 using Sofia.Server.Providers;
 using Sofia.Server.Security;
@@ -42,7 +43,13 @@ public sealed record ConfigPatch
     public string? SearxngUrl { get; init; }
     public bool? Sandbox { get; init; }
     public bool? SandboxNetwork { get; init; }
+    public LspConfigPatch? Lsp { get; init; }
 }
+
+/// <summary>Partial LSP config update; per-server entries merge with the stored ones.</summary>
+public sealed record LspConfigPatch(bool? Enabled, bool? AutoDiagnostics, Dictionary<string, LspServerSettingPatch>? Servers);
+
+public sealed record LspServerSettingPatch(bool? Enabled, string? Command);
 
 public static class PlatformEndpoints
 {
@@ -225,6 +232,22 @@ public static class PlatformEndpoints
             return Results.NoContent();
         });
 
+        // --- language servers (LSP) ----------------------------------------------------
+
+        api.MapGet("/lsp", (LspManager lsp) => Results.Ok(lsp.ListViews()));
+        api.MapPost("/lsp/{id}/restart", async (string id, LspManager lsp) =>
+        {
+            if (LspServerCatalog.Find(id) is null) throw new NotFoundException($"Language server '{id}' not found.");
+            await lsp.RestartAsync(id);
+            return Results.Ok(lsp.View(id));
+        });
+        api.MapPost("/lsp/{id}/install", async (string id, LspManager lsp, CancellationToken ct) =>
+        {
+            if (LspServerCatalog.Find(id) is null) throw new NotFoundException($"Language server '{id}' not found.");
+            var (ok, output) = await lsp.InstallAsync(id, ct);
+            return Results.Ok(new { ok, output, status = lsp.View(id)?.Status });
+        });
+
         // --- agents, commands, skills ------------------------------------------------
 
         api.MapGet("/agents", (string? directory, AgentCatalog agents) => Results.Ok(agents.List(directory)
@@ -405,6 +428,20 @@ public static class PlatformEndpoints
             }
             if (body.Sandbox is { } sandboxSetting) config.Sandbox = sandboxSetting;
             if (body.SandboxNetwork is { } sandboxNetwork) config.SandboxNetwork = sandboxNetwork;
+            if (body.Lsp is { } lspPatch)
+            {
+                if (lspPatch.Enabled is { } lspEnabled) config.Lsp.Enabled = lspEnabled;
+                if (lspPatch.AutoDiagnostics is { } lspAuto) config.Lsp.AutoDiagnostics = lspAuto;
+                if (lspPatch.Servers is not null)
+                    foreach (var (id, server) in lspPatch.Servers)
+                    {
+                        var setting = config.Lsp.Servers.TryGetValue(id, out var existing) && existing is not null
+                            ? existing
+                            : config.Lsp.Servers[id] = new LspServerSetting();
+                        if (server.Enabled is { } sEnabled) setting.Enabled = sEnabled;
+                        if (server.Command is { } command) setting.Command = string.IsNullOrWhiteSpace(command) ? null : command.Trim();
+                    }
+            }
             db.SaveConfig(config);
             awake.Refresh();
             if (rediscover) await providers.RefreshAsync(discover: true, ct);
@@ -458,6 +495,7 @@ public static class PlatformEndpoints
             c.SearxngUrl,
             c.Sandbox,
             c.SandboxNetwork,
+            lsp = new { c.Lsp.Enabled, c.Lsp.AutoDiagnostics, c.Lsp.Servers },
             sandboxStatus = new { available = status.Available, backend = status.Backend, reason = status.Reason },
             dataDir = options.DataDir,
             configPath = options.DbPath,

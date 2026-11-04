@@ -470,6 +470,29 @@ public sealed class ServerConfig
     public List<string> SingleClientModels { get; set; } = [];
     /// <summary>Model ids of local runtimes that the user explicitly allowed to serve several conversations at once (the exception to the local-is-single-client default).</summary>
     public List<string> MultiClientModels { get; set; } = [];
+    /// <summary>Language Server Protocol settings (diagnostics, definition/references/hover, rename).</summary>
+    public LspConfig Lsp { get; set; } = new();
+}
+
+/// <summary>Per-language server override: `Enabled` gates the whole language, `Command` replaces the built-in command line.</summary>
+public sealed class LspServerSetting
+{
+    public bool Enabled { get; set; } = true;
+    /// <summary>Full replacement command line (e.g. `dotnet run --project /path/to/lsp-server -- --stdio`); '' or null = the built-in.</summary>
+    public string? Command { get; set; }
+}
+
+/// <summary>
+/// LSP settings on <see cref="ServerConfig"/>. Servers are keyed by catalog id
+/// (`typescript`, `html`, `css`, `csharp`); a missing entry means "enabled with the built-in command".
+/// </summary>
+public sealed class LspConfig
+{
+    /// <summary>Master switch: when off no language server starts and no auto diagnostics run.</summary>
+    public bool Enabled { get; set; } = true;
+    /// <summary>Append fresh error diagnostics to `write`/`edit` results for the touched files (never fails or blocks the write).</summary>
+    public bool AutoDiagnostics { get; set; } = true;
+    public Dictionary<string, LspServerSetting> Servers { get; set; } = [];
 }
 
 public sealed class AccessToken

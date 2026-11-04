@@ -28,7 +28,7 @@ public static class Agents
     public static readonly AgentDefinition[] All =
     [
         new("build", "Build", "Default agent: reads, edits, runs commands and delegates to subagents.", "primary",
-            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "question", "task", "skill", "notes", "memory", "tasks", "sofia_info", "current_time", "session_search", "session_read"], true, null),
+            ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "question", "task", "skill", "notes", "memory", "tasks", "sofia_info", "current_time", "session_search", "session_read", "lsp", "lsp_rename"], true, null),
         new("plan", "Plan", "Research-only: explores with read-only tools and proposes a plan without changing files.", "primary",
             ["read", "grep", "find", "ls", "web_fetch", "web_search", "question", "task:explore", "skill", "notes", "memory", "tasks", "sofia_info", "current_time", "session_search", "session_read"], true,
             "You are in PLAN mode. Investigate with read-only tools, then present a concrete, step-by-step plan. Do not modify files or run commands that change state."),
@@ -36,7 +36,7 @@ public static class Agents
             ["read", "write", "edit", ShellToolToken, "grep", "find", "ls", "web_fetch", "web_search", "browser", "processes", "skill", "notes", "memory", "tasks", "sofia_info", "current_time", "session_search", "session_read"], true,
             "You are a subagent. Complete the task autonomously, then reply with a concise report of what you did and found. The user cannot answer questions."),
         new("explore", "Explore", "Read-only subagent for fast codebase research.", "subagent",
-            ["read", "grep", "find", "ls", "web_fetch", "web_search", "skill", "notes", "memory", "tasks", "sofia_info", "current_time", "session_search", "session_read"], false,
+            ["read", "grep", "find", "ls", "web_fetch", "web_search", "skill", "notes", "memory", "tasks", "sofia_info", "current_time", "session_search", "session_read", "lsp"], false,
             "You are a read-only research subagent. Search and read efficiently, then reply with a concise, factual report including file paths and line references. The user cannot answer questions."),
     ];
 

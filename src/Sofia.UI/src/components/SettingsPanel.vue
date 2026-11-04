@@ -15,12 +15,13 @@ import {
   isValidCombo,
   useShortcuts,
 } from '@/composables/useShortcuts'
-import { api, onServerEvent } from '@/services/sofia'
+import { api, installLspServer, listLspServers, onServerEvent, restartLspServer } from '@/services/sofia'
 import { useI18n } from '@/i18n'
 import type {
   ConfigDto,
   CopilotDeviceFlow,
   CopilotLoginPoll,
+  LspServerView,
   McpServer,
   ModelOption,
   Provider,
@@ -30,7 +31,7 @@ import PairingDialog from '@/components/PairingDialog.vue'
 import SkillsSection from '@/components/SkillsSection.vue'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 
-export type SettingsTabId = 'general' | 'models' | 'skills' | 'mcp' | 'shortcuts' | 'appearance'
+export type SettingsTabId = 'general' | 'models' | 'skills' | 'mcp' | 'lsp' | 'shortcuts' | 'appearance'
 
 const props = defineProps<{ open: boolean; initialTab?: SettingsTabId }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -79,11 +80,13 @@ watch(
   },
 )
 
-const tabs: { id: TabId; key: string; icon: string }[] = [
+const tabs: { id: TabId; key: string; label?: string; icon: string }[] = [
   { id: 'general', key: 'settings.tab.general', icon: 'sliders' },
   { id: 'models', key: 'settings.tab.models', icon: 'cpu' },
   { id: 'skills', key: 'settings.tab.skills', icon: 'sparkles' },
   { id: 'mcp', key: 'settings.tab.mcp', icon: 'plug' },
+  // Plain label: the i18n catalog is owned by a different change.
+  { id: 'lsp', key: 'settings.tab.lsp', label: 'Language servers', icon: 'code' },
   { id: 'shortcuts', key: 'settings.tab.shortcuts', icon: 'keyboard' },
   { id: 'appearance', key: 'settings.tab.appearance', icon: 'palette' },
 ]
@@ -635,6 +638,110 @@ watch(
   { immediate: true },
 )
 
+// --- language servers (LSP) ---------------------------------------------------------
+const lspServers = ref<LspServerView[]>([])
+const lspLoading = ref(false)
+const lspError = ref<string | null>(null)
+/** Server id with an install/restart request in flight. */
+const lspBusy = ref<string | null>(null)
+/** Id of the server whose custom command draft is being edited (null = none). */
+const lspCommandDrafts = reactive<Record<string, string>>({})
+
+async function refreshLsp(): Promise<void> {
+  lspLoading.value = true
+  lspError.value = null
+  try {
+    const servers = (await listLspServers()) ?? []
+    lspServers.value = servers
+    for (const s of servers)
+      if (!(s.id in lspCommandDrafts))
+        lspCommandDrafts[s.id] = config.value?.lsp.servers[s.id]?.command ?? ''
+  } catch (e) {
+    lspError.value = failure(e)
+  } finally {
+    lspLoading.value = false
+  }
+}
+
+function lspSettingOf(server: LspServerView): { enabled: boolean; command?: string | null } {
+  return config.value?.lsp.servers[server.id] ?? { enabled: true }
+}
+
+/** Global switch + auto diagnostics (Settings → Language servers). */
+function saveLspConfig(patch: { enabled?: boolean; autoDiagnostics?: boolean }): void {
+  if (!config.value) return
+  void saveConfig({ lsp: { ...config.value.lsp, ...patch } })
+}
+
+async function toggleLspServer(server: LspServerView): Promise<void> {
+  if (!config.value) return
+  const setting = { ...lspSettingOf(server), enabled: !lspSettingOf(server).enabled }
+  config.value.lsp.servers[server.id] = setting
+  void saveConfig({ lsp: { ...config.value.lsp, servers: { ...config.value.lsp.servers, [server.id]: setting } } })
+}
+
+function lspCommandDirty(server: LspServerView): boolean {
+  return (lspCommandDrafts[server.id] ?? '').trim() !== (config.value?.lsp.servers[server.id]?.command ?? '')
+}
+
+async function saveLspCommand(server: LspServerView): Promise<void> {
+  if (!config.value || !lspCommandDirty(server)) return
+  const command = lspCommandDrafts[server.id].trim()
+  const setting = { ...lspSettingOf(server), command: command || null }
+  config.value.lsp.servers[server.id] = setting
+  void saveConfig({ lsp: { ...config.value.lsp, servers: { ...config.value.lsp.servers, [server.id]: setting } } })
+}
+
+async function restartLsp(server: LspServerView): Promise<void> {
+  if (lspBusy.value) return
+  lspBusy.value = server.id
+  lspError.value = null
+  try {
+    replaceLsp(await restartLspServer(server.id))
+    await refreshConfig() // pick up the new status in the config view too
+  } catch (e) {
+    lspError.value = failure(e)
+  } finally {
+    lspBusy.value = null
+  }
+}
+
+async function installLsp(server: LspServerView): Promise<void> {
+  if (lspBusy.value) return
+  const ok = window.confirm(
+    `Install the ${server.name} language server?\n\n${server.installCommand}\n\nThis runs a global package install on this machine.`,
+  )
+  if (!ok) return
+  lspBusy.value = server.id
+  lspError.value = null
+  try {
+    const result = await installLspServer(server.id)
+    if (!result.ok) lspError.value = `Install finished with errors:\n${result.output}`
+    await refreshLsp()
+    await refreshConfig()
+  } catch (e) {
+    lspError.value = failure(e)
+  } finally {
+    lspBusy.value = null
+  }
+}
+
+function replaceLsp(server: LspServerView): void {
+  const index = lspServers.value.findIndex((s) => s.id === server.id)
+  if (index === -1) lspServers.value.push(server)
+  else lspServers.value.splice(index, 1, server)
+}
+
+watch(
+  () => props.open && tab.value === 'lsp',
+  (active) => {
+    if (!active) return
+    void refreshConfig()
+    void refreshLsp()
+  },
+  { immediate: true },
+)
+
 // --- add mcp ------------------------------------------------------------------------
 const showAddMcp = ref(false)
 const newMcp = reactive({
@@ -680,6 +787,7 @@ async function submitMcp(): Promise<void> {
 // --- live updates -------------------------------------------------------------------
 const stopEvents = onServerEvent((event) => {
   if (event.type === 'mcp.updated' && event.data) replaceMcp(event.data as McpServer)
+  else if (event.type === 'lsp.status' && event.data) replaceLsp(event.data as LspServerView)
   else if (event.type === 'models.updated' && props.open && tab.value === 'models') void refreshCatalog()
 })
 onBeforeUnmount(stopEvents)
@@ -709,7 +817,7 @@ onBeforeUnmount(stopEvents)
             @click="tab = tabItem.id"
           >
             <SofiaIcon :name="tabItem.icon" :size="'0.95rem'" />
-            {{ t(tabItem.key) }}
+            {{ tabItem.label ?? t(tabItem.key) }}
           </button>
         </nav>
 
@@ -1471,6 +1579,126 @@ onBeforeUnmount(stopEvents)
                     >
                       <SofiaIcon name="trash" :size="'0.8rem'" />
                     </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Language servers (LSP) — plain labels: the i18n catalog is owned by a different change. -->
+          <template v-else-if="tab === 'lsp'">
+            <p class="tab-intro">
+              Code intelligence for this machine's workspaces: diagnostics, definitions, references,
+              hover and semantic renames through the Language Server Protocol. Servers start lazily
+              per workspace folder on first use and shut down after ~10 idle minutes.
+            </p>
+
+            <p v-if="lspError" class="form-note form-note--error">{{ lspError }}</p>
+
+            <div class="rows">
+              <label class="row">
+                <span class="row-text">
+                  <span class="row-title">Language servers</span>
+                  <span class="row-sub">Master switch for all LSP features (tools, auto diagnostics).</span>
+                </span>
+                <button
+                  v-if="config"
+                  class="toggle"
+                  :class="{ 'toggle--on': config.lsp.enabled }"
+                  type="button"
+                  role="switch"
+                  :aria-checked="config.lsp.enabled"
+                  @click="saveLspConfig({ enabled: !config.lsp.enabled })"
+                ><span class="knob" /></button>
+              </label>
+
+              <label class="row">
+                <span class="row-text">
+                  <span class="row-title">Auto diagnostics</span>
+                  <span class="row-sub">Append the new LSP errors of touched files to edit/write results.</span>
+                </span>
+                <button
+                  v-if="config"
+                  class="toggle"
+                  :class="{ 'toggle--on': config.lsp.autoDiagnostics }"
+                  type="button"
+                  role="switch"
+                  :aria-checked="config.lsp.autoDiagnostics"
+                  @click="saveLspConfig({ autoDiagnostics: !config.lsp.autoDiagnostics })"
+                ><span class="knob" /></button>
+              </label>
+            </div>
+
+            <div class="section-label">Servers</div>
+            <div v-if="lspLoading && !lspServers.length" class="tab-intro">Loading servers…</div>
+            <div v-if="lspServers.length" class="cards cards--after-add">
+              <div v-for="s in lspServers" :key="s.id" class="card">
+                <div class="card-main">
+                  <SofiaIcon name="code" :size="'1rem'" />
+                  <div class="card-text">
+                    <div class="card-title">
+                      <span class="kind-tag sofia-mono">{{ s.id }}</span>
+                      {{ s.name }}
+                    </div>
+                    <div class="card-sub sofia-truncate" :title="s.command">{{ s.command }}</div>
+                    <div v-if="s.error" class="card-sub sofia-truncate" :title="s.error">{{ s.error }}</div>
+                    <div v-else class="card-desc sofia-truncate">
+                      {{ s.extensions.map((e) => `.${e}`).join(' ') }}
+                      <span v-if="s.runningIn.length"> · running in {{ s.runningIn.length }} workspace{{ s.runningIn.length > 1 ? 's' : '' }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card-side">
+                  <span class="status" :class="`status--${s.status}`">
+                    <span class="dot" />{{ statusLabel(s.status) }}
+                  </span>
+                  <button
+                    v-if="config"
+                    class="toggle"
+                    :class="{ 'toggle--on': lspSettingOf(s).enabled }"
+                    type="button"
+                    role="switch"
+                    :aria-checked="lspSettingOf(s).enabled"
+                    :title="lspSettingOf(s).enabled ? 'Disable this language server' : 'Enable this language server'"
+                    @click="toggleLspServer(s)"
+                  ><span class="knob" /></button>
+                </div>
+
+                <!-- Per-server settings: enable toggle (above) + custom command override. -->
+                <div class="lsp-card-foot">
+                  <input
+                    v-model="lspCommandDrafts[s.id]"
+                    class="field-input"
+                    :placeholder="`Custom command — ${s.command} (empty = built-in)`"
+                    spellcheck="false"
+                  />
+                  <div class="card-actions">
+                    <button
+                      v-if="s.status === 'missing'"
+                      class="mini-btn"
+                      type="button"
+                      :title="`Install: ${s.installCommand}`"
+                      :disabled="lspBusy === s.id"
+                      @click="installLsp(s)"
+                    >
+                      {{ lspBusy === s.id ? 'Installing…' : 'Install' }}
+                    </button>
+                    <button
+                      class="mini-btn"
+                      type="button"
+                      title="Restart (drops the live clients; they come back on next use)"
+                      :disabled="lspBusy === s.id || s.status === 'missing'"
+                      @click="restartLsp(s)"
+                    >
+                      {{ lspBusy === s.id ? 'Working…' : 'Restart' }}
+                    </button>
+                    <button
+                      class="mini-btn"
+                      type="button"
+                      title="Apply the custom command (empty clears it)"
+                      :disabled="!lspCommandDirty(s)"
+                      @click="saveLspCommand(s)"
+                    >Apply</button>
                   </div>
                 </div>
               </div>
@@ -2392,6 +2620,20 @@ onBeforeUnmount(stopEvents)
   gap: 0.4rem;
   padding-top: 0.55rem;
   border-top: 1px solid var(--sofia-border);
+}
+
+/* Language servers tab: the per-server card's settings footer (custom command + actions). */
+.lsp-card-foot {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--sofia-border);
+}
+
+.lsp-card-foot .card-actions {
+  justify-content: flex-end;
 }
 
 .manage-bar {

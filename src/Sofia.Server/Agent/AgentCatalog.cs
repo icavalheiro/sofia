@@ -19,6 +19,8 @@ public sealed partial class AgentCatalog(SofiaOptions options)
         ["read"] = "read", ["write"] = "write", ["edit"] = "edit", ["multiedit"] = "edit",
         ["bash"] = Agents.ShellToolToken, ["shell"] = Agents.ShellToolToken, ["powershell"] = Agents.ShellToolToken, ["terminal"] = Agents.ShellToolToken,
         ["grep"] = "grep", ["find"] = "find", ["glob"] = "find", ["ls"] = "ls", ["list"] = "ls",
+        ["lsp"] = "lsp", ["language_server"] = "lsp", ["diagnostics"] = "lsp",
+        ["lsp_rename"] = "lsp_rename", ["rename"] = "lsp_rename",
         ["web_fetch"] = "web_fetch", ["webfetch"] = "web_fetch", ["web_search"] = "web_search", ["websearch"] = "web_search",
         ["browser"] = "browser", ["playwright"] = "browser",
         ["question"] = "question", ["askuserquestion"] = "question", ["task"] = "task", ["agent"] = "task",

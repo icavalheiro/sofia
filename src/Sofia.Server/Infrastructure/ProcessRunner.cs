@@ -37,15 +37,33 @@ public static class ProcessRunner
         ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
             "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'; " + command];
 
+    /// <summary>
+    /// Finds an executable on PATH (plus the dotnet-tools directory). On Windows it honours PATHEXT, so npm shims
+    /// (`typescript-language-server.cmd`) and `.exe` files are both resolved; the returned path is ready to start
+    /// directly with `UseShellExecute = false`.
+    /// </summary>
     public static string? FindOnPath(string exe)
     {
-        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        var dirs = new List<string>();
+        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            dirs.Add(dir.Trim('"'));
+        // dotnet global tools are usually not on PATH until the next shell opens.
+        dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "tools"));
+
+        var extensions = OperatingSystem.IsWindows()
+            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(e => e.TrimStart('.')).Where(e => e.Length > 0).ToList()
+            : new List<string>();
+        foreach (var dir in dirs)
         {
             try
             {
-                var candidate = Path.Combine(dir.Trim('"'), exe);
+                var candidate = Path.Combine(dir, exe);
                 if (File.Exists(candidate)) return candidate;
+                // The caller may already pass an extension (`code.cmd`); try PATHEXT variants for bare names.
+                if (!Path.HasExtension(exe))
+                    foreach (var ext in extensions)
+                        if (File.Exists(candidate + "." + ext)) return candidate + "." + ext;
             }
             catch (ArgumentException)
             {

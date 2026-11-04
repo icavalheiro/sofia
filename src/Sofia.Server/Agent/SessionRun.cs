@@ -8,6 +8,7 @@ using Sofia.Server.Context;
 using Sofia.Server.Data;
 using Sofia.Server.Domain;
 using Sofia.Server.Infrastructure;
+using Sofia.Server.Lsp;
 using Sofia.Server.Providers;
 using Sofia.Server.Tools;
 using Sofia.Server.Vcs;
@@ -39,6 +40,7 @@ public sealed class RunServices(
     ChangeTracker changes,
     GitService git,
     ModelGate gate,
+    LspManager lsp,
     ILogger<SessionRun> log)
 {
     public ModelGate Gate => gate;
@@ -52,6 +54,7 @@ public sealed class RunServices(
     public KnowledgeService Knowledge => knowledge;
     public ChangeTracker Changes => changes;
     public GitService Git => git;
+    public LspManager Lsp => lsp;
     public ILogger<SessionRun> Log => log;
 }
 
@@ -918,6 +921,7 @@ public sealed class SessionRun : IToolHost
                         Changes = _s.Changes,
                         Host = this,
                         Sandbox = Sandbox,
+                        Lsp = Workspace.IsFolder ? _s.Lsp : null,
                     };
                     result = await tool.ExecuteAsync(ctx, args, ct);
                 }

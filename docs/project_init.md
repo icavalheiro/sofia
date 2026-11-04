@@ -32,6 +32,9 @@ src/Sofia.Server/
 ├── Changes/ChangeTracker.cs   # per-message file snapshots, session diff, revert
 ├── Context/                   # AGENTS.md / SYSTEM.md, skills, prompt-template commands
 ├── Mcp/McpManager.cs          # MCP clients (stdio + HTTP) and tool adapters
+├── Lsp/                       # LspClient (hand-rolled stdio JSON-RPC), LspServerCatalog
+│                              #   (built-in servers), LspManager (per-workspace clients,
+│                              #   diagnostics cache, idle shutdown; IHostedService)
 ├── Vcs/GitService.cs          # branch info, working-tree diff, worktrees
 ├── Infrastructure/NativeTerminal.cs  # opens the OS terminal in a folder (POST /api/open)
 ├── Security/Access.cs         # loopback trust, origin check, pairing tokens
@@ -189,6 +192,39 @@ the `/search` result page instead (one `<article class="result …">` per hit: t
 from its `<h3>` link, snippet from `p.content`). A path prefix in the configured
 URL (`/searxng`) is kept. The agent follows up with `web_fetch` to read a page.
 Every built-in agent has it.
+
+## Language servers (LSP) — `Lsp/`, `Tools/LspTool.cs`
+
+Code intelligence through the Language Server Protocol: four built-in servers
+(`typescript-language-server`, `vscode-html-language-server`,
+`vscode-css-language-server`, `csharp-ls`) mapped to file extensions in
+`LspServerCatalog`. `LspClient` is a hand-rolled minimal JSON-RPC client over
+stdio (`Content-Length` framing, request-id correlation, `$/cancelRequest`,
+automatic answers to server→client requests, stderr drained to the logger); no
+external dependency.
+
+`LspManager` (singleton + `IHostedService`) owns one client per
+(workspace root, server id), started lazily on first use and shut down after
+~10 idle minutes (`shutdown`+`exit`, then process-tree kill). Crashes flip the
+status to `error` with a short backoff before the next start; status changes
+publish an `lsp.status` event so the UI updates live. Documents are synced with
+full-text `didOpen`/`didChange`; `publishDiagnostics` is cached per URI with a
+timestamp and a ≤1.5 s settle wait after writes.
+
+Tools (folder workspaces only): `lsp` (`ToolKind.Read`) — diagnostics,
+definition, references, hover, document_symbols, workspace_symbols, 1-based
+line/column in the tool API; and `lsp_rename` (`ToolKind.Write`) — applies the
+server's WorkspaceEdit text edits to every affected file (resource operations
+are refused), capturing each file through the change tracker so it is
+revertible. `edit`/`write` call `LspManager.DiagnosticsAfterWriteAsync`, which
+syncs the touched files, waits for fresh diagnostics and appends only errors
+(≤20 entries / 2 KB) to the tool result — bounded by a 25 s budget so the agent
+loop is never held up; a missing server or timeout simply yields nothing.
+
+Settings: `ServerConfig.Lsp` (`enabled`, `autoDiagnostics`, per-server
+`enabled`/`command` overrides). Endpoints: `GET /api/lsp`,
+`POST /api/lsp/{id}/install` (runs the install command; the UI confirms first),
+`POST /api/lsp/{id}/restart`.
 
 ## Browser (`Browser/BrowserService.cs`, `Tools/BrowserTool.cs`)
 
