@@ -23,6 +23,10 @@ export interface ContextDto
 {
   used: number;
   limit: number;
+  /** Estimated tokens of the frozen system prompt (older servers omit it). */
+  systemTokens?: number;
+  /** Estimated tokens of the frozen tool schemas (older servers omit it). */
+  toolTokens?: number;
 }
 
 export interface ConversationSummaryDto

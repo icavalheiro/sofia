@@ -107,7 +107,9 @@ interface SessionDto extends ConversationSummaryDto {
   permissionMode: 'read-only' | 'ask' | 'plan' | 'full'
   reasoningMode: 'off' | 'low' | 'medium' | 'high'
   usage: UsageDto
-  context: { used: number; limit: number }   // tokens of the last request / model window
+  context: { used: number; limit: number; systemTokens?: number; toolTokens?: number }
+          // tokens of the last request / model window; the optional split is an estimate of the frozen prefix
+          // (system prompt / tool schemas) — `used` covers them plus the messages
   activeSkills: string[]
   queued: number          // follow-ups waiting in the inbox
   queuedMessages: { id: string; text: string; delivery: 'steer' | 'queue'; attachments: AttachmentDto[] }[]
@@ -201,7 +203,8 @@ interface MetricsDto {
   usage: UsageDto         // session totals
   cost: number
   costAvailable: boolean  // false for free/local models
-  context: { used: number; limit: number }
+  context: { used: number; limit: number; systemTokens?: number; toolTokens?: number }
+          // same shape as SessionDto.context: last request / model window plus the estimated frozen-prefix split
 }
 ```
 

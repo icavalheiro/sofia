@@ -441,12 +441,23 @@ public sealed class SessionRun : IToolHost
             var config = _s.Db.GetConfig();
             Session.Context.Limit = model.ContextLength;
             var (system, tools, _) = await TurnContextAsync(config, provider, model, ct);
+            // The frozen prefix (system prompt + tool schemas) rides on every request of this conversation. Estimate it
+            // where the request is already built and persist the split so the composer meter can show system/tools/
+            // messages; `Used` keeps covering them plus the history, so re-writing it each step stays consistent even
+            // for a session that has never streamed a full step.
+            var toolSpecs = tools.Select(t => new ToolSpec(t.Name, t.Description, t.Parameters)).ToList();
+            Session.Context.SystemTokens = Text.EstimateTokens(system);
+            Session.Context.ToolTokens = toolSpecs.Sum(t => Text.EstimateTokens(JsonSerializer.Serialize(t, Json.Options)));
+
             HistoryBuilder.PruneOptions? prune = Session.PrunedThroughSeq > 0 ? new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars) : null;
             var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
-            var imageCount = _s.Db.SessionMessages(Session.Id)
-                .SelectMany(m => (m.Attachments ?? []).Concat((m.ToolCalls ?? []).SelectMany(c => c.Images ?? [])))
-                .Count(a => a.Kind == "image");
-            var estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments))) + imageCount * 1000;
+            int EstimatedInput(HistoryBuilder.PruneOptions? p)
+            {
+                // Same build as the request (same prune watermark, same image drop), so the estimate matches what is sent.
+                var (messagesTok, images) = HistoryBuilder.EstimateBreakdown(_s.Db.SessionMessages(Session.Id), model, !_dropImages, p);
+                return Session.Context.SystemTokens + Session.Context.ToolTokens + messagesTok + images * 1000;
+            }
+            var estimatedInput = EstimatedInput(prune);
 
             // Prune old tool results before compaction: cheaper (no model call), and the watermark is batched so the
             // prompt cache only dies once per prune. Runs at most once per step, then falls through to the compact check.
@@ -457,7 +468,7 @@ public sealed class SessionRun : IToolHost
                 {
                     prune = new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars);
                     history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
-                    estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments))) + imageCount * 1000;
+                    estimatedInput = EstimatedInput(prune);
                 }
             }
 
@@ -470,7 +481,7 @@ public sealed class SessionRun : IToolHost
                 if (await CompactAsync(auto: true, ct))
                 {
                     history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
-                    estimatedInput = Text.EstimateTokens(system) + history.Sum(m => Text.EstimateTokens(m.TextContent) + m.ToolCalls.Sum(t => Text.EstimateTokens(t.Arguments)));
+                    estimatedInput = EstimatedInput(prune);
                 }
             }
             var room = model.ContextLength - estimatedInput - 512;
@@ -479,7 +490,7 @@ public sealed class SessionRun : IToolHost
                 Model = model.ModelId,
                 System = system,
                 Messages = history,
-                Tools = tools.Select(t => new ToolSpec(t.Name, t.Description, t.Parameters)).ToList(),
+                Tools = toolSpecs,
                 Reasoning = Session.ReasoningMode,
                 MaxTokens = Math.Max(1024, Math.Min(model.MaxOutput, room)),
                 ModelSupportsReasoning = model.Reasoning,
@@ -1755,7 +1766,15 @@ public sealed class SessionRun : IToolHost
             Text = summary.ToString().Trim(),
         });
         var keptTokens = conversation.Skip(cut).Sum(Estimate) + Text.EstimateTokens(summary.ToString());
-        Session.Context = new ContextInfo { Used = keptTokens, Limit = model.ContextLength };
+        // The frozen prefix survives compaction: `Used` must keep paying for it, otherwise the meter under-reports
+        // by exactly system+tools on every request after a compact.
+        Session.Context = new ContextInfo
+        {
+            Used = keptTokens + Session.Context.SystemTokens + Session.Context.ToolTokens,
+            Limit = model.ContextLength,
+            SystemTokens = Session.Context.SystemTokens,
+            ToolTokens = Session.Context.ToolTokens,
+        };
         _s.Store.SaveSession(Session);
         PublishMetrics(0);
         return (keptTokens, summary.ToString().Trim());

@@ -567,6 +567,51 @@ public class HistorySteeringTests
         Assert.Equal(["user", "assistant", "tool", "user"], history.Select(m => m.Role));
         Assert.Equal("file", history[2].TextContent);
     }
+
+    [Fact]
+    public void EstimateBreakdownSplitsHistoryIntoMessagesAndImages()
+    {
+        // `EstimateTokens` is max(1, chars / 4), so the expected values below are exact for these inputs.
+        const string text = "hello world"; // 11 chars -> 2 tokens
+        const string args = "{\"path\":\"a.txt\"}"; // 16 chars -> 4 tokens
+        const string result = "file contents here"; // 18 chars -> 4 tokens
+        Assert.Equal(2, Text.EstimateTokens(text));
+        Assert.Equal(4, Text.EstimateTokens(args));
+        Assert.Equal(4, Text.EstimateTokens(result));
+
+        var path = Path.GetTempFileName();
+        File.WriteAllBytes(path, [1, 2, 3]);
+        try
+        {
+            var messages = new List<Message>
+            {
+                new()
+                {
+                    Id = "u1", Role = "user", Text = text, Seq = 1,
+                    Attachments = [new Attachment { Id = "a1", Name = "pic.png", Kind = "image", Mime = "image/png", Bytes = 3, StoragePath = path }],
+                },
+                new()
+                {
+                    Id = "a1", Role = "assistant", Seq = 2,
+                    ToolCalls = [new ToolCall { Id = "c1", Name = "read", Arguments = args, Result = result, Status = "success", Completed = true }],
+                },
+            };
+
+            // User text + tool-call arguments counted as message tokens; the image attachment is one image part.
+            var (messagesTok, images) = HistoryBuilder.EstimateBreakdown(messages, new ModelInfo { ModelId = "unknown-local-model" });
+            Assert.Equal(1, images);
+            Assert.Equal(Text.EstimateTokens(text) + Text.EstimateTokens(args) + Text.EstimateTokens(result), messagesTok);
+
+            // An empty list estimates nothing.
+            var (emptyMessages, emptyImages) = HistoryBuilder.EstimateBreakdown(Array.Empty<Message>(), new ModelInfo { ModelId = "unknown-local-model" });
+            Assert.Equal(0, emptyMessages);
+            Assert.Equal(0, emptyImages);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }
 
 public class ParsingTests
