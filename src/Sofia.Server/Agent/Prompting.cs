@@ -363,6 +363,28 @@ public static class HistoryBuilder
     public static List<ChatMessage> Build(IEnumerable<Message> messages, ModelInfo model)
         => Build(messages, model, true);
 
+    /// <summary>
+    /// Token estimate of the history exactly as <see cref="Build"/> would send it: text parts and tool-call
+    /// arguments through <see cref="Text.EstimateTokens"/>, plus one count per image part (the caller folds those in at
+    /// the same ~1000 tokens/image constant the request builder uses). Estimates, not exact tokens — good enough for a meter.
+    /// </summary>
+    public static (int Messages, int Images) EstimateBreakdown(IEnumerable<Message> messages, ModelInfo model, bool includeImages = true, PruneOptions? prune = null)
+    {
+        var built = Build(messages, model, includeImages, prune);
+        var text = 0;
+        var images = 0;
+        foreach (var m in built)
+        {
+            foreach (var part in m.Content)
+            {
+                if (part.Text is not null) text += Text.EstimateTokens(part.Text);
+                else if (part.ImageBase64 is not null) images++;
+            }
+            foreach (var call in m.ToolCalls) text += Text.EstimateTokens(call.Arguments);
+        }
+        return (text, images);
+    }
+
     public static List<ChatMessage> Build(IEnumerable<Message> messages, ModelInfo model, bool includeImages, PruneOptions? prune = null)
     {
         var ordered = messages.Where(m => !m.Synthetic).OrderBy(m => m.Seq).ToList();

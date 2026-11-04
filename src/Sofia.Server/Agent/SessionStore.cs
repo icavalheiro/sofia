@@ -101,6 +101,12 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
         var branch = CreateSession(workspace, $"{source.Title} (branch)", source);
         branch.ActiveSkills = [.. source.ActiveSkills];
         branch.AllowedTools = [.. source.AllowedTools];
+        // The frozen prefix is conversation-level: a branch runs on the same agent/model/tool set, so it pays for the
+        // same system prompt + tool schemas. Carry the split over and floor `Used` at that prefix so the meter is
+        // truthful before the first request recomputes it (the next run rewrites both).
+        branch.Context.SystemTokens = source.Context.SystemTokens;
+        branch.Context.ToolTokens = source.Context.ToolTokens;
+        branch.Context.Used = branch.Context.SystemTokens + branch.Context.ToolTokens;
         var copied = CopyHistory(source.Id, branch, target.Seq);
         foreach (var m in copied) if (m.Usage is { } usage) branch.Usage.Add(usage);
         branch.KnowledgeSeq = copied.Count == 0 ? 0 : copied.Max(m => m.Seq);

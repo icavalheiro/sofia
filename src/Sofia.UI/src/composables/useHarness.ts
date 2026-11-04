@@ -369,6 +369,9 @@ const metrics = reactive( {
   costAvailable: false,
   contextUsed: 0,
   contextLimit: 0,
+  /** Estimated frozen-prefix split for the context meter (both 0 = server sent no split). */
+  contextSystem: 0,
+  contextTools: 0,
 } );
 
 /** Model catalog from `GET /api/models`. */
@@ -487,6 +490,8 @@ function resetMetricsFor ( conv: Conversation | undefined ): void
   metrics.costAvailable = ( conv?.usage?.cost ?? 0 ) > 0;
   metrics.contextUsed = conv?.context?.used ?? 0;
   metrics.contextLimit = conv?.context?.limit ?? 0;
+  metrics.contextSystem = conv?.context?.systemTokens ?? 0;
+  metrics.contextTools = conv?.context?.toolTokens ?? 0;
 }
 
 function applyMetrics ( data: MetricsDto ): void
@@ -497,6 +502,8 @@ function applyMetrics ( data: MetricsDto ): void
   metrics.costAvailable = !!data.costAvailable;
   metrics.contextUsed = data.context?.used ?? 0;
   metrics.contextLimit = data.context?.limit ?? 0;
+  metrics.contextSystem = data.context?.systemTokens ?? 0;
+  metrics.contextTools = data.context?.toolTokens ?? 0;
 }
 
 function pushLocalError ( conv: Conversation, text: string ): void

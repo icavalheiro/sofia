@@ -61,6 +61,10 @@ public sealed class ContextInfo
 {
     public int Used { get; set; }
     public int Limit { get; set; }
+    /// <summary>Estimated tokens of the frozen system prompt (additive; old rows read as 0).</summary>
+    public int SystemTokens { get; set; }
+    /// <summary>Estimated tokens of the frozen tool schemas (additive; old rows read as 0).</summary>
+    public int ToolTokens { get; set; }
 }
 
 public sealed class Session

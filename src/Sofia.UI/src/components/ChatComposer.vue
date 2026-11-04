@@ -276,9 +276,54 @@ const cacheStats = computed(() => {
   }
   return { hit, title: lines.join('\n') }
 })
-const contextLabel = computed(() =>
-  metrics.contextLimit > 0 ? `${compactTokens(metrics.contextUsed)} / ${compactTokens(metrics.contextLimit)}` : '',
-)
+// --- context meter --------------------------------------------------------------
+// Model-window usage as a straight segmented bar in the hint row (grey = system prompt,
+// brown = tool schemas, blue = messages) with a hover legend; it replaces the old `~X / Y`
+// text metric. When the server sends no split (older versions), the fill degrades to one
+// brown segment of used/limit and the legend to a single row.
+const contextMeter = computed(() => {
+  const used = metrics.contextUsed
+  const limit = metrics.contextLimit
+  if (limit <= 0) return null
+  const system = metrics.contextSystem ?? 0
+  const tools = metrics.contextTools ?? 0
+  const hasSplit = system > 0 || tools > 0
+  return {
+    used,
+    limit,
+    system,
+    tools,
+    messages: Math.max(0, used - system - tools),
+    hasSplit,
+    pct: Math.max(used > 0 ? 1 : 0, Math.round((used / limit) * 100)),
+  }
+})
+
+interface CtxSegment { key: string; label: string; value: number; color: string; width: number }
+
+/** Zero-valued segments must vanish entirely; real-but-tiny ones keep a 2px sliver. */
+function segStyle(s: CtxSegment): Record<string, string> {
+  return s.value > 0
+    ? { width: `${s.width}%`, background: s.color, minWidth: '2px' }
+    : { width: '0', background: s.color }
+}
+
+const contextSegments = computed<CtxSegment[]>(() => {
+  const m = contextMeter.value
+  if (!m) return []
+  const raw = !m.hasSplit
+    ? [{ key: 'total', label: t('composer.ctxTotal'), value: m.used, color: 'var(--sofia-primary)' }]
+    : [
+        { key: 'system', label: t('composer.ctxSystem'), value: m.system, color: '#94949B' },
+        { key: 'tools', label: t('composer.ctxTools'), value: m.tools, color: 'var(--sofia-primary)' },
+        { key: 'messages', label: t('composer.ctxMessages'), value: m.messages, color: '#5A9BD8' },
+      ]
+  // Widths are proportional to the model window; when usage exceeds the limit (right before
+  // a compact) everything scales down so the fill never overflows the track.
+  const sum = raw.reduce((acc, s) => acc + Math.max(0, s.value), 0) / m.limit * 100
+  const scale = sum > 100 ? 100 / sum : 1
+  return raw.map(s => ({ ...s, width: (Math.max(0, s.value) / m.limit) * 100 * scale }))
+})
 
 function iconForKind(kind: string): string {
   if (kind === 'image') return 'image'
@@ -1026,9 +1071,37 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
             <SofiaIcon name="database" :size="'0.75rem'" />
             {{ cacheStats.hit }}% {{ t('composer.cacheHit') }}
           </span>
-          <span v-if="contextLabel" class="metric" title="Context used / model window">
+
+          <!-- Segmented model-window meter: grey = system prompt, brown = tool schemas,
+               blue = messages; the hover popup explains each segment (CSS-only, hover devices). -->
+          <span v-if="contextMeter" class="context-meter">
             <SofiaIcon name="layers" :size="'0.75rem'" />
-            {{ contextLabel }}
+            <span
+              class="ctx-bar"
+              role="img"
+              :aria-label="`${contextMeter.pct}% ${t('composer.contextUsed')}`"
+            >
+              <span v-for="s in contextSegments" :key="s.key" class="ctx-seg" :style="segStyle(s)" />
+            </span>
+            <span class="ctx-pct">{{ contextMeter.pct }}%</span>
+
+            <div class="ctx-pop">
+              <p class="ctx-head">
+                <b>{{ contextMeter.pct }}%</b>&nbsp;{{ t('composer.contextUsed') }}
+                <span class="ctx-range sofia-mono"
+                  >~{{ compactTokens(contextMeter.used) }} / {{ compactTokens(contextMeter.limit) }}</span>
+              </p>
+              <div class="ctx-bar ctx-bar--mini">
+                <span v-for="s in contextSegments" :key="'pop-' + s.key" class="ctx-seg" :style="segStyle(s)" />
+              </div>
+              <ul class="ctx-legend">
+                <li v-for="s in contextSegments" :key="'row-' + s.key">
+                  <span class="ctx-swatch" :style="{ background: s.color }" />
+                  <span class="ctx-name">{{ s.label }}</span>
+                  <span class="ctx-val sofia-mono">~{{ compactTokens(s.value) }}</span>
+                </li>
+              </ul>
+            </div>
           </span>
         </div>
 
@@ -1534,6 +1607,119 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
 .metric svg {
   color: var(--sofia-primary);
   flex-shrink: 0;
+}
+
+/* --- context meter (segmented bar + hover legend) ------------------------- */
+.context-meter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--sofia-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-meter > svg {
+  color: var(--sofia-primary);
+  flex-shrink: 0;
+}
+
+.ctx-bar {
+  display: inline-flex;
+  align-items: stretch;
+  width: 120px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--sofia-surface-3);
+  overflow: hidden;
+}
+
+.ctx-seg {
+  display: block;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+/* Zero-valued segments are collapsed inline (width: 0); real-but-tiny ones keep a
+   2px sliver via the inline min-width in `segStyle`. */
+.ctx-pct {
+  color: var(--sofia-text-muted);
+}
+
+/* The popup is hover-only on devices that actually have a pointer, so a tap on a
+   touch screen never leaves it stuck open. */
+.ctx-pop {
+  display: none;
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  width: 236px;
+  margin: 0;
+  padding: 0.55rem 0.65rem 0.5rem;
+  background: var(--sofia-surface-2);
+  border: 1px solid var(--sofia-border-strong);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.ctx-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin: 0 0 0.45rem;
+  color: var(--sofia-text-muted);
+}
+
+.ctx-head b {
+  color: var(--sofia-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ctx-range {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--sofia-text-faint);
+}
+
+.ctx-bar--mini {
+  width: 100%;
+  height: 4px;
+  margin-bottom: 0.5rem;
+}
+
+.ctx-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.ctx-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.ctx-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.ctx-name {
+  color: var(--sofia-text);
+}
+
+.ctx-val {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--sofia-text-faint);
 }
 
 .file-input {

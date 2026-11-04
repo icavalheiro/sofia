@@ -373,7 +373,9 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         var removed = Db.SessionMessages(sessionId).Where(m => m.Seq >= target.Seq).Select(m => m.Id).ToList();
         var restored = services.Changes.Revert(sessionId, target.Seq);
         Store.DeleteMessages(session, removed);
-        session.Context.Used = 0;
+        // An empty conversation still pays for its frozen prefix (system prompt + tool schemas), so the meter
+        // stays truthful: it matches what the next request will actually send.
+        session.Context.Used = session.Context.SystemTokens + session.Context.ToolTokens;
         Store.SaveSession(session);
         return (removed, restored);
     }
