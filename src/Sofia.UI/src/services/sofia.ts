@@ -12,7 +12,7 @@
 import { reactive } from 'vue'
 import { HubConnectionBuilder, LogLevel, type HubConnection } from '@microsoft/signalr'
 
-import type { AttachmentDto, SearchResultDto, SofiaEvent } from '@/types'
+import type { AttachmentDto, LspServerView, SearchResultDto, SofiaEvent } from '@/types'
 
 export type BackendPhase = 'checking' | 'needs-connection' | 'ready' | 'error'
 
@@ -313,6 +313,25 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   if (res.status === 204) return undefined as T
   const text = await res.text()
   return (text ? JSON.parse(text) : undefined) as T
+}
+
+// --- language servers (LSP) ------------------------------------------------------
+
+/** Status of every built-in language server, aggregated over all workspaces. */
+export function listLspServers(): Promise<LspServerView[]> {
+  return api<LspServerView[]>('GET', '/api/lsp')
+}
+
+/** Drops the live clients of one server; they come back on next use (config changes apply). */
+export function restartLspServer(id: string): Promise<LspServerView> {
+  return api<LspServerView>('POST', `/api/lsp/${encodeURIComponent(id)}/restart`)
+}
+
+/** Runs the server's install command through the user's shell (the UI confirms first). */
+export function installLspServer(
+  id: string,
+): Promise<{ ok: boolean; output: string; status: string }> {
+  return api('POST', `/api/lsp/${encodeURIComponent(id)}/install`)
 }
 
 /** Uploads one file (multipart field `file`) for a later prompt. */

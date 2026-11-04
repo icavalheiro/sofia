@@ -266,9 +266,42 @@ export interface ConfigDto
   searxngUrl: string;
   sandbox: boolean;
   sandboxNetwork: boolean;
+  /** Language servers (LSP); see `LspServerView`. */
+  lsp: {
+    enabled: boolean;
+    autoDiagnostics: boolean;
+    servers: Record<string, LspServerSetting>;
+  };
   sandboxStatus: { available: boolean; backend: string; reason?: string };
   dataDir: string;
   configPath: string;
+}
+
+/** Per-language-server settings override (Settings → Language servers). */
+export interface LspServerSetting
+{
+  enabled: boolean;
+  /** Custom command line; null/'' = the built-in command. */
+  command?: string | null;
+}
+
+/** A language server from `GET /api/lsp` and the `lsp.status` event. */
+export interface LspServerView
+{
+  id: string;
+  name: string;
+  /** Effective command line (user override or built-in). */
+  command: string;
+  /** Resolved path on PATH, null when not installed. */
+  executable: string | null;
+  enabled: boolean;
+  status: 'missing' | 'disabled' | 'stopped' | 'starting' | 'running' | 'error';
+  error?: string;
+  installCommand: string;
+  installHint: string;
+  extensions: string[];
+  /** Workspace roots that currently have a live client for this server. */
+  runningIn: string[];
 }
 
 export interface ProviderPresetDto

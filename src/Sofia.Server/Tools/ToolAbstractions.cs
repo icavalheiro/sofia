@@ -76,6 +76,12 @@ public sealed class ToolContext
     /// <summary>Effective sandbox policy for this session/workspace, or null when sandboxing is off.</summary>
     public SandboxPolicy? Sandbox { get; init; }
     public SandboxPolicy? SandboxPolicy => Sandbox;
+    /// <summary>
+    /// LSP access for folder workspaces (null in chat sessions): query diagnostics/definitions/references,
+    /// rename, and fetch fresh error diagnostics after writes. Never blocks the agent loop: every call is
+    /// time-bounded and degrades to a friendly message when no server is available.
+    /// </summary>
+    public Lsp.LspManager? Lsp { get; set; }
 }
 
 public interface ITool

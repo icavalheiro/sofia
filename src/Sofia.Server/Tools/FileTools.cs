@@ -8,6 +8,30 @@ using Sofia.Server.Infrastructure;
 
 namespace Sofia.Server.Tools;
 
+/// <summary>Shared post-write diagnostics: appends fresh LSP errors to a successful write/edit result.</summary>
+internal static class WriteDiagnostics
+{
+    /// <summary>
+    /// Appends "\n\nLSP errors:\n…" to the tool output when the language servers report errors for the touched
+    /// files. Never throws and never fails the write: any problem (no server, still loading, timeout) just means
+    /// nothing is appended.
+    /// </summary>
+    public static async Task<string> AppendAsync(ToolContext ctx, string output, IEnumerable<string> paths, CancellationToken ct)
+    {
+        if (ctx.Lsp is null || !ctx.Workspace.IsFolder) return output;
+        try
+        {
+            var errors = await ctx.Lsp.DiagnosticsAfterWriteAsync(ctx.Cwd, paths, ct);
+            return string.IsNullOrEmpty(errors) ? output : output + "\n\n" + errors;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Diagnostics are a nice-to-have; the write already succeeded.
+            return output;
+        }
+    }
+}
+
 public sealed class ReadTool(Func<byte[], string, string, Attachment>? saveImage = null) : ITool
 {
     private const int DefaultLimit = 2000;
@@ -130,7 +154,8 @@ public sealed class WriteTool : ITool
         await File.WriteAllTextAsync(path, content, ct);
         var rel = PathUtil.Relative(ctx.Cwd, path);
         var (_, add, del) = UnifiedDiff.Create(before, content, rel);
-        return ToolResult.Ok($"{(before is null ? "Created" : "Overwrote")} {rel} ({Encoding.UTF8.GetByteCount(content)} bytes, +{add} -{del}).");
+        var output = $"{(before is null ? "Created" : "Overwrote")} {rel} ({Encoding.UTF8.GetByteCount(content)} bytes, +{add} -{del}).";
+        return ToolResult.Ok(await WriteDiagnostics.AppendAsync(ctx, output, [path], ct));
     }
 }
 
@@ -166,7 +191,8 @@ public sealed class EditTool : ITool
         await File.WriteAllTextAsync(path, updated, ct);
         var rel = PathUtil.Relative(ctx.Cwd, path);
         var (patch, add, del) = UnifiedDiff.Create(original, updated, rel);
-        return ToolResult.Ok($"Edited {rel}: {count} replacement{(count == 1 ? "" : "s")} (+{add} -{del}).\n\n{Text.Truncate(patch, 4000)}");
+        var output = $"Edited {rel}: {count} replacement{(count == 1 ? "" : "s")} (+{add} -{del}).\n\n{Text.Truncate(patch, 4000)}";
+        return ToolResult.Ok(await WriteDiagnostics.AppendAsync(ctx, output, [path], ct));
     }
 
     /// <summary>Exact match first, then line-ending tolerant, then trailing-whitespace tolerant.</summary>

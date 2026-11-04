@@ -19,7 +19,7 @@ public sealed class ToolRegistry(
 {
     private readonly ISessionSearch _search = search;
     private readonly IEventBus _bus = bus;
-    private static readonly HashSet<string> FolderOnly = ["read", "write", "edit", Agents.ShellToolToken, "grep", "find", "ls", "task", "task:explore"];
+    private static readonly HashSet<string> FolderOnly = ["read", "write", "edit", Agents.ShellToolToken, "grep", "find", "ls", "task", "task:explore", "lsp", "lsp_rename"];
 
     public List<ITool> For(AgentDefinition agent, Workspace workspace, string? sessionId = null)
     {
@@ -48,6 +48,8 @@ public sealed class ToolRegistry(
                 "skill" => new SkillTool(skills),
                 "notes" => new NotesTool(knowledge),
                 "memory" => new MemoryTool(db),
+                "lsp" => new LspTool(),
+                "lsp_rename" => new LspRenameTool(),
                 "session_search" => new SessionSearchTool(_search, db),
                 "session_read" => new SessionReadTool(db),
                 "current_time" => new CurrentTimeTool(),

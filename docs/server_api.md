@@ -53,6 +53,7 @@ interface SofiaEvent {
 | `message.delta` | `{ messageId, field: "text" \| "reasoning", delta }` | Append `delta` to that field |
 | `message.deleted` | `{ ids: string[] }` | Removed (revert / compaction cleanup) |
 | `mcp.updated` | `McpServerDto` | MCP server status changed |
+| `lsp.status` | `LspServerView` | Language server status changed (started, crashed, shut down, restarted) |
 | `models.updated` | `{}` | Re-fetch `/api/models` and `/api/providers` |
 | `config.changed` | `{ scope: 'global' \| 'project', directory }` | Command / prompt / skill / agent Markdown or `AGENTS.md` / `CLAUDE.md` changed on disk (debounced per root, ≈400ms). `directory` is the harness home (`~/.sofia`) for `global` or the workspace folder for `project`; re-fetch `/api/commands`, `/api/agents` and — for `global` — `/api/skills` |
 | `browser.updated` | `{ open: boolean, agent: boolean, url?: string }` (`sessionId` = root conversation) | The conversation's headless browser opened/closed, or the agent used it (`agent: true`: the UI opens the browser panel) |
@@ -513,6 +514,42 @@ interface McpServerDto {
 }
 ```
 
+## Language servers (LSP)
+
+Code intelligence through the Language Server Protocol. Four built-in servers
+are known (`typescript`, `html`, `css`, `csharp`); each is started lazily per
+workspace folder on first use and shut down after ~10 idle minutes. The agent
+gets two tools from this: `lsp` (read: diagnostics, definition, references,
+hover, document_symbols, workspace_symbols) and `lsp_rename` (write: applies
+the server's WorkspaceEdit text edits; resource operations are refused).
+`edit`/`write` append the new LSP errors of the touched files to their result
+(`\n\nLSP errors:\n…`, capped at 20 entries / 2 KB) when a server is available —
+never failing or hanging the write.
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| `GET` | `/api/lsp` | – | `LspServerView[]` (one per built-in server, aggregated over all workspaces) |
+| `POST` | `/api/lsp/{id}/install` | – | `{ ok: boolean, output: string, status: string }` (runs the server's install command through the user's shell; the UI must confirm first) |
+| `POST` | `/api/lsp/{id}/restart` | – | `LspServerView` (drops the live clients; they come back on next use) |
+
+```ts
+interface LspServerView {
+  id: string                      // 'typescript' | 'html' | 'css' | 'csharp'
+  name: string                    // display name
+  command: string                 // effective command line (user override or built-in)
+  executable: string | null       // resolved path on PATH, null when not installed
+  enabled: boolean                // global switch + per-server setting
+  status: 'missing' | 'disabled' | 'stopped' | 'starting' | 'running' | 'error'
+  error?: string                  // last start/crash failure (status = 'error')
+  installCommand: string          // e.g. `npm i -g typescript-language-server typescript`
+  installHint: string             // short human-readable hint
+  extensions: string[]            // file extensions the server handles
+  runningIn: string[]             // workspace roots with a live client right now
+}
+```
+
+Settings live in the global config (see below): `lsp = { enabled, autoDiagnostics, servers: { [id]: { enabled, command? } } }` — per-server `command` overrides the built-in command line. Config changes apply to new clients; use restart to pick them up on running ones.
+
 ## Background processes
 
 Long-running commands (dev servers, watchers) started by the agent's processes
@@ -612,6 +649,11 @@ interface ConfigDto {
   sandbox: boolean              // run shell/process commands in an OS sandbox by default
   sandboxNetwork: boolean       // allow network access inside the sandbox
   sandboxStatus: { available: boolean; backend: string; reason?: string }  // read-only
+  lsp: {                        // language servers (see "Language servers (LSP)")
+    enabled: boolean            // global switch for all LSP features
+    autoDiagnostics: boolean    // append fresh LSP errors to edit/write results
+    servers: Record<string, { enabled: boolean; command?: string | null }>  // per-server overrides ('' or missing command = built-in)
+  }
   dataDir: string               // read-only
   configPath: string            // read-only
 }
