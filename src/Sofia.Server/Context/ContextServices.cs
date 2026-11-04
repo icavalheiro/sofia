@@ -310,6 +310,7 @@ public sealed class ContextFiles(SofiaOptions options)
             if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal)) return files;
 
             var target = Directory.Exists(full) ? full : Path.GetDirectoryName(full);
+            if (string.IsNullOrEmpty(target)) return files;
             for (var dir = new DirectoryInfo(target); dir is not null; dir = dir.Parent)
             {
                 // The workspace root itself belongs to the frozen prompt.

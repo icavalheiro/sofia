@@ -231,7 +231,9 @@ public sealed class LspTool : ITool
     {
         if (result is null) return null;
         // Never re-parent the server's nodes into a new JsonArray: enumerate instead.
-        var list = result as JsonArray ?? System.Linq.Enumerable.Repeat(result, 1);
+        IEnumerable<JsonNode?> list = result is JsonArray ja
+            ? (IEnumerable<JsonNode?>)ja
+            : new JsonNode?[] { result };
         var lines = new List<string>();
         foreach (var item in list)
         {
@@ -409,7 +411,7 @@ public sealed class LspRenameTool : ITool
     }
 
     /// <summary>Applies LSP text edits to a full document (offsets are UTF-16 code units = .NET chars); null when an edit does not fit.</summary>
-    internal static string? ApplyEdits(string original, IEnumerable<JsonNode> edits)
+    internal static string? ApplyEdits(string original, IEnumerable<JsonNode?> edits)
     {
         var ranges = new List<(int Start, int End)>();
         foreach (var e in edits)

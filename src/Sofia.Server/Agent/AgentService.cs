@@ -116,7 +116,7 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         {
             var refs = string.Join("\n", input.References.Select(r => $"<session_reference id=\"{r.Id}\" title=\"{r.Title}\" />"));
             if (expandedText is null) expandedText = ExpandPrompt(session, workspace, input.Text);
-            expandedText = $"{expandedText.TrimEnd()}\n\n<session_references>\n{refs}\nThe user referenced past sessions above. When the request depends on them, read each one with the `session_read` tool (sessionId: the reference's id) before answering.\n</session_references>";
+            expandedText = $"{(expandedText ?? input.Text).TrimEnd()}\n\n<session_references>\n{refs}\nThe user referenced past sessions above. When the request depends on them, read each one with the `session_read` tool (sessionId: the reference's id) before answering.\n</session_references>";
         }
         if (expandedText is null) expandedText = ExpandPrompt(session, workspace, input.Text);
 

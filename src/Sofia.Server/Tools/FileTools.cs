@@ -41,7 +41,7 @@ internal static class WriteDiagnostics
 internal static class FileEditResult
 {
     /// <summary>One changed file: relative path, before/after content (null = absent) and its one-line summary.</summary>
-    public sealed record Change(string RelPath, string? Before, string After, string Summary);
+    public sealed record Change(string RelPath, string? Before, string? After, string Summary);
 
     public static async Task<ToolResult> BuildAsync(ToolContext ctx, string? header, IEnumerable<Change> changes, CancellationToken ct)
     {

@@ -242,7 +242,7 @@ public sealed class AcpAgent
             else
             {
                 command = s?["command"]?.GetValue<string>();
-                if (s?["args"] is JsonArray a) args = a.Select(x => x.GetValue<string>()).ToList();
+                if (s?["args"] is JsonArray a) args = a.Select(x => x?.GetValue<string>()).OfType<string>().ToList();
                 if (s?["env"] is JsonArray e)
                 {
                     env = new();
