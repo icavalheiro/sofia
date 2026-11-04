@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import logoUrl from '@/assets/logo_42.png'
 import { useHarness } from '@/composables/useHarness'
@@ -135,6 +135,32 @@ useShortcut('search', () => {
 })
 
 const searchInputEl = ref<HTMLInputElement | null>(null)
+const searchFieldEl = ref<HTMLElement | null>(null)
+
+function onSearchOutsidePointer(event: MouseEvent): void {
+  if (!searchOpen.value) return
+  const target = event.target as Node | null
+  if (searchFieldEl.value && target && searchFieldEl.value.contains(target)) return
+  closeSearch()
+}
+
+function onSearchEscape(event: KeyboardEvent): void {
+  if (!searchOpen.value) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeSearch()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onSearchOutsidePointer)
+  window.addEventListener('keydown', onSearchEscape)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onSearchOutsidePointer)
+  window.removeEventListener('keydown', onSearchEscape)
+})
 
 /** Splits a snippet on its `[start, length]` highlight ranges into plain/`<mark>` segments. */
 function snippetParts(h: SearchHitDto): { text: string; mark: boolean }[] {
@@ -549,7 +575,7 @@ useShortcut('session.next', () => stepSession(1))
       </button>
     </div>
 
-    <div class="search-field">
+    <div ref="searchFieldEl" class="search-field">
       <button
         class="action-btn search-toggle"
         type="button"
