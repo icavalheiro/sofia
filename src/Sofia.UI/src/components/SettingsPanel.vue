@@ -655,7 +655,8 @@ async function refreshLsp(): Promise<void> {
     lspServers.value = servers
     for (const s of servers)
       if (!(s.id in lspCommandDrafts))
-        lspCommandDrafts[s.id] = config.value?.lsp.servers[s.id]?.command ?? ''
+        // Older servers may not return the `lsp` config key at all.
+        lspCommandDrafts[s.id] = config.value?.lsp?.servers[s.id]?.command ?? ''
   } catch (e) {
     lspError.value = failure(e)
   } finally {
@@ -664,28 +665,29 @@ async function refreshLsp(): Promise<void> {
 }
 
 function lspSettingOf(server: LspServerView): { enabled: boolean; command?: string | null } {
-  return config.value?.lsp.servers[server.id] ?? { enabled: true }
+  // Older servers may not return the `lsp` config key at all.
+  return config.value?.lsp?.servers[server.id] ?? { enabled: true }
 }
 
 /** Global switch + auto diagnostics (Settings → Language servers). */
 function saveLspConfig(patch: { enabled?: boolean; autoDiagnostics?: boolean }): void {
-  if (!config.value) return
+  if (!config.value?.lsp) return
   void saveConfig({ lsp: { ...config.value.lsp, ...patch } })
 }
 
 async function toggleLspServer(server: LspServerView): Promise<void> {
-  if (!config.value) return
+  if (!config.value?.lsp) return
   const setting = { ...lspSettingOf(server), enabled: !lspSettingOf(server).enabled }
   config.value.lsp.servers[server.id] = setting
   void saveConfig({ lsp: { ...config.value.lsp, servers: { ...config.value.lsp.servers, [server.id]: setting } } })
 }
 
 function lspCommandDirty(server: LspServerView): boolean {
-  return (lspCommandDrafts[server.id] ?? '').trim() !== (config.value?.lsp.servers[server.id]?.command ?? '')
+  return (lspCommandDrafts[server.id] ?? '').trim() !== (config.value?.lsp?.servers[server.id]?.command ?? '')
 }
 
 async function saveLspCommand(server: LspServerView): Promise<void> {
-  if (!config.value || !lspCommandDirty(server)) return
+  if (!config.value?.lsp || !lspCommandDirty(server)) return
   const command = lspCommandDrafts[server.id].trim()
   const setting = { ...lspSettingOf(server), command: command || null }
   config.value.lsp.servers[server.id] = setting
@@ -1633,7 +1635,7 @@ onBeforeUnmount(stopEvents)
                   <span class="row-sub">Master switch for all LSP features (tools, auto diagnostics).</span>
                 </span>
                 <button
-                  v-if="config"
+                  v-if="config && config.lsp"
                   class="toggle"
                   :class="{ 'toggle--on': config.lsp.enabled }"
                   type="button"
@@ -1649,7 +1651,7 @@ onBeforeUnmount(stopEvents)
                   <span class="row-sub">Append the new LSP errors of touched files to edit/write results.</span>
                 </span>
                 <button
-                  v-if="config"
+                  v-if="config && config.lsp"
                   class="toggle"
                   :class="{ 'toggle--on': config.lsp.autoDiagnostics }"
                   type="button"
