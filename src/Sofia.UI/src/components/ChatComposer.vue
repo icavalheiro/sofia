@@ -1647,7 +1647,15 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
 }
 
 /* The popup is hover-only on devices that actually have a pointer, so a tap on a
-   touch screen never leaves it stuck open. */
+   touch screen never leaves it stuck open; :focus-within keeps it reachable for
+   keyboard users. */
+@media (hover: hover) {
+  .context-meter:hover .ctx-pop,
+  .context-meter:focus-within .ctx-pop {
+    display: block;
+  }
+}
+
 .ctx-pop {
   display: none;
   position: absolute;
