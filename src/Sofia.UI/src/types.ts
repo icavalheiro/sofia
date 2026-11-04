@@ -266,6 +266,10 @@ export interface ConfigDto
   searxngUrl: string;
   sandbox: boolean;
   sandboxNetwork: boolean;
+  /** Exposure of the `apply_patch` tool: auto (OpenAI-family models only), always or never. */
+  applyPatch: 'auto' | 'always' | 'never';
+  /** Require a fresh `read` before edit / apply_patch / write-over-existing. */
+  readBeforeEdit: boolean;
   /** Language servers (LSP); see `LspServerView`. */
   lsp: {
     enabled: boolean;

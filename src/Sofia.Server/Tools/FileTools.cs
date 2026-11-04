@@ -32,6 +32,83 @@ internal static class WriteDiagnostics
     }
 }
 
+/// <summary>
+/// Builds the standard successful result of a file-writing tool: an optional header line, then per changed file its
+/// one-line summary followed by the unified diff (truncated to 4000 chars), then the shared LSP diagnostics for
+/// every touched file. `edit`, `write` and `apply_patch` all go through here so their output (and any diagnostics)
+/// stay in one shape — spec 020's diagnostics land once, for every writer.
+/// </summary>
+internal static class FileEditResult
+{
+    /// <summary>One changed file: relative path, before/after content (null = absent) and its one-line summary.</summary>
+    public sealed record Change(string RelPath, string? Before, string After, string Summary);
+
+    public static async Task<ToolResult> BuildAsync(ToolContext ctx, string? header, IEnumerable<Change> changes, CancellationToken ct)
+    {
+        var files = changes.ToList();
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(header)) parts.Add(header);
+        foreach (var change in files)
+        {
+            var (patch, _, _) = UnifiedDiff.Create(change.Before, change.After, change.RelPath);
+            parts.Add(patch.Length > 0 ? $"{change.Summary}\n\n{Text.Truncate(patch, 4000)}" : change.Summary);
+        }
+        var output = parts.Count > 0 ? string.Join("\n\n", parts) : "Done.";
+        return ToolResult.Ok(await WriteDiagnostics.AppendAsync(ctx, output, files.Select(f => PathUtil.Resolve(ctx.Cwd, f.RelPath)), ct));
+    }
+}
+
+/// <summary>
+/// Whitespace-tolerant line-sequence matching shared by `edit`'s fallback and `apply_patch` (Codex's
+/// `seek_sequence`): four passes per candidate — exact, right-trimmed, fully trimmed, then Unicode-punctuation
+/// normalised. The first pass that finds the whole sequence wins, so a file with tidy whitespace is matched exactly
+/// while a model that "tidied" quotes and dashes still lands on the right place.
+/// </summary>
+internal static class TextMatch
+{
+    /// <summary>
+    /// Finds <paramref name="needle"/> (each element one line) in <paramref name="haystack"/> at or after
+    /// <paramref name="start"/>. Returns the index of the first haystack line, or -1.
+    /// </summary>
+    public static int SeekSequence(IReadOnlyList<string> haystack, IReadOnlyList<string> needle, int start = 0)
+    {
+        if (needle.Count == 0) return Math.Min(Math.Max(0, start), haystack.Count);
+        var from = Math.Clamp(start, 0, haystack.Count - needle.Count + 1);
+        for (var pass = 0; pass < 4; pass++)
+        {
+            for (var i = from; i + needle.Count <= haystack.Count; i++)
+            {
+                if (Matches(haystack, i, needle, pass)) return i;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>Compares one line of the file against one line of the search text for a given tolerance pass.</summary>
+    public static bool LineEquals(string fileLine, string searchLine, int pass) => pass switch
+    {
+        0 => fileLine == searchLine,
+        1 => fileLine.TrimEnd() == searchLine.TrimEnd(),
+        2 => fileLine.Trim() == searchLine.Trim(),
+        _ => Normalize(fileLine).Trim() == Normalize(searchLine).Trim(),
+    };
+
+    private static bool Matches(IReadOnlyList<string> haystack, int at, IReadOnlyList<string> needle, int pass)
+    {
+        for (var j = 0; j < needle.Count; j++)
+            if (!LineEquals(haystack[at + j], needle[j], pass)) return false;
+        return true;
+    }
+
+    /// <summary>Normalises the Unicode punctuation models drift into: dashes, curly quotes and no-break spaces.</summary>
+    public static string Normalize(string line) => line
+        .Replace("\u00A0", " ")          // no-break space
+        .Replace("\u2013", "-")          // en dash
+        .Replace("\u2014", "-")          // em dash
+        .Replace("\u2018", "'").Replace("\u2019", "'")   // curly single quotes
+        .Replace("\u201C", "\"").Replace("\u201D", "\""); // curly double quotes
+}
+
 public sealed class ReadTool(Func<byte[], string, string, Attachment>? saveImage = null) : ITool
 {
     private const int DefaultLimit = 2000;
@@ -69,7 +146,11 @@ public sealed class ReadTool(Func<byte[], string, string, Attachment>? saveImage
         }
         if (PathUtil.IsBinary(sample)) return ToolResult.Fail($"{path} is a binary file ({Text.HumanSize(info.Length)}); it cannot be read as text.");
 
-        var lines = Text.NormalizeNewlines(await File.ReadAllTextAsync(path, ct)).Split('\n');
+        var raw = await File.ReadAllTextAsync(path, ct);
+        // Read-before-edit: any successful text read counts, including paged and truncated ones. The hash of the
+        // full raw content lets a later touch-only rewrite prove the file is unchanged.
+        ctx.Reads?.RecordRead(ctx.Session.Id, path, raw);
+        var lines = Text.NormalizeNewlines(raw).Split('\n');
         var offset = Math.Max(1, Args.Int(args, "offset") ?? 1);
         var maxLines = Math.Max(1, Args.Int(args, "limit") ?? DefaultLimit);
         if (offset > lines.Length) return ToolResult.Fail($"Offset {offset} is past the end of the file ({lines.Length} lines).");
@@ -131,10 +212,12 @@ public sealed class ReadTool(Func<byte[], string, string, Attachment>? saveImage
     }
 }
 
-public sealed class WriteTool : ITool
+public sealed class WriteTool(bool readBeforeEdit = false) : ITool
 {
     public string Name => "write";
-    public string Description => "Create a new file or completely overwrite an existing one. Parent directories are created. Prefer `edit` for changes to existing files.";
+    /// <summary>The read-before-edit sentence appears only while the policy is on, so toggling it re-freezes the prompt.</summary>
+    public string Description => "Create a new file or completely overwrite an existing one. Parent directories are created. Prefer `edit` for changes to existing files." +
+        (readBeforeEdit ? " Overwriting an existing file requires reading it first in this conversation." : "");
     public ToolKind Kind => ToolKind.Write;
     public JsonObject Parameters => Schema.Object(
         ("path", Schema.String("File path to write."), true),
@@ -147,23 +230,31 @@ public sealed class WriteTool : ITool
         var path = PathUtil.Resolve(ctx.Cwd, Args.Required(args, "path", "file_path", "filePath"));
         var content = Args.Raw(args, "content", "text") ?? throw new ToolArgumentException("Missing required argument 'content'.");
         var before = File.Exists(path) ? await File.ReadAllTextAsync(path, ct) : null;
+        if (before is not null)
+        {
+            var denied = ctx.Reads?.Check(ctx.Session.Id, path, ctx.Config.ReadBeforeEdit, ctx.Cwd);
+            if (denied is not null) return ToolResult.Fail(denied);
+        }
         ctx.Changes.Capture(ctx.Session.Id, ctx.Message, path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         // Keep the file's existing line-ending style.
         if (before?.Contains("\r\n") == true && !content.Contains("\r\n")) content = content.Replace("\n", "\r\n");
         await File.WriteAllTextAsync(path, content, ct);
+        ctx.Reads?.RecordWrite(ctx.Session.Id, path);
         var rel = PathUtil.Relative(ctx.Cwd, path);
         var (_, add, del) = UnifiedDiff.Create(before, content, rel);
-        var output = $"{(before is null ? "Created" : "Overwrote")} {rel} ({Encoding.UTF8.GetByteCount(content)} bytes, +{add} -{del}).";
-        return ToolResult.Ok(await WriteDiagnostics.AppendAsync(ctx, output, [path], ct));
+        var summary = $"{(before is null ? "Created" : "Overwrote")} {rel} ({Encoding.UTF8.GetByteCount(content)} bytes, +{add} -{del}).";
+        return await FileEditResult.BuildAsync(ctx, null, [new(rel, before, content, summary)], ct);
     }
 }
 
-public sealed class EditTool : ITool
+public sealed class EditTool(bool readBeforeEdit = false) : ITool
 {
     public string Name => "edit";
+    /// <summary>The read-before-edit sentence appears only while the policy is on, so toggling it re-freezes the prompt.</summary>
     public string Description =>
-        "Replace an exact text fragment in a file. `oldText` must match the file exactly (including indentation) and be unique unless `replaceAll` is true. Read the file first.";
+        "Replace an exact text fragment in a file. `oldText` must match the file exactly (including indentation) and be unique unless `replaceAll` is true." +
+        (readBeforeEdit ? " Read the file first in this conversation before editing it; the file must not have changed on disk since." : " Read the file first.");
     public ToolKind Kind => ToolKind.Write;
     public JsonObject Parameters => Schema.Object(
         ("path", Schema.String("File path to edit."), true),
@@ -183,16 +274,20 @@ public sealed class EditTool : ITool
         if (oldText.Length == 0) return ToolResult.Fail("oldText must not be empty.");
         if (oldText == newText) return ToolResult.Fail("oldText and newText are identical; nothing to change.");
 
+        var denied = ctx.Reads?.Check(ctx.Session.Id, path, ctx.Config.ReadBeforeEdit, ctx.Cwd);
+        if (denied is not null) return ToolResult.Fail(denied);
+
         var original = await File.ReadAllTextAsync(path, ct);
         var (updated, count, error) = Apply(original, oldText, newText, replaceAll);
         if (error is not null) return ToolResult.Fail(error);
 
         ctx.Changes.Capture(ctx.Session.Id, ctx.Message, path);
         await File.WriteAllTextAsync(path, updated, ct);
+        ctx.Reads?.RecordWrite(ctx.Session.Id, path);
         var rel = PathUtil.Relative(ctx.Cwd, path);
-        var (patch, add, del) = UnifiedDiff.Create(original, updated, rel);
-        var output = $"Edited {rel}: {count} replacement{(count == 1 ? "" : "s")} (+{add} -{del}).\n\n{Text.Truncate(patch, 4000)}";
-        return ToolResult.Ok(await WriteDiagnostics.AppendAsync(ctx, output, [path], ct));
+        var (_, add, del) = UnifiedDiff.Create(original, updated, rel);
+        var summary = $"Edited {rel}: {count} replacement{(count == 1 ? "" : "s")} (+{add} -{del}).";
+        return await FileEditResult.BuildAsync(ctx, null, [new(rel, original, updated, summary)], ct);
     }
 
     /// <summary>Exact match first, then line-ending tolerant, then trailing-whitespace tolerant.</summary>
@@ -214,17 +309,17 @@ public sealed class EditTool : ITool
             return (replaceAll ? content.Replace(o, n) : ReplaceFirst(content, o, n), replaceAll ? count : 1, null);
         }
 
-        // Whitespace-tolerant fallback: compare line by line ignoring trailing spaces/indent drift.
+        // Whitespace-tolerant fallback, shared with apply_patch: exact → trim-end → trim → Unicode punctuation.
         var newline = crlf ? "\r\n" : "\n";
-        var fileLines = Text.NormalizeNewlines(content).Split('\n');
-        var findLines = Text.NormalizeNewlines(oldText).Trim('\n').Split('\n');
+        var fileLines = Text.NormalizeNewlines(content).Split('\n').ToList();
+        var findLines = Text.NormalizeNewlines(oldText).Trim('\n').Split('\n').ToList();
         var matches = new List<int>();
-        for (var i = 0; i + findLines.Length <= fileLines.Length; i++)
+        for (var i = 0; ; )
         {
-            var ok = true;
-            for (var j = 0; j < findLines.Length && ok; j++)
-                ok = fileLines[i + j].Trim() == findLines[j].Trim();
-            if (ok) matches.Add(i);
+            var at = TextMatch.SeekSequence(fileLines, findLines, i);
+            if (at < 0) break;
+            matches.Add(at);
+            i = at + 1;
         }
         if (matches.Count == 0)
             return ("", 0, "oldText was not found in the file. Read the file again and copy the exact text (including indentation).");
@@ -239,7 +334,7 @@ public sealed class EditTool : ITool
             if (start < cursor) continue;
             result.AddRange(fileLines[cursor..start]);
             result.AddRange(replacement);
-            cursor = start + findLines.Length;
+            cursor = start + findLines.Count;
         }
         result.AddRange(fileLines[cursor..]);
         return (string.Join(newline, result), matches.Count, null);

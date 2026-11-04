@@ -24,8 +24,9 @@ src/Sofia.Server/
 ├── Events/EventBus.cs         # bus, dispatcher, IEventHandler, SignalR hub + broadcaster
 ├── Providers/                 # OpenAI-compatible + Anthropic streaming clients,
 │                              #   discovery, model catalog, limits/pricing table
-├── Tools/                     # read, write, edit, ls, find, grep, bash/powershell,
-│                              #   web_fetch, web_search, browser, question, task, skill, notes, memory, sofia_info
+├── Tools/                     # read, write, edit, apply_patch (Codex-style patches + PatchParser +
+│                              #   ReadTracker), ls, find, grep, bash/powershell, web_fetch, web_search,
+│                              #   browser, question, task, skill, notes, memory, sofia_info
 ├── Browser/BrowserService.cs  # headless Chromium (Playwright), per-conversation contexts, screencast
 ├── Agent/                     # AgentService, SessionRun (the loop), prompts,
 │                              #   history, tool registry, store, maintenance
@@ -136,7 +137,7 @@ marked, pending approvals are cancelled.
 
 ### Permissions
 
-| Mode | Read / network / question / task | Write (`write`, `edit`) | Execute (shell) | MCP (not read-only) |
+| Mode | Read / network / question / task | Write (`write`, `edit`, `apply_patch`) | Execute (shell) | MCP (not read-only) |
 | --- | --- | --- | --- | --- |
 | `full` | allow | allow | allow | allow |
 | `ask` | allow | ask | ask | ask |
@@ -146,6 +147,39 @@ marked, pending approvals are cancelled.
 
 "Allow for this session" stores a per-tool rule on the session. Approvals
 requested by subagents appear in the parent conversation.
+
+### File editing: apply_patch and read-before-edit
+
+`apply_patch` (`Tools/ApplyPatchTool.cs`, `ToolKind.Write`) applies an OpenAI
+Codex-style patch to several files atomically: `Tools/PatchParser.cs` parses
+the grammar (with Codex's leniencies — heredoc wrapper, markers with extra
+whitespace, a first chunk without `@@`, blank context lines) into hunks and
+reports errors with line numbers; the tool then validates every hunk and
+computes all new content in memory before touching disk. Update chunks are
+matched by `TextMatch.SeekSequence` (shared with `edit`'s fallback): four
+passes per candidate — exact, trim-end, trim, Unicode-punctuation normalised —
+searching from the cursor after the previous chunk; `*** End of File` anchors
+at the end. CRLF and a missing final newline are preserved. Every source and
+destination path is captured through the change tracker before writing (so
+revert restores updated/deleted/moved files and deletes added ones), then the
+commit runs with best-effort rollback from the in-memory originals. The result
+is `Applied patch: N files (+a -d)` plus a unified diff per file, built by the
+shared `FileEditResult` helper (with spec 020's LSP diagnostics appended once
+for every touched file). Exposure follows `ServerConfig.ApplyPatch`
+(`auto` = OpenAI-family models only — `openai-responses` type, openai flavour
+or a gpt-/o-series/codex model id; `always`; `never`) and is filtered in
+`SessionRun.TurnContextAsync`, which re-freezes the prompt when the tool set
+changes.
+
+The read-before-edit policy (`Tools/ReadTracker.cs`, toggle
+`ServerConfig.ReadBeforeEdit`, default on) makes `edit`, `apply_patch`
+(Update/Delete/Move) and `write` over an existing file fail with a clear
+"read it first" message unless the session read the file and it did not change
+on disk since. Records live in the persisted `file_reads` collection (per
+session id, so subagents are isolated; deleted with the session), keyed by the
+OS-normalised path; change detection compares length + mtime first and falls
+back to SHA-256 (touch-only rewrites pass). Partial reads count, the tools'
+own writes refresh the state, new files are exempt.
 
 ### Subagents
 

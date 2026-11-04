@@ -275,6 +275,17 @@ const en: Dict = {
   'settings.appearance.compactSidebar': 'Compact sidebar',
 
   'settings.tab.shortcuts': 'Shortcuts',
+
+  'settings.tools.applyPatch': 'apply_patch tool',
+  'settings.tools.applyPatchSub':
+    'Offer the Codex-style apply_patch tool (multi-file atomic patches). Auto keeps it for OpenAI-family models only.',
+  'settings.tools.applyPatchAuto': 'Auto (OpenAI-family models)',
+  'settings.tools.applyPatchAlways': 'Always',
+  'settings.tools.applyPatchNever': 'Never',
+  'settings.tools.readBeforeEdit': 'Read before edit',
+  'settings.tools.readBeforeEditSub':
+    'Require a fresh read of a file in this conversation before edit, apply_patch or overwrite; also blocks edits when the file changed on disk since.',
+
   'shortcuts.intro':
     'Click a shortcut to rebind it, then press the new keys. Esc cancels, Backspace unbinds. Saved in this browser.',
   'shortcuts.press': 'Press keys…',
@@ -565,6 +576,17 @@ const pt: Dict = {
   'settings.appearance.compactSidebar': 'Barra lateral compacta',
 
   'settings.tab.shortcuts': 'Atalhos',
+
+  'settings.tools.applyPatch': 'ferramenta apply_patch',
+  'settings.tools.applyPatchSub':
+    'Oferecer a ferramenta apply_patch no estilo Codex (patches atômicos de vários arquivos). Auto a mantém apenas para modelos da família OpenAI.',
+  'settings.tools.applyPatchAuto': 'Automático (modelos OpenAI)',
+  'settings.tools.applyPatchAlways': 'Sempre',
+  'settings.tools.applyPatchNever': 'Nunca',
+  'settings.tools.readBeforeEdit': 'Ler antes de editar',
+  'settings.tools.readBeforeEditSub':
+    'Exigir uma leitura recente do arquivo nesta conversa antes de edit, apply_patch ou sobrescrita; também bloqueia edições quando o arquivo mudou no disco desde então.',
+
   'shortcuts.intro':
     'Clique em um atalho para alterá-lo e pressione as novas teclas. Esc cancela, Backspace remove. Salvo neste navegador.',
   'shortcuts.press': 'Pressione as teclas…',

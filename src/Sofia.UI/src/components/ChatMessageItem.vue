@@ -9,10 +9,12 @@ import { useQuestionDrafts } from '@/composables/useQuestionDrafts'
 import { useI18n } from '@/i18n'
 import { api, serverUrl } from '@/services/sofia'
 import { cacheDiagnosisTemplate } from '@/services/cacheHealth'
+import { parseUnifiedPatch } from '@/services/diff'
 import type {
   Attachment,
   AttachmentKind,
   CacheBreakInfo,
+  DiffLine,
   KnowledgeEntryDto,
   Message,
   ToolCall,
@@ -101,8 +103,45 @@ function toolIcon(name: string): string {
   if (name.startsWith('read') || name.startsWith('write') || name.includes('file')) return 'file'
   if (name.includes('command') || name.includes('run') || name.includes('shell')) return 'terminal'
   if (name.includes('search') || name.includes('fetch') || name === 'browser') return 'globe'
-  if (name.includes('edit')) return 'code'
+  if (name.includes('edit') || name === 'apply_patch') return 'code'
   return 'box'
+}
+
+// --- diff-coloured output for file-writing tools ------------------------------
+// Successful edit/write/apply_patch results carry a unified diff in the output;
+// render it with + green / − red (the same tokens as DiffViewer) instead of plain text.
+const DIFF_TOOLS = new Set(['edit', 'write', 'apply_patch'])
+
+function isDiffTool(tc: ToolCall): boolean {
+  return tc.status === 'success' && DIFF_TOOLS.has(tc.name) && !!tc.output
+}
+
+// The template reads diffLines() more than once per call (v-if + v-for); cache the
+// parse on the tool-call object (keyed by its output text) so streaming re-renders
+// do not re-split the output and a growing stream invalidates the entry.
+const diffCache = new WeakMap<ToolCall, { output: string; lines: DiffLine[] | null }>()
+
+/** The unified-diff lines of a tool output, or null when it carries no diff. */
+function diffLines(tc: ToolCall): DiffLine[] | null {
+  if (!isDiffTool(tc)) return null
+  const cached = diffCache.get(tc)
+  if (cached && cached.output === tc.output) return cached.lines
+  // The output starts with prose summary lines ("Edited x (+1 -2)."); keep only the
+  // real hunk body — `---`/`+++`/`@@` headers plus the +/-/blank body lines that follow.
+  const raw = (tc.output ?? '').replace(/\r/g, '').split('\n')
+  const start = raw.findIndex((l) => l.startsWith('--- '))
+  if (start < 0) {
+    diffCache.set(tc, { output: tc.output!, lines: null })
+    return null
+  }
+  const body = raw.slice(start).filter((l) => l === '' || l[0] === '+' || l[0] === '-' || l.startsWith('@@'))
+  const value = parseUnifiedPatch(body.join('\n'))
+  diffCache.set(tc, { output: tc.output!, lines: value.length > 0 ? value : null })
+  return value.length > 0 ? value : null
+}
+
+function diffClass(line: DiffLine): string {
+  return line.type === 'add' ? 'diffline--add' : line.type === 'del' ? 'diffline--del' : 'diffline--ctx'
 }
 
 // --- permission card -------------------------------------------------------
@@ -524,7 +563,21 @@ function closeLightbox(): void {
                 </button>
                 <pre v-if="openInputs.has(tc.id)" class="sofia-mono">{{ tc.input }}</pre>
               </div>
-              <div v-if="tc.output" class="tool-block tool-block--ok" :class="{ 'tool-block--folded': !openOutputs.has(tc.id) }">
+              <!-- edit/write/apply_patch: the output carries a unified diff; show it colour-coded. -->
+              <div v-if="tc.output && diffLines(tc)" class="tool-block tool-block--ok">
+                <div class="diffcard">
+                  <div
+                    v-for="(line, i) in diffLines(tc)"
+                    :key="i"
+                    class="diffline"
+                    :class="diffClass(line)"
+                  >
+                    <span class="diffline-sign">{{ line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ' }}</span>
+                    <pre class="sofia-mono diffline-text">{{ line.text }}</pre>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="tc.output" class="tool-block tool-block--ok" :class="{ 'tool-block--folded': !openOutputs.has(tc.id) }">
                 <button
                   class="tool-block-label tool-block-toggle"
                   type="button"
@@ -1688,6 +1741,53 @@ button.compact-notice {
 }
 
 .tool-block--err pre {
+  color: var(--sofia-err);
+}
+
+/* Diff-coloured output of edit/write/apply_patch (same tokens as DiffViewer). */
+.diffcard {
+  max-height: 260px;
+  overflow: auto;
+  font-size: 0.78rem;
+}
+
+.diffline {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid color-mix(in srgb, var(--sofia-border) 45%, transparent);
+}
+
+.diffline-sign {
+  width: 1.2em;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+  flex-shrink: 0;
+  color: var(--sofia-text-faint);
+}
+
+.diffline-text {
+  margin: 0;
+  padding: 0.1rem 0.5rem 0.1rem 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--sofia-text-muted);
+}
+
+.diffline--add {
+  background: color-mix(in srgb, var(--sofia-ok) 14%, transparent);
+}
+
+.diffline--add .diffline-sign {
+  color: var(--sofia-ok);
+}
+
+.diffline--del {
+  background: color-mix(in srgb, var(--sofia-err) 14%, transparent);
+}
+
+.diffline--del .diffline-sign {
   color: var(--sofia-err);
 }
 

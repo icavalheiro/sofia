@@ -1162,6 +1162,37 @@ onBeforeUnmount(stopEvents)
                       @click="saveConfig({ sandboxNetwork: !config.sandboxNetwork })"
                     ><span class="knob" /></button>
                   </label>
+
+                  <div class="row">
+                    <span class="row-text">
+                      <span class="row-title">{{ t('settings.tools.applyPatch') }}</span>
+                      <span class="row-sub">{{ t('settings.tools.applyPatchSub') }}</span>
+                    </span>
+                    <select
+                      class="field-input cfg-input"
+                      :value="config.applyPatch"
+                      @change="saveConfig({ applyPatch: ($event.target as HTMLSelectElement).value as ConfigDto['applyPatch'] })"
+                    >
+                      <option value="auto">{{ t('settings.tools.applyPatchAuto') }}</option>
+                      <option value="always">{{ t('settings.tools.applyPatchAlways') }}</option>
+                      <option value="never">{{ t('settings.tools.applyPatchNever') }}</option>
+                    </select>
+                  </div>
+
+                  <label class="row">
+                    <span class="row-text">
+                      <span class="row-title">{{ t('settings.tools.readBeforeEdit') }}</span>
+                      <span class="row-sub">{{ t('settings.tools.readBeforeEditSub') }}</span>
+                    </span>
+                    <button
+                      class="toggle"
+                      :class="{ 'toggle--on': config.readBeforeEdit }"
+                      type="button"
+                      role="switch"
+                      :aria-checked="config.readBeforeEdit"
+                      @click="saveConfig({ readBeforeEdit: !config.readBeforeEdit })"
+                    ><span class="knob" /></button>
+                  </label>
                 </div>
 
                 <dl class="srv-cfg-list">

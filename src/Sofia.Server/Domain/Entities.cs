@@ -422,6 +422,24 @@ public sealed class McpServerConfig
     public bool Enabled { get; set; } = true;
 }
 
+/// <summary>
+/// A file the session read through the `read` tool (or edited through a writing tool), so the
+/// read-before-edit policy can verify the content is still current. One record per (session, path).
+/// </summary>
+public sealed class FileReadRecord
+{
+    /// <summary>"{sessionId}|{normalisedAbsolutePath}".</summary>
+    [BsonId] public string Id { get; set; } = "";
+    public string SessionId { get; set; } = "";
+    /// <summary>Normalised absolute path (case-insensitive on Windows/macOS).</summary>
+    public string Path { get; set; } = "";
+    public long Length { get; set; }
+    public DateTime LastWriteUtc { get; set; }
+    /// <summary>SHA-256 of the content at read time (lowercase hex); null until first computed.</summary>
+    public string? Sha256 { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 /// <summary>Content of a file before a session first modified it within one message.</summary>
 public sealed class FileSnapshot
 {
@@ -464,6 +482,10 @@ public sealed class ServerConfig
     public bool Sandbox { get; set; }
     /// <summary>Allow network access inside the sandbox.</summary>
     public bool SandboxNetwork { get; set; } = true;
+    /// <summary>Exposure of the `apply_patch` tool: 'auto' (OpenAI-family models only), 'always' or 'never'.</summary>
+    public string ApplyPatch { get; set; } = "auto";
+    /// <summary>Require a fresh `read` before `edit`, `apply_patch` (Update/Delete/Move) and `write` over an existing file.</summary>
+    public bool ReadBeforeEdit { get; set; } = true;
     /// <summary>Model ids ('providerId/modelId') hidden from the harness: not offered in pickers and never chosen as default.</summary>
     public List<string> DisabledModels { get; set; } = [];
     /// <summary>Model ids that serve one conversation at a time: runs are queued (subagents first) and a conversation keeps the model until its run ends. Local models are single client by default, so they only need to be listed here once they were switched off and back on.</summary>

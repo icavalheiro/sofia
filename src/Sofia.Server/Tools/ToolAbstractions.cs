@@ -82,6 +82,11 @@ public sealed class ToolContext
     /// time-bounded and degrades to a friendly message when no server is available.
     /// </summary>
     public Lsp.LspManager? Lsp { get; set; }
+    /// <summary>
+    /// Read-before-edit state (null only in tests that never touch it): records which files this session read or
+    /// wrote and verifies they did not change on disk since, so `edit`/`apply_patch`/`write` can refuse stale edits.
+    /// </summary>
+    public ReadTracker? Reads { get; set; }
 }
 
 public interface ITool
