@@ -183,18 +183,6 @@ async function refreshConfig(): Promise<void> {
   }
 }
 
-const sandboxAvailable = computed(() => config.value?.sandboxStatus?.available ?? false)
-const sandboxEffective = computed(() => activeConversation.value?.sandboxEffective ?? config.value?.sandbox ?? false)
-const sandboxTooltip = computed(() => {
-  if (!config.value) return 'Sandbox'
-  if (!sandboxAvailable.value) return `Sandbox unavailable: ${config.value.sandboxStatus?.reason ?? 'no backend'}`
-  return `Sandbox ${sandboxEffective.value ? 'on' : 'off'} (${config.value.sandboxStatus?.backend})`
-})
-
-function toggleSandbox(): void {
-  if (!sandboxAvailable.value) return
-  void patchActiveSession({ sandbox: !sandboxEffective.value })
-}
 
 async function refreshBranch(): Promise<void> {
   const dir = directory.value
@@ -1106,16 +1094,6 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
         </div>
 
         <div class="chip-row">
-          <button
-            class="icon-btn"
-            type="button"
-            :title="sandboxTooltip"
-            :disabled="!sandboxAvailable"
-            :aria-pressed="sandboxEffective"
-            @click="toggleSandbox"
-          >
-            <SofiaIcon name="shield" :size="'0.9rem'" />
-          </button>
           <div v-if="currentBranch" class="branch-chip" title="Git branch">
             <SofiaIcon name="branch" :size="'0.8rem'" />
             <span class="branch-name sofia-truncate">{{ currentBranch }}</span>
