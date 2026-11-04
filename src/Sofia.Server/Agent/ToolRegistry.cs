@@ -19,11 +19,12 @@ public sealed class ToolRegistry(
 {
     private readonly ISessionSearch _search = search;
     private readonly IEventBus _bus = bus;
-    private static readonly HashSet<string> FolderOnly = ["read", "write", "edit", Agents.ShellToolToken, "grep", "find", "ls", "task", "task:explore", "lsp", "lsp_rename"];
+    private static readonly HashSet<string> FolderOnly = ["read", "write", "edit", "apply_patch", Agents.ShellToolToken, "grep", "find", "ls", "task", "task:explore", "lsp", "lsp_rename"];
 
     public List<ITool> For(AgentDefinition agent, Workspace workspace, string? sessionId = null)
     {
-        var shell = ProcessRunner.ResolveShell(db.GetConfig().Shell);
+        var config = db.GetConfig();
+        var shell = ProcessRunner.ResolveShell(config.Shell);
         var dir = workspace.IsFolder ? workspace.Path : null;
         var tools = new List<ITool>();
         foreach (var name in agent.Tools)
@@ -32,8 +33,9 @@ public sealed class ToolRegistry(
             ITool? tool = name switch
             {
                 "read" => new ReadTool(SaveImage),
-                "write" => new WriteTool(),
-                "edit" => new EditTool(),
+                "write" => new WriteTool(config.ReadBeforeEdit),
+                "edit" => new EditTool(config.ReadBeforeEdit),
+                "apply_patch" => new ApplyPatchTool(config.ReadBeforeEdit),
                 Agents.ShellToolToken => new ShellTool(shell),
                 "grep" => new GrepTool(),
                 "find" => new FindTool(),

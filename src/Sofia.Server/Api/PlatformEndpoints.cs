@@ -43,6 +43,10 @@ public sealed record ConfigPatch
     public string? SearxngUrl { get; init; }
     public bool? Sandbox { get; init; }
     public bool? SandboxNetwork { get; init; }
+    /// <summary>'auto' | 'always' | 'never' — exposure of the `apply_patch` tool.</summary>
+    public string? ApplyPatch { get; init; }
+    /// <summary>Read-before-edit policy for edit/apply_patch/write-over-existing.</summary>
+    public bool? ReadBeforeEdit { get; init; }
     public LspConfigPatch? Lsp { get; init; }
 }
 
@@ -428,6 +432,12 @@ public static class PlatformEndpoints
             }
             if (body.Sandbox is { } sandboxSetting) config.Sandbox = sandboxSetting;
             if (body.SandboxNetwork is { } sandboxNetwork) config.SandboxNetwork = sandboxNetwork;
+            if (body.ApplyPatch is { } applyPatch)
+            {
+                if (applyPatch is not ("auto" or "always" or "never")) throw new ArgumentException("applyPatch must be 'auto', 'always' or 'never'.");
+                config.ApplyPatch = applyPatch;
+            }
+            if (body.ReadBeforeEdit is { } readBeforeEdit) config.ReadBeforeEdit = readBeforeEdit;
             if (body.Lsp is { } lspPatch)
             {
                 if (lspPatch.Enabled is { } lspEnabled) config.Lsp.Enabled = lspEnabled;
@@ -495,6 +505,8 @@ public static class PlatformEndpoints
             c.SearxngUrl,
             c.Sandbox,
             c.SandboxNetwork,
+            c.ApplyPatch,
+            c.ReadBeforeEdit,
             lsp = new { c.Lsp.Enabled, c.Lsp.AutoDiagnostics, c.Lsp.Servers },
             sandboxStatus = new { available = status.Available, backend = status.Backend, reason = status.Reason },
             dataDir = options.DataDir,

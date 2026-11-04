@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Sofia.Server.Changes;
 using Sofia.Server.Context;
 using Sofia.Server.Data;
@@ -99,6 +100,9 @@ public sealed class SessionRun : IToolHost
     public SessionRun Root { get; }
     public SandboxPolicy? Sandbox => SandboxPolicy.Resolve(_s.Db.GetConfig(), Workspace, Session);
     public SandboxPolicy? EffectiveSandbox => Sandbox;
+    /// <summary>Read-before-edit tracker for this run (state lives in LiteDB, so the instance is cheap and cacheable).</summary>
+    private ReadTracker? _reads;
+    private ReadTracker Reads => _reads ??= new(_s.Db);
     public string? LastError { get; private set; }
     public bool HasPendingQuestion => !_questions.IsEmpty;
 
@@ -222,7 +226,10 @@ public sealed class SessionRun : IToolHost
                     }
                     else
                     {
-                        var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), ct);
+                        // The model is resolved here too: the turn-context cache (and the `auto` apply_patch filter)
+                        // must not be primed with an unfiltered tool set.
+                        var (provider, model) = ResolveModel();
+                        var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), provider, model, ct);
                         AddUserMessage(next, contextNotes: notes);
                         // Only after the message is persisted: a crash replays the change once more instead of losing it.
                         CommitFacts();
@@ -429,10 +436,11 @@ public sealed class SessionRun : IToolHost
         while (true)
         {
             ct.ThrowIfCancellationRequested();
+            // Resolved before the turn context: `auto` apply_patch exposure depends on the provider/model.
             var (provider, model) = ResolveModel();
             var config = _s.Db.GetConfig();
             Session.Context.Limit = model.ContextLength;
-            var (system, tools, _) = await TurnContextAsync(config, ct);
+            var (system, tools, _) = await TurnContextAsync(config, provider, model, ct);
             HistoryBuilder.PruneOptions? prune = Session.PrunedThroughSeq > 0 ? new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars) : null;
             var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
             var imageCount = _s.Db.SessionMessages(Session.Id)
@@ -557,13 +565,17 @@ public sealed class SessionRun : IToolHost
     /// Otherwise the live facts are diffed against <see cref="Session.PromptFacts"/>. The result is cached in
     /// <c>_turnPrompt</c> (reset by <c>RunAsync</c> at turn start) so every step reuses the same system string and delta.
     /// </summary>
-    private async Task<(string System, List<ITool> Tools, List<string>? Delta)> TurnContextAsync(ServerConfig config, CancellationToken ct)
+    private async Task<(string System, List<ITool> Tools, List<string>? Delta)> TurnContextAsync(ServerConfig config, ProviderConfig provider, ModelInfo model, CancellationToken ct)
     {
         if (_turnPrompt is { } cached && cached.Agent == Session.Agent) return (cached.System, cached.Tools, cached.Delta);
         var agent = _s.AgentCatalog.Get(Session.Agent, Workspace.IsFolder ? Workspace.Path : null);
         var tools = _s.Tools.For(agent, Workspace, Session.Id);
         // Subagents never ask the user or spawn further subagents.
         if (Session.ParentId is not null) tools.RemoveAll(t => t.Kind is ToolKind.Agent or ToolKind.Interactive);
+        // `apply_patch` exposure: auto keeps it only for OpenAI-family models (Codex-trained), because small local
+        // models do worse with a second editing format. The tool set change re-freezes the prompt, which is expected.
+        if (tools.Any(t => t.Name == "apply_patch") && !ApplyPatchExposure(config.ApplyPatch, provider, model))
+            tools.RemoveAll(t => t.Name == "apply_patch");
         var fingerprint = Text.Sha256(string.Join("\n", tools.Select(t => t.Name + "\u0000" + Text.FirstLine(t.Description, 400))));
 
         var (snapshot, overrides, shell) = await PromptSnapshotAsync(agent, config, ct);
@@ -922,6 +934,7 @@ public sealed class SessionRun : IToolHost
                         Host = this,
                         Sandbox = Sandbox,
                         Lsp = Workspace.IsFolder ? _s.Lsp : null,
+                        Reads = Reads,
                     };
                     result = await tool.ExecuteAsync(ctx, args, ct);
                 }
@@ -1018,6 +1031,30 @@ public sealed class SessionRun : IToolHost
 
         call.Result = (call.Result ?? "") + string.Join("", additions);
         _s.Store.SaveSession(Session);   // persisted so a resumed session does not re-inject what the model saw
+    }
+
+    /// <summary>
+    /// Whether `apply_patch` is offered for this provider/model under the configured exposure mode. `auto` keeps it
+    /// only for OpenAI-family models: the Responses API, any model id that looks like a GPT/o-series/Codex model
+    /// (this also catches OpenRouter-style `openai/gpt-*` ids on proxy providers) or an openai-flavoured provider.
+    /// </summary>
+    public static bool ApplyPatchExposure(string mode, ProviderConfig provider, ModelInfo model) => mode switch
+    {
+        "always" => true,
+        "never" => false,
+        _ => provider.Type == "openai-responses"
+             || string.Equals(provider.Flavor, "openai", StringComparison.OrdinalIgnoreCase)
+             || IsOpenAiFamilyModel(model.ModelId),
+    };
+
+    /// <summary>True for model ids that look like GPT / o-series / Codex models (case-insensitive substring match).</summary>
+    public static bool IsOpenAiFamilyModel(string modelId)
+    {
+        if (string.IsNullOrEmpty(modelId)) return false;
+        var id = modelId.ToLowerInvariant();
+        return id.Contains("gpt-", StringComparison.Ordinal)
+            || id.Contains("codex", StringComparison.Ordinal)
+            || Regex.IsMatch(id, "(^|/)o\\d");
     }
 
     /// <summary>Removes injected subfolder instructions whose delivering message is no longer in the model's view.</summary>
@@ -1214,6 +1251,8 @@ public sealed class SessionRun : IToolHost
     {
         ToolKind.Execute => $"Run: {Args.Optional(args, "command", "cmd")}",
         ToolKind.Write when tool.Name == "edit" => $"Edit {call.Summary}",
+        // The summary is "N files: a.ts, b.ts…" (empty for an unparsable patch): "Apply patch (3 files): a.ts, b.ts".
+        ToolKind.Write when tool.Name == "apply_patch" => call.Summary.Length > 0 ? $"Apply patch ({call.Summary})" : "Apply patch",
         ToolKind.Write => $"Write {call.Summary}",
         ToolKind.Browser => $"Browser: {call.Summary}",
         _ => $"{tool.Name} {Text.FirstLine(args.ToJsonString(), 200)}",

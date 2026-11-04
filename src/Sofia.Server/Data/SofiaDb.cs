@@ -48,6 +48,7 @@ public sealed class SofiaDb : IDisposable
         Providers = _db.GetCollection<ProviderConfig>("providers");
         McpServers = _db.GetCollection<McpServerConfig>("mcp");
         Snapshots = _db.GetCollection<FileSnapshot>("snapshots");
+        FileReads = _db.GetCollection<FileReadRecord>("file_reads");
         Attachments = _db.GetCollection<Attachment>("attachments");
         Tokens = _db.GetCollection<AccessToken>("tokens");
         Config = _db.GetCollection<ServerConfig>("config");
@@ -66,6 +67,7 @@ public sealed class SofiaDb : IDisposable
         Messages.EnsureIndex(x => x.SessionId);
         Messages.EnsureIndex(x => x.Seq);
         Snapshots.EnsureIndex(x => x.SessionId);
+        FileReads.EnsureIndex(x => x.SessionId);
 
         _seq = Messages.Count() == 0 ? 0 : Messages.Max(x => x.Seq);
     }
@@ -76,6 +78,7 @@ public sealed class SofiaDb : IDisposable
     public ILiteCollection<ProviderConfig> Providers { get; private set; } = default!;
     public ILiteCollection<McpServerConfig> McpServers { get; private set; } = default!;
     public ILiteCollection<FileSnapshot> Snapshots { get; private set; } = default!;
+    public ILiteCollection<FileReadRecord> FileReads { get; private set; } = default!;
     public ILiteCollection<Attachment> Attachments { get; private set; } = default!;
     public ILiteCollection<AccessToken> Tokens { get; private set; } = default!;
     public ILiteCollection<ServerConfig> Config { get; private set; } = default!;
@@ -134,6 +137,7 @@ public sealed class SofiaDb : IDisposable
             }
         }
         Snapshots.DeleteMany(s => s.SessionId == sessionId);
+        FileReads.DeleteMany(r => r.SessionId == sessionId);
         Knowledge.DeleteMany(k => k.Scope == KnowledgeScope.Chat && k.SessionId == sessionId);
         Tasks.DeleteMany(t => t.SessionId == sessionId);
         Sessions.Delete(sessionId);

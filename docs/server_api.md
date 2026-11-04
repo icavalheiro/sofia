@@ -648,6 +648,8 @@ interface ConfigDto {
   searxngUrl: string            // SearXNG instance base URL ('' when unused)
   sandbox: boolean              // run shell/process commands in an OS sandbox by default
   sandboxNetwork: boolean       // allow network access inside the sandbox
+  applyPatch: 'auto' | 'always' | 'never'  // exposure of the apply_patch tool (default 'auto')
+  readBeforeEdit: boolean       // require a fresh read before edit/apply_patch/write-over-existing (default true)
   sandboxStatus: { available: boolean; backend: string; reason?: string }  // read-only
   lsp: {                        // language servers (see "Language servers (LSP)")
     enabled: boolean            // global switch for all LSP features
@@ -658,6 +660,61 @@ interface ConfigDto {
   configPath: string            // read-only
 }
 ```
+
+## File editing: apply_patch and read-before-edit
+
+The agent's file-writing tools are `write`, `edit` and `apply_patch`. All three go through the same
+permission gating (`ToolKind.Write`) and capture their files in the change tracker, so every change is
+revertible from the session diff.
+
+### `apply_patch` tool
+
+Applies an OpenAI Codex-style patch to one or more files at once (argument: `input`, aliases `patch` /
+`patchText`):
+
+```
+*** Begin Patch
+*** Add File: b.ts
++line one
++line two
+*** Update File: a.ts
+*** Move to: a2.ts
+@@ context line
+-old line
++new line
+*** Delete File: c.txt
+*** End Patch
+```
+
+- **Atomic**: every hunk is validated and the new content computed in memory first; if any hunk fails, no file
+  on disk is touched and the result lists all errors (with patch line numbers).
+- **Tolerant matching** (like Codex): context is matched per line through four passes — exact, right-trimmed,
+  trimmed, Unicode-punctuation normalised (dashes, curly quotes, NBSP) — starting after the previous chunk.
+  `*** End of File` anchors the chunk at the end of the file. CRLF and a missing final newline are preserved.
+- **Result**: `Applied patch: N files (+a -d)` followed by a unified diff per file (the same shape as `edit`,
+  which is what the UI's diff card renders).
+
+Exposure is controlled by `ConfigDto.applyPatch`: `auto` (default) offers it only for OpenAI-family models —
+provider type `openai-responses`, an openai-flavoured provider, or a model id containing `gpt-` / `codex` /
+an o-series name (this catches OpenRouter-style `openai/gpt-*` ids on proxy providers); `always` offers it for
+every model; `never` hides it. Changing the tool set re-freezes the session's system prompt, as with any model
+switch.
+
+### Read-before-edit policy
+
+When `ConfigDto.readBeforeEdit` is true (default), `edit`, `apply_patch` (Update/Delete/Move) and `write` over an
+existing file fail unless the file was read through the `read` tool in this conversation **and** it has not
+changed on disk since:
+
+- Not read: `You must 'read' <rel> in this conversation before editing it.`
+- Changed: `<rel> changed on disk since you last read it (modified <time>). Read it again before editing.`
+
+Rules: reads are tracked per session and persisted across server restarts (`file_reads` collection, removed when
+the session is deleted); a subagent tracks its own reads; partial reads (offset/limit) count; the tools' own
+writes refresh the tracked state, so consecutive edits work without re-reading; new files are exempt. Change
+detection compares length + mtime first and falls back to SHA-256, so a touch-only rewrite is not reported as a
+change. When the toggle is off everything passes, but reads keep being recorded so turning it back on works
+immediately.
 
 ## Session origin
 

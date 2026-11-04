@@ -17,6 +17,7 @@ public sealed partial class AgentCatalog(SofiaOptions options)
     private static readonly Dictionary<string, string> ToolAliases = new(StringComparer.OrdinalIgnoreCase)
     {
         ["read"] = "read", ["write"] = "write", ["edit"] = "edit", ["multiedit"] = "edit",
+        ["apply_patch"] = "apply_patch", ["patch"] = "apply_patch",
         ["bash"] = Agents.ShellToolToken, ["shell"] = Agents.ShellToolToken, ["powershell"] = Agents.ShellToolToken, ["terminal"] = Agents.ShellToolToken,
         ["grep"] = "grep", ["find"] = "find", ["glob"] = "find", ["ls"] = "ls", ["list"] = "ls",
         ["lsp"] = "lsp", ["language_server"] = "lsp", ["diagnostics"] = "lsp",
