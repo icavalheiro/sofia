@@ -29,8 +29,8 @@ public sealed partial class AgentCatalog(SofiaOptions options)
         ["memory"] = "memory", ["mem"] = "memory",
         ["current_time"] = "current_time", ["time"] = "current_time", ["now"] = "current_time",
         ["get_current_time"] = "current_time", ["datetime"] = "current_time", ["date_time"] = "current_time",
+        ["wait"] = "wait", ["sleep"] = "wait", ["delay"] = "wait",
     };
-
     public IEnumerable<string> GlobalRoots()
     {
         yield return options.AgentsDir;

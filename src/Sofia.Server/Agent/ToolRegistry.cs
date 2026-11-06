@@ -55,6 +55,7 @@ public sealed class ToolRegistry(
                 "session_search" => new SessionSearchTool(_search, db),
                 "session_read" => new SessionReadTool(db),
                 "current_time" => new CurrentTimeTool(),
+                "wait" => new WaitTool(),
                 "time" => new TimeTool(),
                 "now" => new NowTool(),
                 "get_current_time" => new GetCurrentTimeTool(),
