@@ -150,8 +150,8 @@ useShortcut('panel.toggle', () => {
         <ChatMessages />
         <ChatComposer />
         <TaskListPanel :open="showTasks" @close="showTasks = false" @open="showTasks = true" />
+        <BrowserPanel :open="showBrowser" @close="showBrowser = false" />
       </main>
-      <BrowserPanel :open="showBrowser" @close="showBrowser = false" />
       <RightPanel :open="showRightPanel" @close="showRightPanel = false" />
     </div>
   </MantineProvider>

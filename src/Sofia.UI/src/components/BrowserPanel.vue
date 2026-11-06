@@ -3,7 +3,7 @@
 // streamed as JPEG frames over `/api/sessions/{id}/browser/stream`. The user
 // watches the agent work (its clicks show as a ring) and can drive the same
 // page between tool calls; input is locked while the agent is acting.
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { useHarness } from '@/composables/useHarness'
 import { useI18n } from '@/i18n'
@@ -39,6 +39,9 @@ const { activeConversation } = useHarness()
 
 const MODE_KEY = 'sofia.browser.mode'
 const WIDTH_KEY = 'sofia.browser.width'
+const POS_KEY = 'sofia.browser.pos'
+const SIZE_KEY = 'sofia.browser.size'
+const CONTROLS_KEY = 'sofia.browser.controlsOpen'
 const DESKTOP_WIDTH = 1280
 
 const sessionId = computed(() => activeConversation.value?.id ?? null)
@@ -60,7 +63,30 @@ const initialMode = storedMode === 'fit' || storedMode === 'desktop' || storedMo
   ? storedMode
   : (localStorage.getItem('sofia.browser.fit') === '1' ? 'fit' : 'desktop')
 const mode = ref<'fit' | 'desktop' | 'mobile' | 'mobileLandscape' | 'desktop1080'>(initialMode as 'fit' | 'desktop' | 'mobile' | 'mobileLandscape' | 'desktop1080')
-const panelWidth = ref(Math.min(900, Math.max(360, Number(localStorage.getItem(WIDTH_KEY)) || 560)))
+const panel = ref<HTMLElement | null>(null)
+const storedSizeW = Number(localStorage.getItem(WIDTH_KEY)) || 560
+const pos = ref({ x: 24, y: 24 })
+const size = ref({ w: Math.min(900, Math.max(360, storedSizeW)), h: 480 })
+let hasStoredPos = false
+let hasStoredSize = false
+try
+{
+  const rawPos = localStorage.getItem(POS_KEY)
+  if (rawPos)
+  {
+    const p = JSON.parse(rawPos) as { x?: number; y?: number }
+    if (typeof p.x === 'number') { pos.value.x = p.x; hasStoredPos = true }
+    if (typeof p.y === 'number') { pos.value.y = p.y; hasStoredPos = true }
+  }
+  const rawSize = localStorage.getItem(SIZE_KEY)
+  if (rawSize)
+  {
+    const s = JSON.parse(rawSize) as { w?: number; h?: number }
+    if (typeof s.w === 'number') { size.value.w = Math.min(900, Math.max(360, s.w)); hasStoredSize = true }
+    if (typeof s.h === 'number') { size.value.h = Math.max(240, s.h); hasStoredSize = true }
+  }
+} catch { /* ignore */ }
+const controlsOpen = ref(localStorage.getItem(CONTROLS_KEY) !== '0')
 
 const screen = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -248,19 +274,114 @@ watch(mode, (value) => {
   sendResize()
 })
 
-function startDrag(event: PointerEvent): void {
-  const startX = event.clientX
-  const startWidth = panelWidth.value
-  const move = (e: PointerEvent): void => {
-    panelWidth.value = Math.min(900, Math.max(360, startWidth + (startX - e.clientX)))
-  }
-  const up = (): void => {
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
-    localStorage.setItem(WIDTH_KEY, String(panelWidth.value))
-  }
-  window.addEventListener('pointermove', move)
-  window.addEventListener('pointerup', up)
+// --- positioning / resizing ----------------------------------------------------
+
+function clamp(): void
+{
+  const el = panel.value
+  const parent = el?.offsetParent as HTMLElement | null
+  if ( !parent ) return
+  size.value.w = Math.max( 360, Math.min( parent.clientWidth - 24, size.value.w ) )
+  size.value.h = Math.max( 240, Math.min( parent.clientHeight - 24, size.value.h ) )
+  pos.value.x = Math.max( 0, Math.min( parent.clientWidth - size.value.w, pos.value.x ) )
+  pos.value.y = Math.max( 0, Math.min( parent.clientHeight - size.value.h, pos.value.y ) )
+}
+
+function loadPos(): void
+{
+  try
+  {
+    const raw = localStorage.getItem( POS_KEY )
+    if ( !raw ) return
+    const parsed = JSON.parse( raw ) as { x?: number; y?: number }
+    if ( typeof parsed.x === 'number' ) pos.value.x = parsed.x
+    if ( typeof parsed.y === 'number' ) pos.value.y = parsed.y
+    hasStoredPos = true
+  } catch { /* ignore */ }
+}
+
+function persistPos(): void
+{
+  try { localStorage.setItem( POS_KEY, JSON.stringify( pos.value ) ) } catch { /* ignore */ }
+}
+
+function loadSize(): void
+{
+  try
+  {
+    const raw = localStorage.getItem( SIZE_KEY )
+    if ( !raw ) return
+    const parsed = JSON.parse( raw ) as { w?: number; h?: number }
+    if ( typeof parsed.w === 'number' ) size.value.w = Math.min( 900, Math.max( 360, parsed.w ) )
+    if ( typeof parsed.h === 'number' ) size.value.h = Math.max( 240, parsed.h )
+    hasStoredSize = true
+  } catch { /* ignore */ }
+}
+
+function persistSize(): void
+{
+  try { localStorage.setItem( SIZE_KEY, JSON.stringify( size.value ) ) } catch { /* ignore */ }
+  try { localStorage.setItem( WIDTH_KEY, String( size.value.w ) ) } catch { /* ignore */ }
+}
+
+let dragStart = { x: 0, y: 0, px: 0, py: 0 }
+let dragging = false
+
+function startDrag ( event: PointerEvent ): void
+{
+  const target = event.target as HTMLElement
+  if ( target.closest( 'button, input, textarea, [data-no-drag]' ) ) return
+  dragging = true
+  dragStart = { x: event.clientX, y: event.clientY, px: pos.value.x, py: pos.value.y }
+  window.addEventListener( 'pointermove', onDragMove )
+  window.addEventListener( 'pointerup', onDragEnd )
+}
+
+function onDragMove ( event: PointerEvent ): void
+{
+  if ( !dragging ) return
+  pos.value.x = dragStart.px + ( event.clientX - dragStart.x )
+  pos.value.y = dragStart.py + ( event.clientY - dragStart.y )
+  clamp()
+}
+
+function onDragEnd (): void
+{
+  dragging = false
+  window.removeEventListener( 'pointermove', onDragMove )
+  window.removeEventListener( 'pointerup', onDragEnd )
+  persistPos()
+}
+
+let resizeStart = { x: 0, y: 0, w: 0, h: 0 }
+let resizing = false
+
+function startResize ( event: PointerEvent ): void
+{
+  event.preventDefault()
+  event.stopPropagation()
+  resizing = true
+  resizeStart = { x: event.clientX, y: event.clientY, w: size.value.w, h: size.value.h }
+  window.addEventListener( 'pointermove', onResizeMove )
+  window.addEventListener( 'pointerup', onResizeEnd )
+}
+
+function onResizeMove ( event: PointerEvent ): void
+{
+  if ( !resizing ) return
+  size.value.w = Math.max( 360, resizeStart.w + ( event.clientX - resizeStart.x ) )
+  size.value.h = Math.max( 240, resizeStart.h + ( event.clientY - resizeStart.y ) )
+  clamp()
+}
+
+function onResizeEnd (): void
+{
+  resizing = false
+  window.removeEventListener( 'pointermove', onResizeMove )
+  window.removeEventListener( 'pointerup', onResizeEnd )
+  persistSize()
+  // trigger measure
+  window.setTimeout( () => measure(), 50 )
 }
 
 // --- user input ----------------------------------------------------------------
@@ -366,7 +487,46 @@ watch(
   { immediate: true },
 )
 
+watch(controlsOpen, (v) => {
+  try { localStorage.setItem(CONTROLS_KEY, v ? '1' : '0') } catch { /* ignore */ }
+})
+
+function applyDefaultPosition (el: HTMLElement | null = panel.value): void
+{
+  if (hasStoredPos) return
+  const parent = (el?.offsetParent ?? el?.parentElement) as HTMLElement | null
+  if (!parent) return
+  pos.value.x = Math.max(16, parent.clientWidth - size.value.w - 24)
+  pos.value.y = Math.max(16, parent.clientHeight - size.value.h - 24)
+  if (!hasStoredSize)
+  {
+    size.value.w = Math.min(size.value.w, parent.clientWidth - 24)
+    size.value.h = Math.min(size.value.h, parent.clientHeight - 24)
+    hasStoredSize = true
+  }
+  hasStoredPos = true
+  clamp()
+}
+
+onMounted(() => {
+  loadPos()
+  loadSize()
+  applyDefaultPosition()
+  window.addEventListener('resize', clamp)
+})
+
+watch(panel, (el) => {
+  // The panel is mounted lazily (v-if on the root), so onMounted runs before
+  // the element exists. Re-apply the default placement once it appears.
+  if (!hasStoredPos) applyDefaultPosition(el)
+}, { flush: 'post' })
+
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', clamp)
+  window.removeEventListener('pointermove', onDragMove)
+  window.removeEventListener('pointerup', onDragEnd)
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', onResizeEnd)
   disconnect()
   observer?.disconnect()
   window.clearTimeout(resizeTimer)
@@ -375,25 +535,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside v-if="open" class="browser-panel" :style="{ width: `${panelWidth}px` }" aria-label="Live browser">
-    <div class="bp-grip" role="separator" aria-orientation="vertical" @pointerdown.prevent="startDrag" />
-
-    <header class="bp-head">
-      <div class="bp-title">
-        <SofiaIcon name="globe" :size="'1rem'" />
-        <span class="sofia-truncate">{{ view.title || t('browser.title') }}</span>
-      </div>
-      <div class="bp-head-side">
-        <button class="bp-icon" type="button" :title="t('browser.closeSession')" :aria-label="t('browser.closeSession')" @click="closeSession">
+  <div v-if="open" ref="panel" class="browser-float" :style="{ left: `${pos.x}px`, top: `${pos.y}px`, width: `${size.w}px`, height: `${size.h}px` }" aria-label="Live browser">
+    <div class="bf-head" @pointerdown="startDrag">
+      <SofiaIcon name="globe" :size="'1rem'" />
+      <span class="bf-title sofia-truncate">{{ view.title || t('browser.title') }}</span>
+      <div class="bf-head-side">
+        <button class="bf-icon" type="button" title="Toggle controls" aria-label="Toggle controls" @click="controlsOpen = !controlsOpen">
+          <SofiaIcon name="chevronDown" :size="'0.9rem'" :class="{ 'bf-icon--flipped': !controlsOpen }" />
+        </button>
+        <button class="bf-icon" type="button" :title="t('browser.closeSession')" :aria-label="t('browser.closeSession')" @click="closeSession">
           <SofiaIcon name="trash" :size="'0.9rem'" />
         </button>
-        <button class="bp-icon" type="button" :title="t('panel.close')" :aria-label="t('panel.close')" @click="emit('close')">
+        <button class="bf-icon" type="button" :title="t('panel.close')" :aria-label="t('panel.close')" @click="emit('close')">
           <SofiaIcon name="x" />
         </button>
       </div>
-    </header>
+    </div>
 
-    <div class="bp-bar">
+    <div v-if="controlsOpen" class="bf-controls">
+      <div class="bp-bar">
       <button class="bp-icon" type="button" :title="t('browser.back')" :aria-label="t('browser.back')" :disabled="view.agentBusy" @click="send({ type: 'back' })">
         <SofiaIcon name="chevronLeft" :size="'1rem'" />
       </button>
@@ -467,6 +627,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    </div>
+
     <div class="bp-stage">
       <div
         ref="screen"
@@ -503,31 +665,96 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="errorText && status === 'live'" class="bp-toast" role="status">{{ errorText }}</p>
     </div>
-  </aside>
+    <div class="bf-resize" @pointerdown="startResize" />
+  </div>
 </template>
 
 <style scoped>
-.browser-panel {
-  position: relative;
+.browser-float {
+  position: absolute;
+  z-index: 40;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  min-height: 0;
-  border-left: 1px solid var(--sofia-border);
   background: var(--sofia-surface);
+  border: 1px solid var(--sofia-border-strong);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
   overflow: hidden;
+  user-select: none;
+  transition: box-shadow 0.2s ease;
 }
 
-.bp-grip {
+.browser-float:hover {
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+}
+
+.bf-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--sofia-border);
+  cursor: move;
+  background: var(--sofia-surface-2);
+  flex-shrink: 0;
+}
+
+.bf-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--sofia-text);
+  flex: 1;
+  min-width: 0;
+}
+
+.bf-head-side {
+  display: inline-flex;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.bf-icon {
+  border: none;
+  background: transparent;
+  color: var(--sofia-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+
+.bf-icon:hover { background: var(--sofia-surface-3); color: var(--sofia-text); }
+
+.bf-icon--flipped { transform: rotate(180deg); }
+
+.bf-controls {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bf-resize {
   position: absolute;
-  inset: 0 auto 0 0;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
   z-index: 5;
-  width: 5px;
-  cursor: col-resize;
 }
 
-.bp-grip:hover {
-  background: var(--sofia-primary-soft);
+.bf-resize::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--sofia-text-faint);
+  border-bottom: 2px solid var(--sofia-text-faint);
 }
 
 .bp-head {
@@ -564,7 +791,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  padding: 0 0.7rem 0.55rem;
+  padding: 0.45rem 0.7rem 0.55rem;
   border-bottom: 1px solid var(--sofia-border);
   flex-shrink: 0;
 }
