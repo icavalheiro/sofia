@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Sofia.Server</RootNamespace>
     <AssemblyName>Sofia.Server</AssemblyName>
-    <Version>0.5.11</Version>
+    <Version>0.5.12</Version>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Reuse the Sofia icon so the server executable shows the Sofia logo in Explorer/taskbar. -->
     <ApplicationIcon>Assets\sofia.ico</ApplicationIcon>
