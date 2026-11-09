@@ -103,6 +103,7 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             new("ollama", "Ollama", OllamaBase(), "ollama"),
             new("lmstudio", "LM Studio", "http://127.0.0.1:1234/v1", "lmstudio"),
             new("llamacpp", "llama.cpp", "http://127.0.0.1:8080/v1", "llamacpp"),
+            new("strata", "Strata", "http://127.0.0.1:47831/v1", "strata"),
             new("vllm", "vLLM", "http://127.0.0.1:8000/v1", "vllm"),
         };
         // SOFIA_LOCAL_ENDPOINTS="name=http://host:port/v1,other=…" adds extra OpenAI-compatible runtimes.
@@ -736,6 +737,7 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         if (url.Contains(":11434")) return "ollama";
         if (url.Contains(":8888")) return "unsloth";
         if (url.Contains(":1234")) return "lmstudio";
+        if (url.Contains(":47831")) return "strata";
         return IsLoopback(baseUrl) ? "local" : "generic";
     }
 }
