@@ -14,6 +14,8 @@ public sealed class ModelInfo
     public string ModelId { get; set; } = "";
     public string Label { get; set; } = "";
     public string Provider { get; set; } = "";
+    /// <summary>Icon key of the provider serving this model (inherited; see <see cref="ProviderView.Icon"/>).</summary>
+    public string ProviderIcon { get; set; } = "globe";
     public bool Local { get; set; }
     public int ContextLength { get; set; }
     public int MaxOutput { get; set; }
@@ -298,6 +300,7 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
             ModelId = m.Id,
             Label = m.Label,
             Provider = provider.Name,
+            ProviderIcon = EffectiveIcon(provider),
             Local = provider.Kind == "local",
             ContextLength = m.ContextLength,
             MaxOutput = m.MaxOutput,

@@ -27,7 +27,7 @@ import type {
   Provider,
   ProviderPresetDto,
 } from '@/types'
-import { PROVIDER_ICON_CHOICES } from '@/types'
+import { PROVIDER_ICON_CHOICES, modelIcon } from '@/types'
 import PairingDialog from '@/components/PairingDialog.vue'
 import ProviderIconPicker from '@/components/ProviderIconPicker.vue'
 import SkillsSection from '@/components/SkillsSection.vue'
@@ -1371,7 +1371,7 @@ onBeforeUnmount(stopEvents)
                 <div class="model-grid">
                   <div v-for="m in loadedModels" :key="m.id" class="model-chip">
                     <span class="status-dot status-dot--on" />
-                    <SofiaIcon :name="m.local ? 'cpu' : 'globe'" :size="'0.85rem'" />
+                    <SofiaIcon :name="modelIcon(m)" :size="'0.85rem'" />
                     <span class="model-chip-label sofia-truncate">{{ m.label }}</span>
                     <span class="model-chip-ctx">{{ m.context }}</span>
                   </div>
@@ -1512,7 +1512,7 @@ onBeforeUnmount(stopEvents)
                 :title="`${m.provider} · ${m.id}`"
               >
                 <span class="status-dot" :class="m.connected ? 'status-dot--on' : 'status-dot--off'" />
-                <SofiaIcon :name="m.local ? 'cpu' : 'globe'" :size="'0.85rem'" />
+                <SofiaIcon :name="modelIcon(m)" :size="'0.85rem'" />
                 <span class="model-chip-label sofia-truncate">{{ m.label }}</span>
                 <span v-if="m.local" class="kind-tag">local</span>
                 <span class="model-chip-ctx">{{ m.context }}</span>

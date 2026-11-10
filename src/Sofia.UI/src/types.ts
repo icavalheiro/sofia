@@ -590,6 +590,8 @@ export interface ModelOption
   modelId: string;
   label: string;
   provider: string;
+  /** Icon key inherited from the provider ('' from older servers); see PROVIDER_ICON_CHOICES. */
+  providerIcon?: string;
   local: boolean;
   contextLength: number;
   maxOutput: number;
@@ -733,6 +735,11 @@ export const PROVIDER_ICON_CHOICES: string[] = [
   'box', 'server', 'cpu', 'database', 'code', 'plug',
   'shield', 'chat', 'briefcase', 'music', 'camera', 'palette',
 ];
+
+/** Icon a model row shows: the icon of the provider it comes from, else the local/cloud mark. */
+export function modelIcon(m: Pick<ModelOption, 'providerIcon' | 'local'>): string {
+  return m.providerIcon && PROVIDER_ICON_CHOICES.includes(m.providerIcon) ? m.providerIcon : m.local ? 'cpu' : 'globe'
+}
 
 /** UI languages. */
 export const LANGUAGES: Language[] = [

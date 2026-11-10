@@ -7,7 +7,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useHarness } from '@/composables/useHarness'
 import { useSound } from '@/composables/useSound'
 import { useI18n } from '@/i18n'
-import { WORKSPACE_ICON_CHOICES, type Workspace } from '@/types'
+import { WORKSPACE_ICON_CHOICES, modelIcon, type Workspace } from '@/types'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 import WorktreeSection from '@/components/WorktreeSection.vue'
 
@@ -19,8 +19,10 @@ const { t } = useI18n()
 
 /** Model rows offered here: the composer's catalog (models switched off in Settings are left out), plus the
  *  workspace's current pick when it is no longer in the catalog, so the selection stays visible. */
-const visibleModels = computed<{ id: string; label: string; local: boolean }[]>(() => {
-  const rows = models.value.filter((m) => m.enabled !== false).map((m) => ({ id: m.id, label: m.label, local: m.local }))
+const visibleModels = computed<{ id: string; label: string; local: boolean; providerIcon?: string }[]>(() => {
+  const rows = models.value
+    .filter((m) => m.enabled !== false)
+    .map((m) => ({ id: m.id, label: m.label, local: m.local, providerIcon: m.providerIcon }))
   const current = props.workspace.modelId
   return current && !rows.some((r) => r.id === current)
     ? [{ id: current, label: `${current} (not in the catalog)`, local: false }, ...rows]
@@ -166,7 +168,7 @@ onBeforeUnmount(() => {
               type="button"
               @click="chooseModel(m.id)"
             >
-              <SofiaIcon :name="m.local ? 'cpu' : 'globe'" :size="'0.9rem'" />
+              <SofiaIcon :name="modelIcon(m)" :size="'0.9rem'" />
               <span class="model-label sofia-truncate">{{ m.label }}</span>
               <SofiaIcon v-if="workspace.modelId === m.id" class="model-check" name="check" :size="'0.85rem'" />
             </button>

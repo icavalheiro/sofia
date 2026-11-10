@@ -9,6 +9,7 @@ import { useI18n } from '@/i18n'
 import {
   PERMISSION_MODES,
   REASONING_MODES,
+  modelIcon,
   type AgentDto,
   type CommandDto,
   type ConfigDto,
@@ -121,7 +122,7 @@ const modelItems = computed<PopoverItem[]>(() => {
       value: m.id,
       label: m.label,
       description: [m.provider, m.context, m.connected ? '' : 'offline'].filter(Boolean).join(' · '),
-      icon: m.local ? 'cpu' : 'globe',
+      icon: modelIcon(m),
       badge: m.local ? 'local' : undefined,
     }))
   const current = activeModelId.value
@@ -129,6 +130,12 @@ const modelItems = computed<PopoverItem[]>(() => {
     items.unshift({ value: current, label: current, description: 'Not in the catalog', icon: 'globe' })
   }
   return items
+})
+
+/** The chip carries the icon of the provider serving the active model. */
+const activeModelIcon = computed(() => {
+  const model = models.value.find((m) => m.id === activeModelId.value)
+  return model ? modelIcon(model) : 'sparkles'
 })
 
 // Permission levels escalate: blue (read only) → beige (plan) → brown (ask)
@@ -1127,7 +1134,7 @@ watch(() => state.activeConversationId, () => nextTick(autoResize))
             compact
             align="right"
             v-model="activeModelId"
-            icon="sparkles"
+            :icon="activeModelIcon"
             :label="t('composer.model')"
             :items="modelItems"
             :width="280"

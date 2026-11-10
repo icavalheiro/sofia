@@ -304,6 +304,7 @@ interface ModelDto {
   modelId: string
   label: string
   provider: string         // provider display name
+  providerIcon?: string    // icon key inherited from the provider (see the provider's `icon`)
   local: boolean
   contextLength: number
   maxOutput: number
