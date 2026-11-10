@@ -654,6 +654,10 @@ export interface Provider
   models: number;
   /** Earlier reasoning is resent with the history (effective value). */
   preserveThinking: boolean;
+  /** Effective icon key (user choice, preset/runtime default, or local/cloud fallback); see PROVIDER_ICON_CHOICES. */
+  icon: string;
+  /** Icon the user picked; absent/null when the icon is automatic (nulls are omitted from the JSON). */
+  iconOverride?: string | null;
 }
 
 /** The signed-in user's profile (editable in settings). */
@@ -720,6 +724,14 @@ export const WORKSPACE_ICON_CHOICES: string[] = [
   // Chat-group friendly marks (no folder implied).
   'chat', 'sparkles', 'bell', 'help', 'languages', 'user',
   'search', 'clock',
+];
+
+/** Icons a model provider can be assigned (keys into SofiaIcon). */
+export const PROVIDER_ICON_CHOICES: string[] = [
+  'sparkles', 'book', 'layers', 'globe', 'search', 'zap',
+  'wind', 'star', 'terminal', 'cloud', 'bot', 'flask',
+  'box', 'server', 'cpu', 'database', 'code', 'plug',
+  'shield', 'chat', 'briefcase', 'music', 'camera', 'palette',
 ];
 
 /** UI languages. */

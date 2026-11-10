@@ -263,6 +263,9 @@ const en: Dict = {
   'settings.models.filter': 'Filter models…',
   'settings.models.noModels': 'No models listed for this provider.',
   'settings.models.enabledCount': 'enabled',
+  'settings.models.icon': 'Icon',
+  'settings.models.iconAuto': 'Automatic',
+  'settings.models.changeIcon': 'Change provider icon',
 
   'settings.mcp.addServer': 'Add server',
   'settings.mcp.web': 'Web (SSE / HTTP)',
@@ -571,6 +574,9 @@ const pt: Dict = {
   'settings.models.filter': 'Filtrar modelos…',
   'settings.models.noModels': 'Nenhum modelo listado para este provedor.',
   'settings.models.enabledCount': 'habilitados',
+  'settings.models.icon': 'Ícone',
+  'settings.models.iconAuto': 'Automático',
+  'settings.models.changeIcon': 'Alterar ícone do provedor',
 
   'settings.mcp.addServer': 'Adicionar servidor',
   'settings.mcp.web': 'Web (SSE / HTTP)',
@@ -870,6 +876,9 @@ const es: Dict = {
   'settings.models.filter': 'Filtrar modelos…',
   'settings.models.noModels': 'No hay modelos listados para este proveedor.',
   'settings.models.enabledCount': 'habilitados',
+  'settings.models.icon': 'Icono',
+  'settings.models.iconAuto': 'Automático',
+  'settings.models.changeIcon': 'Cambiar el icono del proveedor',
 
   'settings.mcp.addServer': 'Añadir servidor',
   'settings.mcp.web': 'Web (SSE / HTTP)',
@@ -1126,6 +1135,9 @@ const fr: Dict = {
   'settings.models.filter': 'Filtrer les modèles…',
   'settings.models.noModels': 'Aucun modèle listé pour ce fournisseur.',
   'settings.models.enabledCount': 'activés',
+  'settings.models.icon': 'Icône',
+  'settings.models.iconAuto': 'Automatique',
+  'settings.models.changeIcon': 'Changer l’icône du fournisseur',
 
   'settings.mcp.addServer': 'Ajouter un serveur',
   'settings.mcp.web': 'Web (SSE / HTTP)',
@@ -1380,6 +1392,9 @@ const zh: Dict = {
   'settings.models.filter': '筛选模型…',
   'settings.models.noModels': '此提供方没有可列出的模型。',
   'settings.models.enabledCount': '已启用',
+  'settings.models.icon': '图标',
+  'settings.models.iconAuto': '自动',
+  'settings.models.changeIcon': '更改提供商图标',
 
   'settings.mcp.addServer': '添加服务器',
   'settings.mcp.web': 'Web (SSE / HTTP)',
@@ -1636,6 +1651,9 @@ const ja: Dict = {
   'settings.models.filter': 'モデルを絞り込む…',
   'settings.models.noModels': 'このプロバイダーにはモデルがありません。',
   'settings.models.enabledCount': '有効',
+  'settings.models.icon': 'アイコン',
+  'settings.models.iconAuto': '自動',
+  'settings.models.changeIcon': 'プロバイダーのアイコンを変更',
 
   'settings.mcp.addServer': 'サーバーを追加',
   'settings.mcp.web': 'Web (SSE / HTTP)',

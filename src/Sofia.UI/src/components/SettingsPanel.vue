@@ -27,7 +27,9 @@ import type {
   Provider,
   ProviderPresetDto,
 } from '@/types'
+import { PROVIDER_ICON_CHOICES } from '@/types'
 import PairingDialog from '@/components/PairingDialog.vue'
+import ProviderIconPicker from '@/components/ProviderIconPicker.vue'
 import SkillsSection from '@/components/SkillsSection.vue'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 
@@ -248,6 +250,24 @@ async function removeProvider(p: Provider): Promise<void> {
   try {
     await api('DELETE', `/api/providers/${p.id}`)
     await refreshCatalog()
+  } catch (e) {
+    catalogError.value = failure(e)
+  } finally {
+    providerBusy.value = null
+  }
+}
+
+/** Icon key the card renders: an unknown stored key falls back to the local/cloud mark. */
+function providerIcon(p: Provider): string {
+  return PROVIDER_ICON_CHOICES.includes(p.icon) ? p.icon : p.kind === 'local' ? 'cpu' : 'globe'
+}
+
+/** `icon: ''` clears the override, so the server derives the icon from the preset/runtime again. */
+async function setProviderIcon(p: Provider, icon: string): Promise<void> {
+  if (providerBusy.value) return
+  providerBusy.value = p.id
+  try {
+    replaceProvider(await api<Provider>('PATCH', `/api/providers/${p.id}`, { icon }))
   } catch (e) {
     catalogError.value = failure(e)
   } finally {
@@ -1370,7 +1390,11 @@ onBeforeUnmount(stopEvents)
             <div class="cards">
               <div v-for="p in providers" :key="p.id" class="card">
                 <div class="card-main">
-                  <SofiaIcon :name="p.kind === 'local' ? 'cpu' : 'globe'" :size="'1rem'" />
+                  <ProviderIconPicker
+                    :icon="providerIcon(p)"
+                    :override="p.iconOverride"
+                    @select="setProviderIcon(p, $event)"
+                  />
                   <div class="card-text">
                     <div class="card-title">
                       {{ p.name }}

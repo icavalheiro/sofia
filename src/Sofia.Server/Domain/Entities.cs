@@ -393,6 +393,8 @@ public sealed class ProviderConfig
     public List<string> Models { get; set; } = [];
     /// <summary>Last context window a runtime reported per model (runtimes omit it while a model is unloaded).</summary>
     public Dictionary<string, int> KnownContext { get; set; } = [];
+    /// <summary>UI icon key chosen by the user (see <c>ProviderIconChoices</c> in the web client). Null = derive it from the preset or runtime.</summary>
+    public string? Icon { get; set; }
 
     public string? ResolveKey() =>
         !string.IsNullOrWhiteSpace(ApiKey) ? ApiKey

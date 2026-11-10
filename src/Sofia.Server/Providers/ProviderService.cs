@@ -52,31 +52,35 @@ public sealed class ProviderView
     public int Models { get; set; }
     /// <summary>Effective setting: earlier reasoning is resent with the history.</summary>
     public bool PreserveThinking { get; set; }
+    /// <summary>Icon key the web client renders (user choice, else the preset/runtime default, else local/cloud).</summary>
+    public string Icon { get; set; } = "globe";
+    /// <summary>Icon the user chose; null when the icon is automatic (derived from preset/runtime).</summary>
+    public string? IconOverride { get; set; }
 }
 
-public sealed record ProviderPreset(string Id, string Name, string Type, string BaseUrl, string? EnvKey, string Flavor, string? Auth = null, string? Note = null);
+public sealed record ProviderPreset(string Id, string Name, string Type, string BaseUrl, string? EnvKey, string Flavor, string? Auth = null, string? Note = null, string Icon = "sparkles");
 
-public sealed record LocalRuntime(string Id, string Name, string BaseUrl, string Flavor);
+public sealed record LocalRuntime(string Id, string Name, string BaseUrl, string Flavor, string Icon = "cpu");
 
 /// <summary>Provider registry: presets, local auto-discovery, model catalog and client factory.</summary>
 public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, IEventBus bus, ModelCatalog catalog, ILogger<ProviderService> log)
 {
     public static readonly ProviderPreset[] Presets =
     [
-        new("openai", "OpenAI", "openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "openai"),
-        new("anthropic", "Anthropic", "anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY", "anthropic"),
-        new("openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openrouter"),
-        new("google", "Google Gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY", "gemini"),
-        new("deepseek", "DeepSeek Platform", "openai", "https://api.deepseek.com", "DEEPSEEK_API_KEY", "deepseek", Note: "Pay-as-you-go API key from platform.deepseek.com."),
-        new("groq", "Groq", "openai", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "groq"),
-        new("mistral", "Mistral", "openai", "https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral"),
-        new("xai", "xAI", "openai", "https://api.x.ai/v1", "XAI_API_KEY", "xai"),
+        new("openai", "OpenAI", "openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "openai", Icon: "sparkles"),
+        new("anthropic", "Anthropic", "anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY", "anthropic", Icon: "book"),
+        new("openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openrouter", Icon: "layers"),
+        new("google", "Google Gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY", "gemini", Icon: "globe"),
+        new("deepseek", "DeepSeek Platform", "openai", "https://api.deepseek.com", "DEEPSEEK_API_KEY", "deepseek", Note: "Pay-as-you-go API key from platform.deepseek.com.", Icon: "search"),
+        new("groq", "Groq", "openai", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "groq", Icon: "zap"),
+        new("mistral", "Mistral", "openai", "https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral", Icon: "wind"),
+        new("xai", "xAI", "openai", "https://api.x.ai/v1", "XAI_API_KEY", "xai", Icon: "star"),
         new("opencode-go", "OpenCode Go", "openai", "https://opencode.ai/inference/go/openai/v1", "OPENCODE_API_KEY", "opencode-go",
-            Note: "Subscription (Go / Go Plus). API key from the OpenCode Console."),
+            Note: "Subscription (Go / Go Plus). API key from the OpenCode Console.", Icon: "terminal"),
         new("qwencloud", "QwenCloud Token Plan", "openai", "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", "QWENCLOUD_API_KEY", "qwencloud",
-            Note: "Subscription (Token Plan, Singapore region). Use the Token Plan API key, not a pay-as-you-go key."),
+            Note: "Subscription (Token Plan, Singapore region). Use the Token Plan API key, not a pay-as-you-go key.", Icon: "cloud"),
         new("github-copilot", "GitHub Copilot", "openai", "https://api.githubcopilot.com", "COPILOT_GITHUB_TOKEN", "copilot", Auth: "github-device",
-            Note: "Subscription. Sign in with GitHub, or paste a GitHub token."),
+            Note: "Subscription. Sign in with GitHub, or paste a GitHub token.", Icon: "bot"),
     ];
 
     // Flavors billed through a flat subscription: per-token prices would be misleading.
@@ -99,12 +103,12 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
     {
         var list = new List<LocalRuntime>
         {
-            new("unsloth", "Unsloth Studio", "http://127.0.0.1:8888/v1", "unsloth"),
-            new("ollama", "Ollama", OllamaBase(), "ollama"),
-            new("lmstudio", "LM Studio", "http://127.0.0.1:1234/v1", "lmstudio"),
-            new("llamacpp", "llama.cpp", "http://127.0.0.1:8080/v1", "llamacpp"),
-            new("strata", "Strata", "http://127.0.0.1:47831/v1", "strata"),
-            new("vllm", "vLLM", "http://127.0.0.1:8000/v1", "vllm"),
+            new("unsloth", "Unsloth Studio", "http://127.0.0.1:8888/v1", "unsloth", "flask"),
+            new("ollama", "Ollama", OllamaBase(), "ollama", "box"),
+            new("lmstudio", "LM Studio", "http://127.0.0.1:1234/v1", "lmstudio", "cpu"),
+            new("llamacpp", "llama.cpp", "http://127.0.0.1:8080/v1", "llamacpp", "terminal"),
+            new("strata", "Strata", "http://127.0.0.1:47831/v1", "strata", "layers"),
+            new("vllm", "vLLM", "http://127.0.0.1:8000/v1", "vllm", "server"),
         };
         // SOFIA_LOCAL_ENDPOINTS="name=http://host:port/v1,other=…" adds extra OpenAI-compatible runtimes.
         var extra = Environment.GetEnvironmentVariable("SOFIA_LOCAL_ENDPOINTS");
@@ -593,6 +597,20 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
         return slash > 0 && db.Providers.FindById(modelId[..slash])?.Kind == "local";
     }
 
+    /// <summary>Icon key the web client renders: the user's choice, else the preset/runtime default, else the local/cloud fallback.</summary>
+    public static string EffectiveIcon(ProviderConfig config)
+    {
+        if (!string.IsNullOrWhiteSpace(config.Icon)) return config.Icon.Trim();
+        if (config.PresetId is { } presetId)
+        {
+            var preset = Presets.FirstOrDefault(p => p.Id == presetId);
+            if (preset is not null) return preset.Icon;
+        }
+        if (config.Kind != "local") return "globe";
+        var runtime = LocalRuntimes().FirstOrDefault(r => r.Id == config.Id);
+        return runtime?.Icon ?? "cpu";
+    }
+
     public List<ProviderView> Providers()
     {
         var configs = db.Providers.FindAll().ToList();
@@ -616,6 +634,8 @@ public sealed class ProviderService(SofiaDb db, IHttpClientFactory httpFactory, 
                     HasKey = !string.IsNullOrWhiteSpace(p.ResolveKey()),
                     Models = s?.Models.Count ?? 0,
                     PreserveThinking = OpenAiChatClient.PreservesThinking(p),
+                    Icon = EffectiveIcon(p),
+                    IconOverride = string.IsNullOrWhiteSpace(p.Icon) ? null : p.Icon.Trim(),
                 };
             }).OrderBy(p => p.Kind == "local" ? 0 : 1).ThenBy(p => p.Name).ToList();
         }

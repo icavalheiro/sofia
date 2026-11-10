@@ -290,7 +290,7 @@ cache of the earlier steps survives.
 | `GET` | `/api/providers` | – | `ProviderDto[]` |
 | `GET` | `/api/providers/presets` | – | `ProviderPresetDto[]` |
 | `POST` | `/api/providers` | `{ name, type, baseUrl, apiKey?, models?: string[], presetId? }` | `ProviderDto` |
-| `PATCH` | `/api/providers/{id}` | `{ enabled?, apiKey?, baseUrl?, name?, preserveThinking? }` | `ProviderDto` (`preserveThinking` = resend earlier reasoning as `reasoning_content`; default on for deepseek/opencode-go, off elsewhere) |
+| `PATCH` | `/api/providers/{id}` | `{ enabled?, apiKey?, baseUrl?, name?, preserveThinking?, icon? }` | `ProviderDto` (`preserveThinking` = resend earlier reasoning as `reasoning_content`; default on for deepseek/opencode-go, off elsewhere. `icon` = Lucide key shown in Settings; an **empty string resets it to the automatic icon**, an absent field leaves the choice untouched) |
 | `DELETE` | `/api/providers/{id}` | – | `204` (discovered local providers are disabled instead) |
 | `POST` | `/api/providers/refresh` | – | `ProviderDto[]` (re-runs local discovery and model listing) |
 | `POST` | `/api/providers/probe` | `{ type, baseUrl, apiKey? }` | `{ models: ModelDto[] }` (does not save) |
@@ -331,6 +331,8 @@ interface ProviderDto {
   discovered: boolean
   hasKey: boolean
   models: number
+  icon: string            // effective icon key: user choice, else preset/runtime default, else local/cloud
+  iconOverride?: string | null  // the user's choice; omitted when the icon is automatic
 }
 
 interface ProviderPresetDto {
