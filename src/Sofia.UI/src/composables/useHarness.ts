@@ -1717,15 +1717,19 @@ export function useHarness ()
     }
   }
 
-  async function answerFormQuestion ( message: Message, option: string ): Promise<void>
+  /** Answers a single-question card. Multi-select questions accept several picks; the
+   *  server joins them into the stored answer. */
+  async function answerFormQuestion ( message: Message, option: string | string[] ): Promise<void>
   {
     const q = message.question;
     if ( !q || q.resolved ) return;
-    q.resolved = option;
+    const picks = Array.isArray( option ) ? option : [ option ];
+    if ( picks.length === 0 ) return;
+    q.resolved = picks.join( ', ' );
     try
     {
       await api( 'POST', `/api/sessions/${ message.sessionId }/questions/${ q.formId }`, {
-        answers: [ q.multi ? [ option ] : option ],
+        answers: [ q.multi ? picks : picks[ 0 ] ],
       } );
     } catch ( e )
     {

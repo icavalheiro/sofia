@@ -155,8 +155,31 @@ function permAllowed(choice: string | undefined): boolean {
 }
 
 // --- single question card ---------------------------------------------------
-function answerQuestion(option: string): void {
+function answerQuestion(option: string | string[]): void {
   void answerFormQuestion(props.message, option)
+}
+
+// Multi-select single question: like the carousel it keeps the picks locally and
+// only answers when the user confirms, so several options can be chosen.
+const singlePicks = ref<string[]>([])
+function singlePicked(option: string): boolean {
+  return singlePicks.value.includes(option)
+}
+function pickSingle(option: string): void {
+  const q = props.message.question
+  if (!q || q.resolved) return
+  if (!q.multi) {
+    answerQuestion(option)
+    return
+  }
+  singlePicks.value = singlePicked(option)
+    ? singlePicks.value.filter((o) => o !== option)
+    : [...singlePicks.value, option]
+}
+function submitSingle(): void {
+  if (!singlePicks.value.length) return
+  answerQuestion([...singlePicks.value])
+  singlePicks.value = []
 }
 
 // Free-text answer: an extra option at the end of every question.
@@ -164,6 +187,11 @@ const singleFree = ref('')
 function answerFree(): void {
   const text = singleFree.value.trim()
   if (!text) return
+  if (props.message.question?.multi) {
+    if (!singlePicked(text)) singlePicks.value = [...singlePicks.value, text]
+    singleFree.value = ''
+    return
+  }
   answerQuestion(text)
   singleFree.value = ''
 }
@@ -776,12 +804,30 @@ function closeLightbox(): void {
             v-for="o in message.question.options"
             :key="o"
             class="q-opt"
-            :class="{ 'q-opt--chosen': message.question?.resolved === o }"
+            :class="{
+              'q-opt--chosen': message.question.multi ? singlePicked(o) : message.question.resolved === o,
+              'q-opt--multi': message.question.multi,
+            }"
             type="button"
+            :role="message.question.multi ? 'checkbox' : undefined"
+            :aria-checked="message.question.multi ? singlePicked(o) : undefined"
             :disabled="!!message.question?.resolved"
-            @click="answerQuestion(o)"
-          >{{ o }}</button>
+            @click="pickSingle(o)"
+          >
+            <span v-if="message.question.multi" class="q-opt-box" aria-hidden="true">
+              <SofiaIcon v-if="singlePicked(o)" name="check" :size="'0.65rem'" :stroke-width="3" />
+            </span>
+            <span class="q-opt-label">{{ o }}</span>
+          </button>
           <input v-model="singleFree" class="q-free" type="text" :placeholder="t('q.freePlaceholder')" :aria-label="t('q.freePlaceholder')" @keydown.enter.prevent="answerFree()">
+        </div>
+        <!-- Multi-select: picks accumulate until the user confirms them. -->
+        <div v-if="message.question.multi" class="q-slide-foot">
+          <span class="q-hint">{{ t('q.multiHint') }}</span>
+          <button class="q-step-btn" type="button" :disabled="!singlePicks.length" @click="submitSingle">
+            <SofiaIcon name="check" :size="'0.8rem'" />
+            {{ t('q.confirm') }}
+          </button>
         </div>
       </div>
 
@@ -817,10 +863,22 @@ function closeLightbox(): void {
                   v-for="o in message.questionSet.questions[slide].options"
                   :key="o"
                   class="q-opt"
-                  :class="{ 'q-opt--chosen': isPicked(slide, o) }"
+                  :class="{
+                    'q-opt--chosen': isPicked(slide, o),
+                    'q-opt--multi': message.questionSet.questions[slide].multi,
+                  }"
                   type="button"
+                  :role="message.questionSet.questions[slide].multi ? 'checkbox' : undefined"
+                  :aria-checked="message.questionSet.questions[slide].multi ? isPicked(slide, o) : undefined"
                   @click="pickOption(slide, o)"
-                >{{ o }}</button>
+                >
+                  <!-- Multi-select questions show a checkbox so the "pick several"
+                       affordance is obvious; single-select stays a plain button. -->
+                  <span v-if="message.questionSet.questions[slide].multi" class="q-opt-box" aria-hidden="true">
+                    <SofiaIcon v-if="isPicked(slide, o)" name="check" :size="'0.65rem'" :stroke-width="3" />
+                  </span>
+                  <span class="q-opt-label">{{ o }}</span>
+                </button>
                 <input v-model="freeText[slide]" class="q-free" type="text" :placeholder="t('q.freePlaceholder')" :aria-label="t('q.freePlaceholder')" @keydown.enter.prevent="submitFree(slide)">
               </div>
               <div v-if="message.questionSet.questions[slide].multi" class="q-slide-foot">
@@ -2195,9 +2253,51 @@ button.compact-notice {
   background: var(--sofia-primary-soft-strong);
 }
 
+.q-opt--multi {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.q-opt-label {
+  min-width: 0;
+}
+
+.q-opt-box {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.95rem;
+  height: 0.95rem;
+  border: 1.5px solid var(--sofia-border-strong);
+  border-radius: 4px;
+  background: var(--sofia-surface);
+  color: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.q-opt--multi:hover:not(:disabled) .q-opt-box {
+  border-color: var(--sofia-primary);
+}
+
 .q-opt--chosen {
   border-color: var(--sofia-primary);
   background: var(--sofia-primary);
+  color: #fff;
+}
+
+.q-opt--chosen .q-opt-box {
+  border-color: #fff;
+  background: #fff;
+  color: var(--sofia-primary);
+}
+
+/* Keep the selected fill on hover (the generic hover rule is lighter, which
+   would leave white text on a pale background). */
+.q-opt--chosen:hover:not(:disabled) {
+  border-color: var(--sofia-primary);
+  background: var(--sofia-primary-strong);
   color: #fff;
 }
 
