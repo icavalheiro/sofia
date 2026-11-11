@@ -280,11 +280,22 @@ their parent's). It closes with the conversation and after 20 idle minutes.
   `HistoryBuilder` sends the image in a user turn right after the tool results, only
   for models not known to be text-only, and only the latest 2 screenshots are resent
   as images (older ones become a text note).
-- **Live view:** a CDP screencast (`Page.startScreencast`, JPEG) is pushed over the
-  `/api/sessions/{id}/browser/stream` WebSocket only while a viewer is connected;
-  viewers also send mouse/keyboard input, so the user can log in or solve a
-  captcha. While a tool call runs the browser is `agentBusy` and user input is
-  ignored. Click targets are sent as `cursor` messages so the UI can show them.
+- **Live view:** a CDP screencast (`Page.startScreencast`, JPEG, 1280 px, quality
+  45, acknowledgements paced to 8 fps) is pushed over the
+  `/api/sessions/{id}/browser/stream` WebSocket only while a viewer is connected
+  *and active* (`{ type: 'active' }`: panel visible, window focused); viewers also
+  send mouse/keyboard input, so the user can log in or solve a captcha. While a
+  tool call runs the browser is `agentBusy` and user input is ignored. Click
+  targets are sent as `cursor` messages so the UI can show them.
+- **Cost control:** one headless Chromium costs 0.4–2 cores and 0.7–1.5 GB per
+  conversation, so `BrowserService` closes a session after 3 min without viewers
+  or 10 min with a viewer but no activity, tells the sockets with close code
+  `4001` (`?create=1` is required to start one), and keeps exactly one screencast
+  per session by stopping and starting it under a single lock. Launch flags block
+  autoplay (`--autoplay-policy=user-gesture-required`), mute audio and disable
+  background networking. Do not freeze pages with `Page.setWebLifecycleState`:
+  measured on headless Edge it made an animated page burn 3.7 cores while
+  "frozen" and 8.4 cores after resuming.
 - **Safety:** only `http(s)` URLs; the tool asks for approval (`ToolKind.Browser`).
 
 ## Knowledge notes (`Agent/KnowledgeService.cs`)

@@ -191,6 +191,8 @@ const en: Dict = {
   'browser.failed': 'The browser could not start.',
   'browser.retry': 'Retry',
   'browser.empty': 'Nothing open yet. Sofia shows the pages it browses here; you can also type an address above.',
+  'browser.closed': 'The browser was closed to save resources. Open it again when you need it.',
+  'browser.open': 'Open browser',
   'browser.agent': 'Sofia is controlling the browser',
 
   'diff.before': 'Before',
@@ -502,6 +504,8 @@ const pt: Dict = {
   'browser.failed': 'Não foi possível iniciar o navegador.',
   'browser.retry': 'Tentar de novo',
   'browser.empty': 'Nada aberto ainda. A Sofia mostra aqui as páginas que navega; você também pode digitar um endereço acima.',
+  'browser.closed': 'O navegador foi fechado para economizar recursos. Abra de novo quando precisar.',
+  'browser.open': 'Abrir navegador',
   'browser.agent': 'A Sofia está controlando o navegador',
 
   'diff.before': 'Antes',

@@ -7,7 +7,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { useHarness } from '@/composables/useHarness'
 import { useI18n } from '@/i18n'
-import { api, serverSocketUrl } from '@/services/sofia'
+import { api, onServerEvent, serverSocketUrl } from '@/services/sofia'
 import SofiaIcon from '@/components/SofiaIcon.vue'
 
 interface BrowserTab {
@@ -22,6 +22,7 @@ interface BrowserMessage {
   title?: string
   loading?: boolean
   agentBusy?: boolean
+  closed?: boolean
   viewport?: { width: number; height: number }
   mode?: string
   tabs?: BrowserTab[]
@@ -46,7 +47,7 @@ const DESKTOP_WIDTH = 1280
 
 const sessionId = computed(() => activeConversation.value?.id ?? null)
 
-const status = ref<'idle' | 'connecting' | 'live' | 'error'>('idle')
+const status = ref<'idle' | 'connecting' | 'live' | 'closed' | 'error'>('idle')
 const errorText = ref('')
 const view = reactive({
   url: 'about:blank',
@@ -101,6 +102,9 @@ let lastMove = 0
 let decoding = false
 let pendingFrame: ArrayBuffer | null = null
 let observer: ResizeObserver | null = null
+let stopServerEvents: (() => void) | null = null
+
+const CLOSED_CODE = 4001
 
 const isBlank = computed(() => view.url === 'about:blank' || view.url === '')
 
@@ -117,26 +121,43 @@ function disconnect(): void {
   status.value = 'idle'
 }
 
-function connect(): void {
+/** Reports whether the panel is actually being looked at, so the server can pause the screencast. */
+function reportActive(): void {
+  send({ type: 'active', value: document.visibilityState === 'visible' && document.hasFocus() })
+}
+
+/** @param create ask the server to start a browser when none is running for this conversation. */
+function connect(create = true): void {
   disconnect()
   const id = sessionId.value
   if (!props.open || !id) return
   status.value = 'connecting'
   errorText.value = ''
-  const ws = new WebSocket(serverSocketUrl(`/api/sessions/${id}/browser/stream`))
+  const ws = new WebSocket(serverSocketUrl(`/api/sessions/${id}/browser/stream${create ? '?create=1' : ''}`))
   ws.binaryType = 'arraybuffer'
   socket = ws
-  ws.onopen = () => sendResize()
+  ws.onopen = () => {
+    sendResize()
+    reportActive()
+  }
   ws.onmessage = (event) => {
     if (typeof event.data === 'string') handleMessage(JSON.parse(event.data) as BrowserMessage)
     else drawFrame(event.data as ArrayBuffer)
   }
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     if (socket !== ws) return
     socket = null
     if (status.value === 'error') return
+    // The server closed the browser on purpose (idle): do not resurrect it behind the user's back.
+    if (event.code === CLOSED_CODE) {
+      status.value = 'closed'
+      view.url = 'about:blank'
+      view.title = ''
+      view.tabs = []
+      return
+    }
     status.value = 'connecting'
-    reconnectTimer = window.setTimeout(connect, 2000)
+    reconnectTimer = window.setTimeout(() => connect(false), 2000)
   }
 }
 
@@ -146,6 +167,13 @@ function send(message: Record<string, unknown>): void {
 
 function handleMessage(msg: BrowserMessage): void {
   if (msg.type === 'state') {
+    if (msg.closed) {
+      status.value = 'closed'
+      view.url = 'about:blank'
+      view.title = ''
+      view.tabs = []
+      return
+    }
     const wasBusy = view.agentBusy
     view.url = msg.url ?? view.url
     view.title = msg.title ?? ''
@@ -513,6 +541,16 @@ onMounted(() => {
   loadSize()
   applyDefaultPosition()
   window.addEventListener('resize', clamp)
+  document.addEventListener('visibilitychange', reportActive)
+  window.addEventListener('focus', reportActive)
+  window.addEventListener('blur', reportActive)
+  // The agent opened the browser again after the panel closed it for being idle: attach to it.
+  stopServerEvents = onServerEvent((event) => {
+    const data = event.data as { open?: boolean; agent?: boolean } | null
+    if (event.type !== 'browser.updated' || !data?.open || !data.agent) return
+    if (event.sessionId !== sessionId.value) return
+    if (status.value === 'closed' || status.value === 'idle') connect(true)
+  })
 })
 
 watch(panel, (el) => {
@@ -527,6 +565,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', onDragEnd)
   window.removeEventListener('pointermove', onResizeMove)
   window.removeEventListener('pointerup', onResizeEnd)
+  document.removeEventListener('visibilitychange', reportActive)
+  window.removeEventListener('focus', reportActive)
+  window.removeEventListener('blur', reportActive)
+  stopServerEvents?.()
+  stopServerEvents = null
   disconnect()
   observer?.disconnect()
   window.clearTimeout(resizeTimer)
@@ -651,10 +694,15 @@ onBeforeUnmount(() => {
         <SofiaIcon name="loader" spin :size="'1.2rem'" />
         <span>{{ t('browser.starting') }}</span>
       </div>
+      <div v-else-if="status === 'closed'" class="bp-overlay">
+        <SofiaIcon name="globe" :size="'1.2rem'" />
+        <span>{{ t('browser.closed') }}</span>
+        <button class="bp-fit" type="button" @click="connect(true)">{{ t('browser.open') }}</button>
+      </div>
       <div v-else-if="status === 'error'" class="bp-overlay bp-overlay--error">
         <SofiaIcon name="alert" :size="'1.2rem'" />
         <span>{{ errorText || t('browser.failed') }}</span>
-        <button class="bp-fit" type="button" @click="connect">{{ t('browser.retry') }}</button>
+        <button class="bp-fit" type="button" @click="connect(true)">{{ t('browser.retry') }}</button>
       </div>
       <div v-else-if="status === 'live' && isBlank && !view.agentBusy" class="bp-overlay bp-overlay--hint">
         <span>{{ t('browser.empty') }}</span>

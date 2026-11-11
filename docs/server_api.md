@@ -578,14 +578,22 @@ browser (`parentId` is resolved to the root). Nothing opens on the desktop.
 | --- | --- | --- | --- |
 | `GET` | `/api/sessions/{id}/browser` | – | `{ open: boolean, url?: string }` |
 | `POST` | `/api/sessions/{id}/browser/close` | – | `204` (closes the context and its tabs) |
-| `WS` | `/api/sessions/{id}/browser/stream` | – | live view, below (starts the browser if needed; remote clients pass `?access_token=`) |
+| `WS` | `/api/sessions/{id}/browser/stream` | – | live view, below (remote clients pass `?access_token=`) |
+
+The stream **only starts a browser with `?create=1`**. A plain connection
+attaches to the live session or answers `{ type: 'state', closed: true }` and
+closes with code `4001`: the client must not reconnect in a loop, because the
+server closes browsers on purpose when they go idle (3 min without viewers, 10
+min with a viewer but no agent/user activity) — a headless browser costs
+0.4–2 cores and 0.7–1.5 GB, so it never outlives its use.
 
 Stream messages from the server: **binary** = one JPEG frame of the active tab
-(CDP screencast; only while a viewer is connected); **text** = JSON:
+(CDP screencast; only while a viewer is connected, paced at 8 fps); **text** = JSON:
 
 ```ts
 { type: 'state', url, title, loading, agentBusy,
   viewport: { width, height }, mode, tabs: { index, url, active }[] }
+{ type: 'state', closed: true }         // no browser running (socket then closes with 4001)
 { type: 'cursor', x, y, action }        // where the agent is acting (viewport px)
 { type: 'error', message, fatal? }      // fatal: the browser could not start
 ```
@@ -593,6 +601,7 @@ Stream messages from the server: **binary** = one JPEG frame of the active tab
 Messages from the client (JSON, ignored while `agentBusy` is true):
 
 ```ts
+{ type: 'active', value }               // panel visible + window focused; false pauses the screencast
 { type: 'navigate', url } | { type: 'back' } | { type: 'forward' } | { type: 'reload' }
 { type: 'resize', width, height }       // viewport in CSS px (320–2560)
 { type: 'resize', mode }               // desktop | desktop1080 | mobile | mobilePortrait | mobileLandscape (sets viewport + mobile emulation)

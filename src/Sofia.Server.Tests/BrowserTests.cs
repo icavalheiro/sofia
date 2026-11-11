@@ -34,6 +34,56 @@ public class BrowserUrlTests
         Assert.Throws<ArgumentException>(() => BrowserSession.NormalizeUrl(input));
 }
 
+/// <summary>The per-connection buffer: frames and state are latest-wins, events are bounded.</summary>
+public class BrowserViewerTests
+{
+    [Fact]
+    public void Latest_frame_and_state_win()
+    {
+        var viewer = new BrowserViewer();
+        viewer.PushFrame([1]);
+        viewer.PushFrame([2]);
+        viewer.PushState("a");
+        viewer.PushState("b");
+
+        Assert.True(viewer.Wake.TryRead(out _));
+        var (events, state, frame) = viewer.Take();
+        Assert.Empty(events);
+        Assert.Equal("b", state);
+        Assert.Equal<byte[]>([2], frame!);
+
+        var (_, nextState, nextFrame) = viewer.Take();
+        Assert.Null(nextState);
+        Assert.Null(nextFrame);
+    }
+
+    [Fact]
+    public void Events_are_bounded()
+    {
+        var viewer = new BrowserViewer();
+        for (var i = 0; i < 25; i++) viewer.PushEvent($"e{i}");
+
+        var (events, _, _) = viewer.Take();
+        Assert.Equal(20, events.Count);
+        Assert.Equal("e24", events[^1]);
+    }
+
+    [Fact]
+    public void Closed_viewer_is_flagged_and_woken()
+    {
+        var viewer = new BrowserViewer();
+        Assert.True(viewer.Active);
+        Assert.False(viewer.Closed);
+
+        viewer.Active = false;
+        viewer.MarkClosed();
+
+        Assert.False(viewer.Active);
+        Assert.True(viewer.Closed);
+        Assert.True(viewer.Wake.TryRead(out _));
+    }
+}
+
 /// <summary>Drives a real headless browser against a tiny local site. Passes without asserting when no Chrome/Edge/Chromium can start.</summary>
 public class BrowserToolTests
 {
@@ -150,7 +200,23 @@ public class BrowserToolTests
         shotDir.Delete(recursive: true);
 
         await live.RemoveViewerAsync(viewer);
+
+        // A watched browser gets the long timeout; hiding the panel must not pin it, and a server-side
+        // close (idle) has to wake the sockets that are still attached instead of leaving them hanging.
+        var shortClock = TimeSpan.FromMilliseconds(-1);
+        var longClock = TimeSpan.FromMinutes(10);
+        var watcher = await live.AddViewerAsync();
+        Assert.False(live.IsIdle(shortClock, longClock));
+        await live.SetViewerActiveAsync(watcher, false);
+        Assert.True(live.IsIdle(shortClock, longClock));
+        await live.SetViewerActiveAsync(watcher, true);
+        Assert.False(live.IsIdle(shortClock, longClock));
+        await live.RemoveViewerAsync(watcher);
+        Assert.True(live.IsIdle(shortClock, longClock));
+
+        watcher = await live.AddViewerAsync();
         await service.CloseAsync("ses_test");
+        Assert.True(watcher.Closed);
         Assert.Null(service.Find("ses_test"));
     }
 

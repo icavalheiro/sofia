@@ -14,7 +14,10 @@ namespace Sofia.Server.Browser;
 /// </summary>
 public sealed class BrowserService(IEventBus bus, ILogger<BrowserService> log) : IAsyncDisposable
 {
-    private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(20);
+    // A browser is expensive (0.4-2 cores, 0.7-1.5 GB per conversation), so it never outlives its use:
+    // closed when nobody watches it, and also when a panel is open but neither the user nor the agent acts.
+    private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan WatchedIdleTimeout = TimeSpan.FromMinutes(10);
 
     private readonly ConcurrentDictionary<string, BrowserSession> _sessions = new();
     private readonly SemaphoreSlim _launch = new(1, 1);
@@ -49,6 +52,7 @@ public sealed class BrowserService(IEventBus bus, ILogger<BrowserService> log) :
     {
         if (!_sessions.TryRemove(sessionId, out var session)) return;
         session.Publish(open: false);
+        session.MarkClosed();
         await session.DisposeAsync();
     }
 
@@ -103,13 +107,22 @@ public sealed class BrowserService(IEventBus bus, ILogger<BrowserService> log) :
     {
         Headless = true,
         Channel = channel,
-        Args = ["--no-first-run", "--no-default-browser-check"],
+        Args =
+        [
+            "--no-first-run",
+            "--no-default-browser-check",
+            // Autoplaying video is decoded in software here: it burns cores with nobody watching.
+            "--autoplay-policy=user-gesture-required",
+            "--mute-audio",
+            "--disable-background-networking",
+            "--disable-component-update",
+        ],
     });
 
     private async Task SweepAsync()
     {
         foreach (var (id, session) in _sessions)
-            if (session.IsIdle(IdleTimeout)) await CloseAsync(id);
+            if (session.IsIdle(IdleTimeout, WatchedIdleTimeout)) await CloseAsync(id);
         if (!_sessions.IsEmpty || _browser is null || !await _launch.WaitAsync(0)) return;
         try
         {
@@ -161,8 +174,23 @@ public sealed class BrowserViewer
     private readonly Queue<string> _events = new();
     private byte[]? _frame;
     private string? _state;
+    private bool _active = true;
+    private bool _closed;
 
     public ChannelReader<bool> Wake => _wake.Reader;
+
+    /// <summary>Whether the panel is visible and focused; an inactive viewer does not keep the screencast running.</summary>
+    public bool Active
+    {
+        get { lock (_gate) return _active; }
+        set { lock (_gate) _active = value; }
+    }
+
+    /// <summary>Set when the server closed the session on purpose (idle or explicit close).</summary>
+    public bool Closed
+    {
+        get { lock (_gate) return _closed; }
+    }
 
     public void PushFrame(byte[] frame)
     {
@@ -198,6 +226,13 @@ public sealed class BrowserViewer
         }
     }
 
+    /// <summary>Wakes the send loop so it can notice the session is gone and close the socket.</summary>
+    public void MarkClosed()
+    {
+        lock (_gate) _closed = true;
+        _wake.Writer.TryWrite(true);
+    }
+
     public void Complete() => _wake.Writer.TryComplete();
 }
 
@@ -206,6 +241,12 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
 {
     public const int DefaultWidth = 1280;
     public const int DefaultHeight = 800;
+
+    // The live view is "watch the agent work", not a media player: 8 fps keeps the CDP JPEG encoding and the
+    // UI canvas decode cheap on a page that repaints continuously.
+    private const int MinFrameIntervalMs = 125;
+    private const int ScreenCastQuality = 45;
+    private const int ScreenCastMaxWidth = 1280;
 
     private const string DesktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
     private const string MobileUserAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
@@ -217,7 +258,9 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     private readonly SemaphoreSlim _cast = new(1, 1);
     private IPage? _page;
     private ICDPSession? _cdp;
+    private IPage? _castPage;
     private byte[]? _lastFrame;
+    private long _lastAck;
     private string _title = "";
     private bool _loading;
     private bool _disposed;
@@ -246,13 +289,17 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
 
     public void Touch() => Interlocked.Exchange(ref _lastActivity, Environment.TickCount64);
 
-    public bool IsIdle(TimeSpan timeout)
+    /// <summary>
+    /// Idle when neither the agent nor the user is doing anything. A connected viewer only earns a longer grace
+    /// period: a browser left open on a page keeps burning CPU and memory with nobody looking at it.
+    /// </summary>
+    public bool IsIdle(TimeSpan idle, TimeSpan watched)
     {
-        lock (_gate)
-        {
-            if (_viewers.Count > 0) return false;
-        }
-        return !_agentBusy && TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastActivity)) > timeout;
+        if (_agentBusy) return false;
+        bool watching;
+        lock (_gate) watching = _viewers.Any(v => v.Active);
+        var timeout = watching ? watched : idle;
+        return TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastActivity)) > timeout;
     }
 
     /// <summary>Page events (dialogs) the agent should hear about on its next tool result.</summary>
@@ -275,6 +322,12 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         PushState();
         Publish(open: true, agent: true);
         return new AgentScope(this);
+    }
+
+    /// <summary>The server is closing this browser: wake the viewers so their sockets close instead of hanging.</summary>
+    public void MarkClosed()
+    {
+        foreach (var viewer in Viewers()) viewer.MarkClosed();
     }
 
     private sealed class AgentScope(BrowserSession owner) : IDisposable
@@ -330,7 +383,7 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     public async Task ActivateAsync(IPage page)
     {
         _page = page;
-        await RestartCastAsync();
+        await SyncCastAsync();
         try
         {
             await page.BringToFrontAsync();
@@ -516,7 +569,9 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
                 await cdp.SendAsync("Emulation.setTouchEmulationEnabled", new Dictionary<string, object>
                 {
                     ["enabled"] = _mobile,
-                    ["maxTouchPoints"] = _mobile ? 5 : 0,
+                    // Playwright rejects 0 here ("Touch points must be between 1 and 16"), and the overrides are
+                    // reverted anyway when this session detaches.
+                    ["maxTouchPoints"] = _mobile ? 5 : 1,
                 });
             }
             finally
@@ -651,31 +706,32 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     public async Task<BrowserViewer> AddViewerAsync()
     {
         var viewer = new BrowserViewer();
-        bool first;
-        lock (_gate)
-        {
-            first = _viewers.Count == 0;
-            _viewers.Add(viewer);
-        }
+        lock (_gate) _viewers.Add(viewer);
         Touch();
         viewer.PushState(StateJson());
         if (_lastFrame is not null) viewer.PushFrame(_lastFrame);
-        if (first) await RestartCastAsync();
+        await SyncCastAsync();
         await StillFrameAsync(viewer);
         _ = PushStateAsync();
         return viewer;
     }
 
+    /// <summary>
+    /// The panel is visible (true) or hidden/unfocused (false). An inactive viewer must not keep a full-rate
+    /// screencast running: that is the difference between "watching the agent work" and a silent CPU drain.
+    /// </summary>
+    public async Task SetViewerActiveAsync(BrowserViewer viewer, bool active)
+    {
+        viewer.Active = active;
+        Touch();
+        await SyncCastAsync();
+    }
+
     public async Task RemoveViewerAsync(BrowserViewer viewer)
     {
-        bool none;
-        lock (_gate)
-        {
-            _viewers.Remove(viewer);
-            none = _viewers.Count == 0;
-        }
+        lock (_gate) _viewers.Remove(viewer);
         viewer.Complete();
-        if (none) await StopCastAsync();
+        await SyncCastAsync();
     }
 
     /// <summary>A still frame, so a new viewer sees the page even when nothing is changing on screen.</summary>
@@ -694,22 +750,57 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         }
     }
 
+    /// <summary>Stops the screencast, if any.</summary>
     private async Task StopCastAsync()
     {
         await _cast.WaitAsync();
         try
         {
-            var cdp = _cdp;
-            _cdp = null;
-            if (cdp is null) return;
+            await StopCastLockedAsync();
+        }
+        finally
+        {
+            _cast.Release();
+        }
+    }
+
+    /// <summary>
+    /// Makes the screencast match reality: one cast on the active page while at least one viewer is active, none
+    /// otherwise. Stop and start happen under a single <c>_cast</c> acquisition, so overlapping calls (a viewer
+    /// reconnecting while a new tab is adopted) can never leave an orphaned screencast encoding frames forever.
+    /// </summary>
+    private async Task SyncCastAsync()
+    {
+        await _cast.WaitAsync();
+        try
+        {
+            bool wanted;
+            lock (_gate) wanted = !_disposed && _viewers.Any(v => v.Active);
+            var page = _page;
+            if (!wanted || page is null || page.IsClosed)
+            {
+                await StopCastLockedAsync();
+                return;
+            }
+            if (_cdp is not null && ReferenceEquals(_castPage, page)) return;
+            await StopCastLockedAsync();
             try
             {
-                await cdp.SendAsync("Page.stopScreencast");
-                await cdp.DetachAsync();
+                var cdp = await context.NewCDPSessionAsync(page);
+                cdp.Event("Page.screencastFrame").OnEvent += (_, args) => OnFrame(cdp, args);
+                _cdp = cdp;
+                _castPage = page;
+                await cdp.SendAsync("Page.startScreencast", new Dictionary<string, object>
+                {
+                    ["format"] = "jpeg",
+                    ["quality"] = ScreenCastQuality,
+                    ["maxWidth"] = ScreenCastMaxWidth,
+                    ["maxHeight"] = ScreenCastMaxWidth,
+                });
             }
-            catch (PlaywrightException)
+            catch (PlaywrightException ex)
             {
-                // The page already closed.
+                log.LogDebug(ex, "Could not start the browser screencast");
             }
         }
         finally
@@ -718,34 +809,21 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         }
     }
 
-    private async Task RestartCastAsync()
+    /// <summary>Caller holds <c>_cast</c>.</summary>
+    private async Task StopCastLockedAsync()
     {
-        await StopCastAsync();
-        bool watched;
-        lock (_gate) watched = _viewers.Count > 0;
-        var page = _page;
-        if (!watched || page is null || _disposed) return;
-        await _cast.WaitAsync();
+        var cdp = _cdp;
+        _cdp = null;
+        _castPage = null;
+        if (cdp is null) return;
         try
         {
-            var cdp = await context.NewCDPSessionAsync(page);
-            cdp.Event("Page.screencastFrame").OnEvent += (_, args) => OnFrame(cdp, args);
-            _cdp = cdp;
-            await cdp.SendAsync("Page.startScreencast", new Dictionary<string, object>
-            {
-                ["format"] = "jpeg",
-                ["quality"] = 60,
-                ["maxWidth"] = 1600,
-                ["maxHeight"] = 1600,
-            });
+            await cdp.SendAsync("Page.stopScreencast");
+            await cdp.DetachAsync();
         }
-        catch (PlaywrightException ex)
+        catch (PlaywrightException)
         {
-            log.LogDebug(ex, "Could not start the browser screencast");
-        }
-        finally
-        {
-            _cast.Release();
+            // The page already closed.
         }
     }
 
@@ -753,7 +831,9 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     {
         if (args is not { } json || !json.TryGetProperty("data", out var data)) return;
         var frameId = json.TryGetProperty("sessionId", out var s) ? s.GetInt32() : 0;
-        _ = AckAsync(cdp, frameId);
+        // Chromium only produces the next frame after the previous one is acknowledged, so pacing the ack
+        // caps the effective frame rate (and with it the JPEG encoding cost) at MinFrameIntervalMs.
+        _ = AckPacedAsync(cdp, frameId);
         byte[] bytes;
         try
         {
@@ -765,6 +845,18 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         }
         _lastFrame = bytes;
         foreach (var viewer in Viewers()) viewer.PushFrame(bytes);
+    }
+
+    private async Task AckPacedAsync(ICDPSession cdp, int frameId)
+    {
+        var wait = MinFrameIntervalMs - (Environment.TickCount64 - Interlocked.Read(ref _lastAck));
+        if (wait > 0)
+        {
+            try { await Task.Delay((int)wait); }
+            catch (OperationCanceledException) { return; }
+        }
+        Interlocked.Exchange(ref _lastAck, Environment.TickCount64);
+        await AckAsync(cdp, frameId);
     }
 
     private static async Task AckAsync(ICDPSession cdp, int frameId)
