@@ -1271,6 +1271,9 @@ public sealed class SessionRun : IToolHost
 
     public bool ReplyPermission(string requestId, string decision)
     {
+        // Accept either the server's canonical decisions ('once'/'always'/'reject') or the UI/ACP
+        // card labels, so a client that sends the label still resolves the card correctly.
+        decision = NormalizePermissionDecision(decision);
         if (!_permissions.TryGetValue(requestId, out var pending)) return false;
         var card = pending.Card;
         lock (card)
@@ -1289,6 +1292,18 @@ public sealed class SessionRun : IToolHost
         }
         pending.Tcs.TrySetResult(decision);
         return true;
+    }
+
+    private static string NormalizePermissionDecision(string decision)
+    {
+        var d = (decision ?? "").Trim().ToLowerInvariant();
+        if (d is "always" or "allow for this session" or "allow_always" or "allow-always") return "always";
+        if (d is "reject" or "deny" or "denied" or "reject_once" or "reject-once") return "reject";
+        if (d is "once" or "allow once" or "allow_once" or "allow-once") return "once";
+        if (d.Contains("session") || d.Contains("always")) return "always";
+        if (d.Contains("deny") || d.Contains("reject")) return "reject";
+        if (d.Contains("once")) return "once";
+        return "once";
     }
 
     /// <summary>Marks an unanswered permission/question card as expired. Returns true when it changed.</summary>

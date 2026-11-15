@@ -401,10 +401,10 @@ public sealed class AcpAgent
         var outcome = resp?["outcome"]?["optionId"]?.GetValue<string>() ?? resp?["optionId"]?.GetValue<string>();
         string decision = outcome switch
         {
-            "allow_once" => "Allow once",
-            "allow_always" => "Allow for this session",
-            "reject_once" => "Deny",
-            _ => "Deny",
+            "allow_once" => "once",
+            "allow_always" => "always",
+            "reject_once" => "reject",
+            _ => "reject",
         };
         try { await _client.ReplyPermissionAsync(sessionId, card.RequestId, decision, CancellationToken.None); } catch { }
     }

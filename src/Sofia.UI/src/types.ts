@@ -760,8 +760,9 @@ export const LIVE_PERMISSION_CHOICES = [ 'Allow once', 'Allow for this session',
 export function permissionDecision ( choice: string ): 'once' | 'always' | 'reject'
 {
   const normalized = choice.toLowerCase();
-  if ( normalized.includes( 'session' ) ) return 'always';
-  if ( normalized.startsWith( 'deny' ) ) return 'reject';
+  if ( normalized.includes( 'always' ) || normalized.includes( 'session' ) ) return 'always';
+  if ( normalized.includes( 'deny' ) || normalized.includes( 'reject' ) ) return 'reject';
+  if ( normalized.includes( 'once' ) || normalized.includes( 'allow' ) ) return 'once';
   return 'once';
 }
 
