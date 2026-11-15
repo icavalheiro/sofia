@@ -31,9 +31,11 @@ public sealed class BrowserService(IEventBus bus, ILogger<BrowserService> log) :
     {
         if (_sessions.TryGetValue(sessionId, out var existing)) return existing;
         var browser = await EnsureBrowserAsync(ct);
+        // Viewport is managed entirely through CDP (Emulation.setDeviceMetricsOverride) so Playwright never
+        // re-applies a stale size on navigation/reload. See BrowserSession.ApplyEmulationAsync.
         var context = await browser.NewContextAsync(new BrowserNewContextOptions
         {
-            ViewportSize = new ViewportSize { Width = BrowserSession.DefaultWidth, Height = BrowserSession.DefaultHeight },
+            ViewportSize = null,
             AcceptDownloads = false,
         });
         var session = new BrowserSession(sessionId, workspaceId, context, bus, log);
@@ -259,6 +261,7 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     private IPage? _page;
     private ICDPSession? _cdp;
     private IPage? _castPage;
+    private readonly Dictionary<IPage, ICDPSession> _emulationCdp = new();
     private byte[]? _lastFrame;
     private long _lastAck;
     private string _title = "";
@@ -272,6 +275,7 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     public int Width { get; private set; } = DefaultWidth;
     public int Height { get; private set; } = DefaultHeight;
     public string Mode { get; private set; } = "desktop";
+    public int DeviceScaleFactor => _deviceScaleFactor;
     private bool _mobile;
     private string _userAgent = DesktopUserAgent;
     private string _platform = "Win32";
@@ -398,6 +402,12 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
     private async Task OnPageClosedAsync(IPage page)
     {
         if (_disposed) return;
+        ICDPSession? emu;
+        lock (_emulationCdp)
+        {
+            _emulationCdp.Remove(page, out emu);
+        }
+        if (emu is not null) try { await emu.DetachAsync(); } catch (PlaywrightException) { }
         IPage? next;
         lock (_gate)
         {
@@ -461,16 +471,33 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
 
     public async Task ResizeAsync(int width, int height)
     {
-        width = Math.Clamp(width, 320, 2560);
-        height = Math.Clamp(height, 240, 2560);
-        if (width == Width && height == Height) return;
+        // No silent clamping to a 320x240 floor: honor the requested size (down to 1px) so callers can
+        // produce exact-size screenshots. Only guard against obviously invalid (non-positive) input.
+        if (width < 1) throw new ArgumentException("Viewport width must be >= 1.");
+        if (height < 1) throw new ArgumentException("Viewport height must be >= 1.");
+        if (width > 8192) width = 8192;
+        if (height > 8192) height = 8192;
+        if (width == Width && height == Height)
+        {
+            // Still re-apply emulation in case the CDP override was lost (e.g. after a navigation).
+            foreach (var page in Pages)
+            {
+                try { await ApplyEmulationAsync(page); }
+                catch (PlaywrightException) { }
+            }
+            foreach (var viewer in Viewers()) await StillFrameAsync(viewer);
+            PushState();
+            return;
+        }
         Width = width;
         Height = height;
+        // Apply through CDP only: Playwright's SetViewportSizeAsync would re-introduce a stale device
+        // scale factor / mobile flag and fight the CDP override on later navigations.
         foreach (var page in Pages)
         {
             try
             {
-                await page.SetViewportSizeAsync(width, height);
+                await ApplyEmulationAsync(page);
             }
             catch (PlaywrightException)
             {
@@ -516,68 +543,79 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         PushState();
     }
 
-    private async Task ApplyEmulationAsync(IPage page)
+    private async Task<ICDPSession> GetEmulationCdpAsync(IPage page)
+    {
+        lock (_emulationCdp)
+        {
+            if (_emulationCdp.TryGetValue(page, out var existing)) return existing;
+        }
+        var cdp = await context.NewCDPSessionAsync(page);
+        lock (_emulationCdp)
+        {
+            if (_emulationCdp.TryGetValue(page, out var existing)) 
+            {
+                // Race: another caller created one; detach the duplicate.
+                _ = cdp.DetachAsync();
+                return existing;
+            }
+            _emulationCdp[page] = cdp;
+        }
+        return cdp;
+    }
+
+    public async Task ApplyEmulationAsync(IPage page)
     {
         try
         {
-            var cdp = await context.NewCDPSessionAsync(page);
-            try
+            var cdp = await GetEmulationCdpAsync(page);
+            var orientation = Width >= Height ? "landscapePrimary" : "portraitPrimary";
+            var metrics = new Dictionary<string, object>
             {
-                var orientation = Width >= Height ? "landscapePrimary" : "portraitPrimary";
-                var metrics = new Dictionary<string, object>
+                ["width"] = Width,
+                ["height"] = Height,
+                ["deviceScaleFactor"] = _deviceScaleFactor,
+                ["mobile"] = _mobile,
+                ["screenWidth"] = Width,
+                ["screenHeight"] = Height,
+                ["screenOrientation"] = new Dictionary<string, object>
                 {
-                    ["width"] = Width,
-                    ["height"] = Height,
-                    ["deviceScaleFactor"] = _deviceScaleFactor,
-                    ["mobile"] = _mobile,
-                    ["screenWidth"] = Width,
-                    ["screenHeight"] = Height,
-                    ["screenOrientation"] = new Dictionary<string, object>
-                    {
-                        ["angle"] = Width >= Height ? 90 : 0,
-                        ["type"] = orientation,
-                    },
+                    ["angle"] = Width >= Height ? 90 : 0,
+                    ["type"] = orientation,
+                },
+            };
+            await cdp.SendAsync("Emulation.setDeviceMetricsOverride", metrics);
+            var uaMetadata = _mobile
+                ? new Dictionary<string, object>
+                {
+                    ["brands"] = new[] { new Dictionary<string, object> { ["brand"] = "Chromium", ["version"] = "129" }, new Dictionary<string, object> { ["brand"] = "Not=A?Brand", ["version"] = "8" } },
+                    ["fullVersion"] = "129.0.0.0",
+                    ["platform"] = "Android",
+                    ["platformVersion"] = "14.0.0",
+                    ["architecture"] = "arm",
+                    ["model"] = "Pixel 8",
+                    ["mobile"] = true,
+                }
+                : new Dictionary<string, object>
+                {
+                    ["brands"] = new[] { new Dictionary<string, object> { ["brand"] = "Chromium", ["version"] = "129" }, new Dictionary<string, object> { ["brand"] = "Not=A?Brand", ["version"] = "8" } },
+                    ["fullVersion"] = "129.0.0.0",
+                    ["platform"] = "Windows",
+                    ["platformVersion"] = "10.0.0",
+                    ["architecture"] = "x86",
+                    ["model"] = "",
+                    ["mobile"] = false,
                 };
-                await cdp.SendAsync("Emulation.setDeviceMetricsOverride", metrics);
-                var uaMetadata = _mobile
-                    ? new Dictionary<string, object>
-                    {
-                        ["brands"] = new[] { new Dictionary<string, object> { ["brand"] = "Chromium", ["version"] = "129" }, new Dictionary<string, object> { ["brand"] = "Not=A?Brand", ["version"] = "8" } },
-                        ["fullVersion"] = "129.0.0.0",
-                        ["platform"] = "Android",
-                        ["platformVersion"] = "14.0.0",
-                        ["architecture"] = "arm",
-                        ["model"] = "Pixel 8",
-                        ["mobile"] = true,
-                    }
-                    : new Dictionary<string, object>
-                    {
-                        ["brands"] = new[] { new Dictionary<string, object> { ["brand"] = "Chromium", ["version"] = "129" }, new Dictionary<string, object> { ["brand"] = "Not=A?Brand", ["version"] = "8" } },
-                        ["fullVersion"] = "129.0.0.0",
-                        ["platform"] = "Windows",
-                        ["platformVersion"] = "10.0.0",
-                        ["architecture"] = "x86",
-                        ["model"] = "",
-                        ["mobile"] = false,
-                    };
-                await cdp.SendAsync("Emulation.setUserAgentOverride", new Dictionary<string, object>
-                {
-                    ["userAgent"] = _userAgent,
-                    ["platform"] = _platform,
-                    ["userAgentMetadata"] = uaMetadata,
-                });
-                await cdp.SendAsync("Emulation.setTouchEmulationEnabled", new Dictionary<string, object>
-                {
-                    ["enabled"] = _mobile,
-                    // Playwright rejects 0 here ("Touch points must be between 1 and 16"), and the overrides are
-                    // reverted anyway when this session detaches.
-                    ["maxTouchPoints"] = _mobile ? 5 : 1,
-                });
-            }
-            finally
+            await cdp.SendAsync("Emulation.setUserAgentOverride", new Dictionary<string, object>
             {
-                try { await cdp.DetachAsync(); } catch (PlaywrightException) { }
-            }
+                ["userAgent"] = _userAgent,
+                ["platform"] = _platform,
+                ["userAgentMetadata"] = uaMetadata,
+            });
+            await cdp.SendAsync("Emulation.setTouchEmulationEnabled", new Dictionary<string, object>
+            {
+                ["enabled"] = _mobile,
+                ["maxTouchPoints"] = _mobile ? 5 : 1,
+            });
         }
         catch (PlaywrightException)
         {
@@ -740,13 +778,47 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         try
         {
             if (_page is null) return;
-            var frame = await _page.ScreenshotAsync(new PageScreenshotOptions { Type = ScreenshotType.Jpeg, Quality = 60, Timeout = 5000 });
+            var frame = await CaptureScreenshotAsync(null, false, ScreenshotType.Jpeg, 60, CancellationToken.None);
             _lastFrame = frame;
             viewer.PushFrame(frame);
         }
-        catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
+        catch (Exception ex) when (ex is PlaywrightException or TimeoutException or System.Text.Json.JsonException)
         {
             // Mid-navigation; the screencast delivers the next frame.
+        }
+    }
+
+    /// <summary>Captures the current page through CDP so the result matches the CDP-managed viewport exactly.</summary>
+    public async Task<byte[]> CaptureScreenshotAsync(Clip? clip, bool captureBeyondViewport, ScreenshotType type, int quality, CancellationToken ct)
+    {
+        if (_page is null) throw new InvalidOperationException("The browser has no open page.");
+        var cdp = await context.NewCDPSessionAsync(_page);
+        try
+        {
+            var args = new Dictionary<string, object>
+            {
+                ["format"] = type == ScreenshotType.Png ? "png" : "jpeg",
+            };
+            if (type == ScreenshotType.Jpeg) args["quality"] = Math.Clamp(quality, 0, 100);
+            if (captureBeyondViewport) args["captureBeyondViewport"] = true;
+            if (clip is not null)
+            {
+                args["clip"] = new Dictionary<string, object>
+                {
+                    ["x"] = clip.X,
+                    ["y"] = clip.Y,
+                    ["width"] = clip.Width,
+                    ["height"] = clip.Height,
+                    ["scale"] = 1,
+                };
+            }
+            var result = await cdp.SendAsync("Page.captureScreenshot", args);
+            var b64 = result.Value!.GetProperty("data").GetString()!;
+            return Convert.FromBase64String(b64);
+        }
+        finally
+        {
+            try { await cdp.DetachAsync(); } catch (PlaywrightException) { }
         }
     }
 
@@ -928,6 +1000,9 @@ public sealed class BrowserSession(string id, string? workspaceId, IBrowserConte
         _disposed = true;
         foreach (var viewer in Viewers()) viewer.Complete();
         await StopCastAsync();
+        List<ICDPSession> emus;
+        lock (_emulationCdp) { emus = [.. _emulationCdp.Values]; _emulationCdp.Clear(); }
+        foreach (var e in emus) try { await e.DetachAsync(); } catch (PlaywrightException) { }
         try
         {
             await context.CloseAsync();

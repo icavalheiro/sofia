@@ -54,7 +54,8 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         ("tab", Schema.Integer("Tab number from the tabs action (0-based)."), false),
         ("mode", Schema.Enum("Browser viewport/emulation mode for the resize action.", "desktop", "desktop1080", "mobile", "mobilePortrait", "mobileLandscape"), false),
         ("width", Schema.Integer("Viewport width for the resize action (ignored when mode is given)."), false),
-        ("height", Schema.Integer("Viewport height for the resize action (ignored when mode is given)."), false));
+        ("height", Schema.Integer("Viewport height for the resize action (ignored when mode is given)."), false),
+        ("saveTo", Schema.String("Optional absolute file path to also save the screenshot to (for post-processing)."), false));
 
     public string Summarize(JsonObject args)
     {
@@ -170,7 +171,14 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
             case "evaluate":
             {
                 var result = await page.EvaluateAsync<JsonElement?>(Args.Required(args, "script"));
-                return Text.Truncate(result?.ToString() ?? "undefined", maxChars);
+                var text = result?.ToString() ?? "undefined";
+                var saveTo = Args.Optional(args, "saveTo");
+                if (!string.IsNullOrWhiteSpace(saveTo))
+                {
+                    File.WriteAllText(saveTo!, text);
+                    return $"Evaluate result written to {saveTo} ({Text.HumanSize(text.Length)}).";
+                }
+                return Text.Truncate(text, maxChars);
             }
             case "tabs":
                 return TabList(session);
@@ -229,29 +237,53 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         var page = session.Page;
         byte[] bytes;
         var note = "";
+        Clip? clip = null;
+        var captureBeyondViewport = false;
+        var quality = 75;
         if (Args.Optional(args, "ref") is { Length: > 0 })
         {
             var target = await TargetAsync(session, args, "screenshot");
-            bytes = await target.ScreenshotAsync(new LocatorScreenshotOptions { Type = ScreenshotType.Jpeg, Quality = 80 });
+            try { await target.ScrollIntoViewIfNeededAsync(); } catch (PlaywrightException) { }
+            var box = await target.BoundingBoxAsync(new LocatorBoundingBoxOptions { Timeout = 2_000 });
+            if (box is null) return ToolResult.Fail("Could not measure the element to screenshot.");
+            clip = new Clip { X = box.X, Y = box.Y, Width = box.Width, Height = box.Height };
+            quality = 80;
         }
-        else
+        else if (Args.Bool(args, "full_page"))
         {
-            var options = new PageScreenshotOptions { Type = ScreenshotType.Jpeg, Quality = 75 };
-            if (Args.Bool(args, "full_page"))
+            captureBeyondViewport = true;
+            var height = await page.EvaluateAsync<int>("() => Math.ceil(document.documentElement.scrollHeight)");
+            if (height > MaxShotHeight)
             {
-                options.FullPage = true;
-                var height = await page.EvaluateAsync<int>("() => Math.ceil(document.documentElement.scrollHeight)");
-                if (height > MaxShotHeight)
-                {
-                    options.Clip = new Clip { X = 0, Y = 0, Width = session.Width, Height = MaxShotHeight };
-                    note = $" The page is {height}px tall; only the first {MaxShotHeight}px are shown.";
-                }
+                clip = new Clip { X = 0, Y = 0, Width = session.Width, Height = MaxShotHeight };
+                note = $" The page is {height}px tall; only the first {MaxShotHeight}px are shown.";
             }
-            bytes = await page.ScreenshotAsync(options);
+            else
+            {
+                clip = new Clip { X = 0, Y = 0, Width = session.Width, Height = height < 1 ? session.Height : height };
+            }
         }
+        // Viewport shot: no clip -> CDP captures the current viewport (matches device metrics exactly).
+
+        bytes = await session.CaptureScreenshotAsync(clip, captureBeyondViewport, ScreenshotType.Jpeg, quality, CancellationToken.None);
 
         var image = saveImage(bytes, "image/jpeg", $"browser-{DateTime.Now:yyyyMMdd-HHmmss}.jpg");
-        var text = $"Screenshot attached ({image.Size}).{note}\nURL: {page.Url}\nTitle: {await page.TitleAsync()}\n" +
+        var path = image.StoragePath;
+        var saveTo = Args.Optional(args, "saveTo");
+        if (!string.IsNullOrWhiteSpace(saveTo))
+        {
+            try
+            {
+                File.Copy(image.StoragePath, saveTo!, overwrite: true);
+                path = saveTo!;
+            }
+            catch (Exception ex)
+            {
+                note += $" Could not save to '{saveTo}': {Text.FirstLine(ex.Message, 120)}.";
+            }
+        }
+        var text = $"Screenshot attached ({image.Size}).{note}\nPath: {path}\nURL: {page.Url}\nTitle: {await page.TitleAsync()}\n" +
+                   $"Viewport: {session.Width}x{session.Height} (devicePixelRatio {session.DeviceScaleFactor}).\n" +
                    "If you cannot see the image, use the snapshot action to read the page as text.";
         return ToolResult.WithImages(text, [image]);
     }

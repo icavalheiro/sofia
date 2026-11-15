@@ -603,7 +603,7 @@ Messages from the client (JSON, ignored while `agentBusy` is true):
 ```ts
 { type: 'active', value }               // panel visible + window focused; false pauses the screencast
 { type: 'navigate', url } | { type: 'back' } | { type: 'forward' } | { type: 'reload' }
-{ type: 'resize', width, height }       // viewport in CSS px (320–2560)
+{ type: 'resize', width, height }       // viewport in CSS px (1–8192)
 { type: 'resize', mode }               // desktop | desktop1080 | mobile | mobilePortrait | mobileLandscape (sets viewport + mobile emulation)
 { type: 'mouse', action: 'move'|'down'|'up'|'wheel', x, y, button?, deltaX?, deltaY? }  // viewport px
 { type: 'key', key }                    // 'a', 'Enter', 'Control+a' (Playwright key names)
