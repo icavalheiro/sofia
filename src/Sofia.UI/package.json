@@ -11,21 +11,21 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@mantine-vue/core": "^3.5.0",
-    "@mantine-vue/hooks": "^3.5.0",
-    "@mantine-vue/utils": "^3.5.0",
+    "@mantine-vue/core": "^3.9.0",
+    "@mantine-vue/hooks": "^3.9.0",
+    "@mantine-vue/utils": "^3.9.0",
     "@microsoft/signalr": "^10.0.11",
     "katex": "^0.18.10",
     "lucide-vue-next": "^1.0.0",
-    "marked": "^18.1.1",
+    "marked": "^18.2.1",
     "marked-katex-extension": "^5.1.13",
-    "vue": "^3.5.43"
+    "vue": "^3.5.45"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "@vitejs/plugin-vue": "^6.0.0",
+    "@types/node": "^26.6.0",
+    "@vitejs/plugin-vue": "^6.0.11",
     "typescript": "~5.9.0",
-    "vite": "^7.0.0",
-    "vue-tsc": "^3.0.0"
+    "vite": "^8.0.0",
+    "vue-tsc": "^3.3.0"
   }
 }
