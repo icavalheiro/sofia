@@ -196,7 +196,13 @@ shown unchanged.
 
 When context use crosses the threshold (or on `/compact`), older messages are
 summarized by the same model. The summary is stored as a `summary` message and
-the folded messages are kept for the transcript but skipped in model history.
+the folded messages are kept for the transcript but skipped in model history;
+each folded message records the seq of the notice that folded it
+(`Message.CompactedBy`). Hiding them is only valid while that summary survives,
+so a revert (or a branch) that cuts it away unfolds them again — otherwise the
+transcript would stay on screen while the model saw an empty conversation. When
+no pointer exists (data written before it), a folded message is unfolded only if
+no surviving summary sits after it.
 
 ### Tool-result pruning
 
@@ -210,7 +216,9 @@ screenshots/attachments fall back to the "older image" labels. The transcript is
 never touched — `ToolCall.Output` still holds the display text and the UI keeps
 the full result. Hysteresis: a prune only fires when the estimated savings are
 at least 10% of the context window, so each cache invalidation buys real space
-and happens rarely. Settings: `pruneToolResults`, `pruneThreshold`,
+and happens rarely. Reverting into the pruned range resets the watermark, so the
+restored history reaches the model complete (the next big step prunes again).
+Settings: `pruneToolResults`, `pruneThreshold`,
 `pruneKeepSteps`, `pruneMinChars` (results shorter than this — default 2000
 chars — are never pruned).
 

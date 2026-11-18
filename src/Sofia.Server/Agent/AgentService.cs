@@ -370,14 +370,44 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         if (IsActive(sessionId)) throw new ConflictException("Stop the running reply before reverting.");
         var target = Db.Messages.FindById(messageId);
         if (target is null || target.SessionId != sessionId) throw new NotFoundException("Message not found in this session.");
-        var removed = Db.SessionMessages(sessionId).Where(m => m.Seq >= target.Seq).Select(m => m.Id).ToList();
+        var transcript = Db.SessionMessages(sessionId);
+        var removed = transcript.Where(m => m.Seq >= target.Seq).Select(m => m.Id).ToList();
         var restored = services.Changes.Revert(sessionId, target.Seq);
+
+        // A compaction keeps the folded messages only as a summary. Cutting the summary away has to bring the
+        // originals back, otherwise the transcript stays on screen while the model sees an empty conversation.
+        var survived = transcript.Where(m => m.Seq < target.Seq).ToList();
+        foreach (var m in SessionStore.UnfoldWithoutSummary(transcript, target.Seq))
+            Store.UpdateMessage(session, m);
+
+        // Subfolder instructions that rode on a deleted message are gone from the model's view: forget them so the
+        // next touch of the folder injects them again instead of assuming the model already saw them.
+        if (session.SubContextFiles is { Count: > 0 } sub)
+            foreach (var key in sub.Where(kv => kv.Value.Seq >= target.Seq).Select(kv => kv.Key).ToList())
+                sub.Remove(key);
+
+        // Pruning is a view over the history: reverting into the pruned range undoes it (the next big step prunes
+        // again), so the restored conversation reaches the model complete.
+        if (session.PrunedThroughSeq >= target.Seq) session.PrunedThroughSeq = 0;
+
         Store.DeleteMessages(session, removed);
-        // An empty conversation still pays for its frozen prefix (system prompt + tool schemas), so the meter
-        // stays truthful: it matches what the next request will actually send.
-        session.Context.Used = session.Context.SystemTokens + session.Context.ToolTokens;
+        // An empty conversation still pays for its frozen prefix (system prompt + tool schemas); when messages
+        // survive they are replayed, so the meter has to count them too or it under-reports what the next request sends.
+        session.Context.Used = ContextUsed(session, survived);
         Store.SaveSession(session);
         return (removed, restored);
+    }
+
+    /// <summary>Token estimate of what the session would send right now (frozen prefix + history + older images).</summary>
+    private int ContextUsed(Session session, List<Message> messages)
+    {
+        var used = session.Context.SystemTokens + session.Context.ToolTokens;
+        if (services.Providers.Resolve(session.ModelId)?.Model is not { } model) return used;
+        HistoryBuilder.PruneOptions? prune = session.PrunedThroughSeq > 0
+            ? new HistoryBuilder.PruneOptions(session.PrunedThroughSeq, Db.GetConfig().PruneMinChars)
+            : null;
+        var (estimate, images) = HistoryBuilder.EstimateBreakdown(messages, model, true, prune);
+        return used + estimate + images * 1000;
     }
 
     public Session Branch(string sessionId, string messageId)

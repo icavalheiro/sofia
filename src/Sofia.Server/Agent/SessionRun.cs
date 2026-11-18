@@ -1707,7 +1707,7 @@ public sealed class SessionRun : IToolHost
 
         try
         {
-            var done = await CompactCoreAsync(auto, ct);
+            var done = await CompactCoreAsync(auto, card.Seq, ct);
             if (done is null) { Finish("skipped"); return false; }
             Finish("done", done.Value.After, result: done.Value.Summary);
             return true;
@@ -1725,7 +1725,7 @@ public sealed class SessionRun : IToolHost
     }
 
     /// <summary>Returns the context size after compaction, or null when there was nothing to compact.</summary>
-    private async Task<(int After, string Summary)?> CompactCoreAsync(bool auto, CancellationToken ct)
+    private async Task<(int After, string Summary)?> CompactCoreAsync(bool auto, long noticeSeq, CancellationToken ct)
     {
         var (provider, model) = ResolveModel();
         using var slot = await AcquireModelAsync(model, ct);
@@ -1816,6 +1816,7 @@ public sealed class SessionRun : IToolHost
         foreach (var m in prefix.Concat(previous))
         {
             m.Compacted = true;
+            m.CompactedBy = noticeSeq;
             _s.Db.Messages.Update(m);
         }
         // The folded messages are gone from the model's view: any subfolder instructions they carried must be

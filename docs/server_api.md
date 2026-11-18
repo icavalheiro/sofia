@@ -240,10 +240,10 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `POST` | `/api/sessions/{id}/abort` | – | `204` |
 | `DELETE` | `/api/sessions/{id}/queued/{messageId}` | – | `204` (removes a follow-up that is still waiting in the inbox — steer or queued — before it reaches the model; `404` when it is already sent, `409` when the run has ended) |
 | `POST` | `/api/sessions/{id}/compact` | – | `204` (summary arrives as a `message.created` with `summary: true`) |
-| `POST` | `/api/sessions/{id}/revert` | `{ messageId }` | `{ removed: string[], restoredFiles: string[] }` |
+| `POST` | `/api/sessions/{id}/revert` | `{ messageId }` | `{ removed: string[], restoredFiles: string[] }` (every message from `messageId` on goes away; a compaction whose summary is removed is undone, so the messages it had folded are replayed to the model again, and `context.used` is recomputed from what survives) |
 | `POST` | `/api/sessions/{id}/continue` | – | `{ messageId }` (regenerates the next assistant step from the current history without adding a user turn) |
 | `POST` | `/api/sessions/{id}/retry` | `{ messageId }` | `{ messageId }` (retries the exact message: a user message is removed and re-sent, an LLM message is regenerated from the history up to it; files restored) |
-| `POST` | `/api/sessions/{id}/branch` | `{ messageId }` | `SessionDto` with `messages` (new session in the same workspace titled "<title> (branch)", holding a copy of the history up to and including `messageId`; subagent conversations and file snapshots are copied too, workspace files are not forked; `409` while a reply is running; the new session also arrives as `session.created`) |
+| `POST` | `/api/sessions/{id}/branch` | `{ messageId }` | `SessionDto` with `messages` (new session in the same workspace titled "<title> (branch)", holding a copy of the history up to and including `messageId`; subagent conversations and file snapshots are copied too, workspace files are not forked; branching before a compaction unfolds the messages that summary had folded; `409` while a reply is running; the new session also arrives as `session.created`) |
 | `POST` | `/api/sessions/{id}/permissions/{requestId}` | `{ decision: 'once' \| 'always' \| 'reject' }` | `204` |
 | `POST` | `/api/sessions/{id}/questions/{formId}` | `{ answers: (string \| string[] \| null)[] }` | `204` |
 | `GET` | `/api/sessions/{id}/diff` | – | `FileDiffDto[]` (files changed by this session; the ones Git ignores through `.gitignore` are left out — their snapshots stay, so reverting still restores them) |

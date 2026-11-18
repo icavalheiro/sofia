@@ -85,6 +85,35 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
         return session;
     }
 
+    /// <summary>
+    /// Unfolds the compacted messages whose summary is not part of the new transcript any more. Hiding a folded
+    /// message is only meaningful while the compaction that replaced it survives: after a revert (or a branch cut) the
+    /// conversation would otherwise stay on screen while the model sees nothing at all.
+    /// </summary>
+    /// <param name="transcript">Every message of the source session, ordered by <see cref="Message.Seq"/>.</param>
+    /// <param name="goneFromSeq">Messages at or above this seq are not part of the new transcript.</param>
+    /// <returns>The messages that were unfolded (already mutated in memory, not persisted).</returns>
+    public static List<Message> UnfoldWithoutSummary(IReadOnlyList<Message> transcript, long goneFromSeq)
+    {
+        var folded = transcript.Where(m => m.Compacted && m.Seq < goneFromSeq).ToList();
+        if (folded.Count == 0) return [];
+        // A surviving summary covers everything folded before it, including summaries folded into it. Without the
+        // pointer (data written before `CompactedBy` existed) that has to be inferred from the position instead.
+        var survivingSummarySeqs = transcript
+            .Where(m => m.Seq < goneFromSeq && m.Summary == true && !m.Compacted)
+            .Select(m => m.Seq)
+            .ToList();
+        var unfolded = folded
+            .Where(m => m.CompactedBy > 0 ? m.CompactedBy >= goneFromSeq : !survivingSummarySeqs.Any(s => s > m.Seq))
+            .ToList();
+        foreach (var m in unfolded)
+        {
+            m.Compacted = false;
+            m.CompactedBy = 0;
+        }
+        return unfolded;
+    }
+
     private static string? FirstNonEmpty(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
     /// <summary>A model is only kept when the catalog knows it and Settings has not switched it off.</summary>
@@ -107,23 +136,30 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
         branch.Context.SystemTokens = source.Context.SystemTokens;
         branch.Context.ToolTokens = source.Context.ToolTokens;
         branch.Context.Used = branch.Context.SystemTokens + branch.Context.ToolTokens;
-        var copied = CopyHistory(source.Id, branch, target.Seq);
+        var transcript = db.SessionMessages(source.Id);
+        // Branching before a compaction copies the folded messages but not the summary that replaced them: unfold
+        // them first, or the branch starts with a visible transcript the model cannot see.
+        UnfoldWithoutSummary(transcript, target.Seq + 1);
+        var copied = CopyHistory(source.Id, transcript.Where(m => m.Seq <= target.Seq).ToList(), branch);
         foreach (var m in copied) if (m.Usage is { } usage) branch.Usage.Add(usage);
         branch.KnowledgeSeq = copied.Count == 0 ? 0 : copied.Max(m => m.Seq);
         SaveSession(branch);
         return branch;
     }
 
-    private List<Message> CopyHistory(string fromId, Session to, long maxSeq)
+    private List<Message> CopyHistory(string fromId, List<Message> messages, Session to)
     {
         var copies = new List<Message>();
         var newIds = new Dictionary<string, Message>();
-        foreach (var m in db.SessionMessages(fromId).Where(m => m.Seq <= maxSeq))
+        var seqMap = new Dictionary<long, long>();
+        foreach (var m in messages)
         {
             var oldId = m.Id;
+            var oldSeq = m.Seq;
             m.Id = Ids.New("msg");
             m.SessionId = to.Id;
             m.Seq = db.NextSeq();
+            seqMap[oldSeq] = m.Seq;
             foreach (var call in m.ToolCalls ?? [])
                 if (call.ChildSessionId is { } childId && db.Sessions.FindById(childId) is { } child)
                 {
@@ -134,6 +170,16 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
             db.Messages.Insert(m);
             copies.Add(m);
             newIds[oldId] = m;
+        }
+        // The copy renumbers every message, so the folding pointer has to follow: a message folded by a notice that
+        // travelled with the branch stays hidden, one whose notice stayed behind is unfolded again (folded messages
+        // of older data have no pointer; the position-based check before the copy already decided those).
+        foreach (var m in copies.Where(m => m.Compacted).ToList())
+        {
+            var foldedBy = m.CompactedBy;
+            m.CompactedBy = foldedBy > 0 ? seqMap.GetValueOrDefault(foldedBy) : 0;
+            if (foldedBy > 0 && m.CompactedBy == 0) m.Compacted = false;
+            db.Messages.Update(m);
         }
         foreach (var snapshot in db.Snapshots.Find(s => s.SessionId == fromId).ToList())
         {
@@ -153,7 +199,7 @@ public sealed class SessionStore(SofiaDb db, IEventBus bus, ProviderService prov
         var clone = CreateSession(workspace, child.Title, child, parent.Id, child.Agent);
         clone.Usage = child.Usage.Clone();
         clone.Context.Used = 0;
-        CopyHistory(child.Id, clone, long.MaxValue);
+        CopyHistory(child.Id, db.SessionMessages(child.Id), clone);
         SaveSession(clone);
         return clone;
     }

@@ -362,6 +362,12 @@ public sealed class Message
     [JsonIgnore] public long Seq { get; set; }
     /// <summary>Folded into a compaction summary; kept for the transcript, skipped in model history.</summary>
     [JsonIgnore] public bool Compacted { get; set; }
+    /// <summary>
+    /// Seq of the compaction notice that folded this message into its summary (0 when unknown, e.g. older data). A
+    /// revert or branch that drops that notice has to unfold the message again: hiding it is only meaningful while the
+    /// summary that replaced it is still part of the transcript.
+    /// </summary>
+    [JsonIgnore] public long CompactedBy { get; set; }
     /// <summary>UI-only card (permission/question prompts): never replayed to the model.</summary>
     [JsonIgnore] public bool Synthetic { get; set; }
     [JsonIgnore] public string? ReasoningSignature { get; set; }
