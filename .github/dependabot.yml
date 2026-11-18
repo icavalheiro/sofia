@@ -1,0 +1,110 @@
+# Dependabot version updates.
+#
+# Goal: keep dependencies fresh without opening PRs we would always close. Every `ignore` rule below
+# encodes a deliberate decision, so read the comment above it before removing one. (`ignore` entries
+# accept only `dependency-name` plus `versions`/`update-types` - unknown keys make GitHub reject the file.)
+#
+# Deliberately blocked majors:
+#   - .NET 11 packages: the projects target net10.0 (LTS). Microsoft.AspNetCore.Mvc.Testing 11 ships
+#     only lib/net11.0, and SignalR.Client 11 would force a TFM move. .NET 10 and 11 share the same
+#     support end date, so there is no upside yet. Revisit when the repo retargets to net11.0.
+#   - TypeScript >= 7: vue-tsc / Vue language-tools still need the TypeScript <= 6 compiler API; the
+#     native (Go) compiler needs the content-mapper plugin point that only lands in language-tools v4.
+#   - KaTeX >= 0.19: marked-katex-extension peers on "katex >=0.16 <0.19" (bump both together).
+#   - @microsoft/signalr >= 11: must stay aligned with the server's ASP.NET Core major (10).
+
+version: 2
+updates:
+  # Web UI (src/Sofia.UI/package.json + package-lock.json).
+  - package-ecosystem: npm
+    directory: /src/Sofia.UI
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      # One PR per ecosystem for minor/patch bumps; majors stay separate so they get reviewed alone.
+      ui-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # vue-tsc needs the TypeScript <= 6 API; TS 7 support requires language-tools v4 (alpha).
+      - dependency-name: typescript
+        versions:
+          - ">= 7"
+      # marked-katex-extension peer range is katex >=0.16 <0.19.
+      - dependency-name: katex
+        versions:
+          - ">= 0.19"
+      # Must match the server's ASP.NET Core major (currently 10).
+      - dependency-name: "@microsoft/signalr"
+        versions:
+          - ">= 11"
+
+  # NuGet package references across all csproj files under the repo root.
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      dotnet-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # v11 ships lib/net11.0 only; the projects target net10.0.
+      - dependency-name: Microsoft.AspNetCore.Mvc.Testing
+        versions:
+          - ">= 11"
+      # .NET 11 is STS with the same support end date as the net10.0 LTS we target.
+      - dependency-name: Microsoft.AspNetCore.SignalR.Client
+        versions:
+          - ">= 11"
+      # v6 exists only as prerelease; stay on the v5 line until it ships stable.
+      - dependency-name: LiteDB
+        versions:
+          - ">= 6"
+
+  # The .NET SDK pinned in global.json (kept inside the .NET 10 band, same reason as above).
+  - package-ecosystem: dotnet-sdk
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    ignore:
+      # Repo targets net10.0 (LTS): take SDK feature-band/patch updates only, never a major bump.
+      # This is the pattern Microsoft documents for the dotnet-sdk ecosystem.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # Third-party actions used by ci.yml and release.yml.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Base images in the root Dockerfile (node for the UI build stage, .NET for server/final stages).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    ignore:
+      # Build SDK image must stay on the net10.0 band.
+      - dependency-name: mcr.microsoft.com/dotnet/sdk
+        versions:
+          - ">= 11"
+      # Runtime image must match the target framework moniker.
+      - dependency-name: mcr.microsoft.com/dotnet/aspnet
+        versions:
+          - ">= 11"

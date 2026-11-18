@@ -11,8 +11,8 @@ jobs:
   ui:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -22,7 +22,7 @@ jobs:
         run: |
           npm ci
           npm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ui-dist
           path: src/Sofia.UI/dist
@@ -38,11 +38,11 @@ jobs:
     env:
       RID: ${{ matrix.rid }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ui-dist
           path: ui-dist
@@ -107,7 +107,7 @@ jobs:
           grep -q "\"version\":\"$VERSION\"" health.json
           curl -fsS http://127.0.0.1:5199/ | grep -q '<div id="app"'
           kill $pid || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.rid }}
           path: dist/*.zip
@@ -123,11 +123,11 @@ jobs:
     env:
       RID: ${{ matrix.rid }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ui-dist
           path: ui-dist
@@ -177,7 +177,7 @@ jobs:
         run: |
           mkdir -p dist
           (cd stage && zip -r -X "../dist/sofia-desktop-$VERSION-$RID.zip" "sofia-desktop-$VERSION-$RID")
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pkg-desktop-${{ matrix.rid }}
           path: dist/*.zip
@@ -189,8 +189,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: pkg-*
           merge-multiple: true

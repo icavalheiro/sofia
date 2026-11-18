@@ -15,7 +15,7 @@
     "@mantine-vue/hooks": "^3.9.0",
     "@mantine-vue/utils": "^3.9.0",
     "@microsoft/signalr": "^10.0.11",
-    "katex": "^0.18.10",
+    "katex": "^0.18.11",
     "lucide-vue-next": "^1.0.0",
     "marked": "^18.2.1",
     "marked-katex-extension": "^5.1.13",
@@ -24,8 +24,8 @@
   "devDependencies": {
     "@types/node": "^26.6.0",
     "@vitejs/plugin-vue": "^6.0.11",
-    "typescript": "~5.9.0",
+    "typescript": "~6.0.3",
     "vite": "^8.0.0",
-    "vue-tsc": "^3.3.0"
+    "vue-tsc": "^3.3.14"
   }
 }
