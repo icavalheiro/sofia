@@ -51,7 +51,6 @@ src/Sofia.UI/src/
 â”‚   â”‚                          #   permission cards, question cards, error banners,
 â”‚   â”‚                          #   provider retry notices, report cards, attachments
 â”‚   â”œâ”€â”€ RightPanel.vue         # workspace file changes / diff viewer
-â”‚   â”œâ”€â”€ BrowserPanel.vue       # live headless-browser view (canvas + input), see "Browser panel"
 â”‚   â”œâ”€â”€ SettingsPanel.vue      # modal: General, Models, MCP, Appearance tabs
 â”‚   â”œâ”€â”€ WorkspaceSettings.vue  # hover gear: icon, model, rename, remove
 â”‚   â”œâ”€â”€ SofiaIcon.vue          # inline SVG icon set (add entries to PATHS record)
@@ -241,15 +240,10 @@ global excludes), so the list matches what a commit could carry; reverting a
 message still restores those files. Actions: open folder, open in VS Code, open
 the native terminal, copy path.
 
-## Browser panel
+## Settings → General
 
-`BrowserPanel.vue`, toggled by the globe button in the chat header, shows the
-headless browser of the open conversation (see `docs/server_api.md`, "Live
-browser"). It opens a WebSocket only while visible, paints JPEG frames on a
-`<canvas>` and forwards mouse, wheel, keyboard and paste to the server, mapping
-pointer positions back to page coordinates through the letterboxed viewport.
-The panel opens itself on a `browser.updated` event with `agent: true` for the
-conversation on screen, shows a ring where the agent clicked, and locks input
-while `agentBusy`. "Desktop" renders the page at 1280px wide, "Fit" at the
-panel's own size; the panel can be dragged wider (width persisted in
-`localStorage`).
+The "Default browser" select (`GET /api/browsers`) lists the engines installed on
+the machine running the server and saves the choice as `ConfigDto.defaultBrowser`.
+There is no browser panel: the agent opens a real browser window on the server's
+desktop, the user works in it, and the chat shows the screenshots (see
+`docs/server_api.md`, "Browser window").

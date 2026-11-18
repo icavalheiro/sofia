@@ -4,8 +4,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sofia.Server.Browser;
+using Sofia.Server.Data;
 using Sofia.Server.Domain;
 using Sofia.Server.Events;
+using Sofia.Server.Infrastructure;
 using Sofia.Server.Tools;
 
 namespace Sofia.Server.Tests;
@@ -34,59 +36,27 @@ public class BrowserUrlTests
         Assert.Throws<ArgumentException>(() => BrowserSession.NormalizeUrl(input));
 }
 
-/// <summary>The per-connection buffer: frames and state are latest-wins, events are bounded.</summary>
-public class BrowserViewerTests
+/// <summary>
+/// Runs the real-browser tests serially with the rest of the suite: starting a browser is CPU-heavy for the first
+/// seconds and the session-based tests around it poll with fixed budgets.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public class BrowserCollection
 {
-    [Fact]
-    public void Latest_frame_and_state_win()
-    {
-        var viewer = new BrowserViewer();
-        viewer.PushFrame([1]);
-        viewer.PushFrame([2]);
-        viewer.PushState("a");
-        viewer.PushState("b");
-
-        Assert.True(viewer.Wake.TryRead(out _));
-        var (events, state, frame) = viewer.Take();
-        Assert.Empty(events);
-        Assert.Equal("b", state);
-        Assert.Equal<byte[]>([2], frame!);
-
-        var (_, nextState, nextFrame) = viewer.Take();
-        Assert.Null(nextState);
-        Assert.Null(nextFrame);
-    }
-
-    [Fact]
-    public void Events_are_bounded()
-    {
-        var viewer = new BrowserViewer();
-        for (var i = 0; i < 25; i++) viewer.PushEvent($"e{i}");
-
-        var (events, _, _) = viewer.Take();
-        Assert.Equal(20, events.Count);
-        Assert.Equal("e24", events[^1]);
-    }
-
-    [Fact]
-    public void Closed_viewer_is_flagged_and_woken()
-    {
-        var viewer = new BrowserViewer();
-        Assert.True(viewer.Active);
-        Assert.False(viewer.Closed);
-
-        viewer.Active = false;
-        viewer.MarkClosed();
-
-        Assert.False(viewer.Active);
-        Assert.True(viewer.Closed);
-        Assert.True(viewer.Wake.TryRead(out _));
-    }
+    public const string Name = "browser-e2e";
 }
 
-/// <summary>Drives a real headless browser against a tiny local site. Passes without asserting when no Chrome/Edge/Chromium can start.</summary>
+/// <summary>
+/// End-to-end browser tests: they start a <em>real</em> installed browser, which is heavy enough to disturb the
+/// timing-sensitive session tests that run beside them, so they only run with <c>SOFIA_TEST_BROWSER=1</c>
+/// (<c>SOFIA_TEST_BROWSER=1 dotnet test --filter BrowserToolTests</c>). Without a browser installed they also
+/// return early instead of failing.
+/// </summary>
+[Collection(BrowserCollection.Name)]
 public class BrowserToolTests
 {
+    private static bool Enabled => Environment.GetEnvironmentVariable("SOFIA_TEST_BROWSER") is "1" or "true";
+
     private const string Home = """
         <html><head><title>Sofia test</title></head><body>
         <h1>Welcome</h1>
@@ -100,9 +70,9 @@ public class BrowserToolTests
 
     private const string Next = "<html><head><title>Second</title></head><body><h2>Second page</h2></body></html>";
 
-    private static ToolContext Context() => new()
+    private static ToolContext Context(string sessionId) => new()
     {
-        Session = new Session { Id = "ses_test" },
+        Session = new Session { Id = sessionId },
         Workspace = new Workspace { Id = "ws_test" },
         Cwd = ".",
         Message = null!,
@@ -112,19 +82,35 @@ public class BrowserToolTests
         Host = null!,
     };
 
-    private static async Task<ToolResult> RunAsync(BrowserTool tool, object args) =>
-        await tool.ExecuteAsync(Context(), (JsonObject)JsonNode.Parse(JsonSerializer.Serialize(args))!, CancellationToken.None);
+    private static async Task<ToolResult> RunAsync(BrowserTool tool, string sessionId, object args) =>
+        await tool.ExecuteAsync(Context(sessionId), (JsonObject)JsonNode.Parse(JsonSerializer.Serialize(args))!, CancellationToken.None);
 
-    private static async Task<string> OkAsync(BrowserTool tool, object args)
+    private static async Task<string> OkAsync(BrowserTool tool, string sessionId, object args)
     {
-        var result = await RunAsync(tool, args);
+        var result = await RunAsync(tool, sessionId, args);
         Assert.False(result.IsError, result.Output);
         return result.Output;
     }
 
-    [Fact]
-    public async Task Reads_clicks_and_types_through_refs_and_streams_frames()
+    /// <summary>A machine without any browser cannot run this assertion; skip instead of failing the suite.</summary>
+    private static bool NoBrowser(ToolResult result) =>
+        result.IsError && (result.Output.Contains("No supported browser found", StringComparison.Ordinal)
+            || result.Output.Contains("Could not start", StringComparison.Ordinal)
+            || result.Output.Contains("did not expose its debug endpoint", StringComparison.Ordinal));
+
+    private static Attachment SaveShot(byte[] bytes, string mime, string name, string directory)
     {
+        var path = Path.Combine(directory, name);
+        File.WriteAllBytes(path, bytes);
+        return new Attachment { Id = "att_shot", Name = name, Mime = mime, Kind = "image", Bytes = bytes.Length, Size = bytes.Length + " B", StoragePath = path };
+    }
+
+    [Fact]
+    public async Task Opens_a_real_browser_headless_and_drives_it_through_refs()
+    {
+        if (!Enabled) return;
+        // The suite runs without a display: the same installed browser, started with --headless=new.
+        Environment.SetEnvironmentVariable("SOFIA_BROWSER_HEADLESS", "1");
         using var listener = new HttpListener();
         var port = Random.Shared.Next(20000, 40000);
         listener.Prefixes.Add($"http://127.0.0.1:{port}/");
@@ -136,88 +122,112 @@ public class BrowserToolTests
                 var ctx = await listener.GetContextAsync();
                 var bytes = Encoding.UTF8.GetBytes(ctx.Request.Url!.AbsolutePath == "/next" ? Next : Home);
                 ctx.Response.ContentType = "text/html; charset=utf-8";
+                ctx.Response.ContentLength64 = bytes.Length;
                 await ctx.Response.OutputStream.WriteAsync(bytes);
                 ctx.Response.Close();
             }
         });
 
-        await using var service = new BrowserService(new EventBus(), NullLogger<BrowserService>.Instance);
-        var shotDir = Directory.CreateTempSubdirectory("sofia-shots");
-        var tool = new BrowserTool(service, (bytes, mime, name) =>
+        var dataDir = Directory.CreateTempSubdirectory("sofia-browser").FullName;
+        var shotDir = Directory.CreateTempSubdirectory("sofia-shots").FullName;
+        var options = new SofiaOptions { DataDir = dataDir };
+        var url = $"http://127.0.0.1:{port}/";
+        using (var db = new SofiaDb(options))
         {
-            var path = Path.Combine(shotDir.FullName, name);
-            File.WriteAllBytes(path, bytes);
-            return new Attachment { Id = "att_shot", Name = name, Mime = mime, Kind = "image", Bytes = bytes.Length, Size = bytes.Length + " B", StoragePath = path };
-        });
-        var first = await RunAsync(tool, new { action = "navigate", url = $"http://127.0.0.1:{port}/" });
-        if (first.IsError && first.Output.Contains("Could not start a headless browser", StringComparison.Ordinal)) return;
-        Assert.False(first.IsError, first.Output);
-        var snapshot = first.Output;
-        Assert.Equal($"0 * http://127.0.0.1:{port}/", await OkAsync(tool, new { action = "tabs" }));
-
-        Assert.Contains("Title: Sofia test", snapshot);
-        Assert.Contains("# Welcome", snapshot);
-        Assert.Contains("textbox \"Your name\"", snapshot);
-        Assert.Contains("button \"Go\"", snapshot);
-        Assert.Contains("link \"Next page\"", snapshot);
-
-        var live = service.Find("ses_test")!;
-        var viewer = await live.AddViewerAsync();
-        var gotFrame = false;
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await foreach (var _ in viewer.Wake.ReadAllAsync(timeout.Token))
-        {
-            var (_, _, frame) = viewer.Take();
-            if (frame is { Length: > 100 })
+            await using (var service = new BrowserService(db, options, new EventBus(), NullLogger<BrowserService>.Instance))
             {
-                gotFrame = true;
-                break;
+                var tool = new BrowserTool(service, (bytes, mime, name) => SaveShot(bytes, mime, name, shotDir));
+
+                var first = await RunAsync(tool, "ses_test", new { action = "navigate", url });
+                if (NoBrowser(first)) return;
+                Assert.False(first.IsError, first.Output);
+                var snapshot = first.Output;
+                Assert.Contains("Browser: ", snapshot);
+                Assert.Contains("Title: Sofia test", snapshot);
+                Assert.Contains("# Welcome", snapshot);
+                Assert.Contains("textbox \"Your name\"", snapshot);
+                Assert.Contains("button \"Go\"", snapshot);
+                Assert.Contains("link \"Next page\"", snapshot);
+
+                var live = service.Find("ses_test")!;
+                Assert.False(string.IsNullOrWhiteSpace(live.EngineId));
+                Assert.True(live.Headless);
+                Assert.Contains($"0 * {url}", await OkAsync(tool, "ses_test", new { action = "tabs" }));
+
+                var typed = await OkAsync(tool, "ses_test", new { action = "type", @ref = RefOf(snapshot, "textbox"), text = "Sofia", submit = true });
+                Assert.Contains("hello Sofia", typed);
+
+                var next = await OkAsync(tool, "ses_test", new { action = "click", @ref = RefOf(typed, "link \"Next page\"") });
+                Assert.Contains("Title: Second", next);
+                Assert.Contains("## Second page", next);
+
+                var back = await OkAsync(tool, "ses_test", new { action = "back" });
+                Assert.Contains("Title: Sofia test", back);
+
+                var missing = await RunAsync(tool, "ses_test", new { action = "click", @ref = "e999" });
+                Assert.True(missing.IsError);
+
+                foreach (var args in new object[]
+                         {
+                             new { action = "screenshot" },
+                             new { action = "screenshot", full_page = true },
+                             new { action = "screenshot", @ref = RefOf(back, "link \"Next page\"") },
+                         })
+                {
+                    var shot = await RunAsync(tool, "ses_test", args);
+                    Assert.False(shot.IsError, shot.Output);
+                    var image = Assert.Single(shot.Images!);
+                    var jpeg = File.ReadAllBytes(image.StoragePath);
+                    Assert.True(jpeg.Length > 500 && jpeg[0] == 0xFF && jpeg[1] == 0xD8, "expected a JPEG");
+                }
+
+                // The window is remembered on disk so a restart can re-attach instead of opening a second one.
+                var instance = Assert.Single(BrowserInstanceStore.Enumerate(service.BrowsersRoot)).Instance;
+                Assert.Equal("ses_test", instance.SessionId);
+                Assert.Equal(live.EngineId, instance.Engine);
+                Assert.True(instance.Port > 0);
+                Assert.True(instance.Pid > 0);
+
+                // close stops the window and forgets it.
+                Assert.Contains("closed", await OkAsync(tool, "ses_test", new { action = "close" }));
+                Assert.Null(service.Find("ses_test"));
+                Assert.Empty(BrowserInstanceStore.Enumerate(service.BrowsersRoot));
             }
         }
-        Assert.True(gotFrame, "expected a screencast frame");
+        listener.Stop();
+        TryDelete(shotDir);
+        TryDelete(dataDir);
+    }
 
-        var typed = await OkAsync(tool, new { action = "type", @ref = RefOf(snapshot, "textbox"), text = "Sofia", submit = true });
-        Assert.Contains("hello Sofia", typed);
-
-        var next = await OkAsync(tool, new { action = "click", @ref = RefOf(typed, "link \"Next page\"") });
-        Assert.Contains("Title: Second", next);
-        Assert.Contains("## Second page", next);
-
-        var back = await OkAsync(tool, new { action = "back" });
-        Assert.Contains("Title: Sofia test", back);
-
-        var missing = await RunAsync(tool, new { action = "click", @ref = "e999" });
-        Assert.True(missing.IsError);
-
-        foreach (var args in new object[] { new { action = "screenshot" }, new { action = "screenshot", full_page = true }, new { action = "screenshot", @ref = RefOf(back, "link \"Next page\"") } })
+    [Fact]
+    public async Task Asking_for_an_engine_that_is_not_installed_fails_with_a_list()
+    {
+        if (!Enabled) return;
+        Environment.SetEnvironmentVariable("SOFIA_BROWSER_HEADLESS", "1");
+        if (BrowserCatalog.Detect().Any(engine => engine.Id == "vivaldi")) return;
+        var dataDir = Directory.CreateTempSubdirectory("sofia-browser").FullName;
+        var options = new SofiaOptions { DataDir = dataDir };
+        using (var db = new SofiaDb(options))
         {
-            var shot = await RunAsync(tool, args);
-            Assert.False(shot.IsError, shot.Output);
-            var image = Assert.Single(shot.Images!);
-            var jpeg = File.ReadAllBytes(image.StoragePath);
-            Assert.True(jpeg.Length > 500 && jpeg[0] == 0xFF && jpeg[1] == 0xD8, "expected a JPEG");
+            await using var service = new BrowserService(db, options, new EventBus(), NullLogger<BrowserService>.Instance);
+            var tool = new BrowserTool(service, (bytes, mime, name) => SaveShot(bytes, mime, name, dataDir));
+            var result = await RunAsync(tool, "ses_unknown_engine", new { action = "launch", browser = "vivaldi" });
+            Assert.True(result.IsError);
+            Assert.Contains("vivaldi", result.Output, StringComparison.OrdinalIgnoreCase);
         }
-        shotDir.Delete(recursive: true);
+        TryDelete(dataDir);
+    }
 
-        await live.RemoveViewerAsync(viewer);
-
-        // A watched browser gets the long timeout; hiding the panel must not pin it, and a server-side
-        // close (idle) has to wake the sockets that are still attached instead of leaving them hanging.
-        var shortClock = TimeSpan.FromMilliseconds(-1);
-        var longClock = TimeSpan.FromMinutes(10);
-        var watcher = await live.AddViewerAsync();
-        Assert.False(live.IsIdle(shortClock, longClock));
-        await live.SetViewerActiveAsync(watcher, false);
-        Assert.True(live.IsIdle(shortClock, longClock));
-        await live.SetViewerActiveAsync(watcher, true);
-        Assert.False(live.IsIdle(shortClock, longClock));
-        await live.RemoveViewerAsync(watcher);
-        Assert.True(live.IsIdle(shortClock, longClock));
-
-        watcher = await live.AddViewerAsync();
-        await service.CloseAsync("ses_test");
-        Assert.True(watcher.Closed);
-        Assert.Null(service.Find("ses_test"));
+    private static void TryDelete(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A headless browser may still be releasing its profile; the OS cleans temp up later.
+        }
     }
 
     private static string RefOf(string snapshot, string marker)

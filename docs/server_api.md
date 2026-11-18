@@ -56,7 +56,7 @@ interface SofiaEvent {
 | `lsp.status` | `LspServerView` | Language server status changed (started, crashed, shut down, restarted) |
 | `models.updated` | `{}` | Re-fetch `/api/models` and `/api/providers` |
 | `config.changed` | `{ scope: 'global' \| 'project', directory }` | Command / prompt / skill / agent Markdown or `AGENTS.md` / `CLAUDE.md` changed on disk (debounced per root, ≈400ms). `directory` is the harness home (`~/.sofia`) for `global` or the workspace folder for `project`; re-fetch `/api/commands`, `/api/agents` and — for `global` — `/api/skills` |
-| `browser.updated` | `{ open: boolean, agent: boolean, url?: string }` (`sessionId` = root conversation) | The conversation's headless browser opened/closed, or the agent used it (`agent: true`: the UI opens the browser panel) |
+| `browser.updated` | `{ open: boolean, agent: boolean, url?: string, engine: string, title: string }` (`sessionId` = root conversation) | The conversation's browser window was opened or used by the agent (`agent: true`), or it was closed |
 | `tasks.updated` | `{ sessionId, tasks: TaskDto[] }` | The conversation's task list changed (managed by the `tasks` tool) |
 
 `SessionStatus = 'idle' | 'working' | 'waiting' (queued behind another conversation for a single-client model; clients show no spinner) | 'permission' | 'question' | 'error'`.
@@ -567,53 +567,57 @@ conversation and on server shutdown.
 - `POST /api/processes/{id}/kill` → the updated process (404 if unknown)
 - `POST /api/processes/clear` → `{ removed }` (forgets the finished ones — exited or killed — and keeps the running ones)
 
-## Live browser
+## Browser window
 
-Each conversation can own one headless Chromium (system Chrome/Edge, else a
-one-time Playwright Chromium download), driven by the agent's `browser` tool and
-viewable/drivable from the UI. Subagent conversations share their parent's
-browser (`parentId` is resolved to the root). Nothing opens on the desktop.
+Each conversation can own **one real browser window** on the machine running the
+server: an installed Chrome-family browser (`chrome`, `edge`, `brave`, `vivaldi`,
+`opera`, `chromium`) that Sofia starts itself and drives over CDP, or the
+installed Firefox driven over WebDriver BiDi (channel `moz-firefox`). The agent's
+`browser` tool drives it; the user works in the same window natively (right-click
+menu, DevTools, native `<select>`/file pickers, their own keyboard layout).
+Nothing is streamed to the UI — screenshots in the chat are how a remote user
+sees the page. Subagent conversations share their parent's window (`parentId` is
+resolved to the root).
 
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
-| `GET` | `/api/sessions/{id}/browser` | – | `{ open: boolean, url?: string }` |
-| `POST` | `/api/sessions/{id}/browser/close` | – | `204` (closes the context and its tabs) |
-| `WS` | `/api/sessions/{id}/browser/stream` | – | live view, below (remote clients pass `?access_token=`) |
+| `GET` | `/api/browsers` | – | `{ engines: [{ id, kind, path, version }], auto: string \| null, default: string, headless: boolean }` |
+| `GET` | `/api/sessions/{id}/browser` | – | `{ open: boolean, engine?: string, url?: string, title?: string }` |
+| `POST` | `/api/sessions/{id}/browser/open` | `{ browser?: string }` | `{ open: true, engine, url, title }` (`400` when that engine is not installed) |
+| `POST` | `/api/sessions/{id}/browser/close` | – | `204` (closes the window) |
 
-The stream **only starts a browser with `?create=1`**. A plain connection
-attaches to the live session or answers `{ type: 'state', closed: true }` and
-closes with code `4001`: the client must not reconnect in a loop, because the
-server closes browsers on purpose when they go idle (3 min without viewers, 10
-min with a viewer but no agent/user activity) — a headless browser costs
-0.4–2 cores and 0.7–1.5 GB, so it never outlives its use.
+Engine ids are `auto`, `chrome`, `edge`, `brave`, `vivaldi`, `opera`, `chromium`
+and `firefox`; `kind` is `chromium` (CDP) or `firefox` (BiDi). `auto` resolves to
+the first installed Chromium-family engine, else Firefox — asking for an engine
+that is not installed fails with a message listing what is. Detection uses the
+platform install paths (plus `PATH`); `SOFIA_BROWSER_<ID>` (for example
+`SOFIA_BROWSER_CHROME=C:\tools\chrome.exe`) overrides the executable.
 
-Stream messages from the server: **binary** = one JPEG frame of the active tab
-(CDP screencast; only while a viewer is connected, paced at 8 fps); **text** = JSON:
-
-```ts
-{ type: 'state', url, title, loading, agentBusy,
-  viewport: { width, height }, mode, tabs: { index, url, active }[] }
-{ type: 'state', closed: true }         // no browser running (socket then closes with 4001)
-{ type: 'cursor', x, y, action }        // where the agent is acting (viewport px)
-{ type: 'error', message, fatal? }      // fatal: the browser could not start
-```
-
-Messages from the client (JSON, ignored while `agentBusy` is true):
-
-```ts
-{ type: 'active', value }               // panel visible + window focused; false pauses the screencast
-{ type: 'navigate', url } | { type: 'back' } | { type: 'forward' } | { type: 'reload' }
-{ type: 'resize', width, height }       // viewport in CSS px (1–8192)
-{ type: 'resize', mode }               // desktop | desktop1080 | mobile | mobilePortrait | mobileLandscape (sets viewport + mobile emulation)
-{ type: 'mouse', action: 'move'|'down'|'up'|'wheel', x, y, button?, deltaX?, deltaY? }  // viewport px
-{ type: 'key', key }                    // 'a', 'Enter', 'Control+a' (Playwright key names)
-{ type: 'text', text }                  // paste / IME text
-{ type: 'tab', index } | { type: 'closeTab', index } | { type: 'newTab', url? }
-```
+- **Profiles**: one per conversation and engine, `<SOFIA_HOME>/browsers/<sessionId>/<engine>/`,
+  so cookies and logins survive a restart. The daily-driver profile is never used (Chrome 136+
+  refuses remote debugging on it, and a running Chrome holds the profile lock). Deleting a
+  conversation closes its window and removes its profiles.
+- **Launch**: Chromium gets `--user-data-dir=<profile> --remote-debugging-port=<free 127.0.0.1 port>`
+  (loopback only, never exposed) plus `--no-first-run --no-default-browser-check
+  --no-service-autorun --disable-features=Translate --remote-allow-origins=*`; Sofia then
+  connects with `ConnectOverCDP(NoDefaults: true)`, so the window carries no Playwright
+  automation flags and uses the default browser context. Firefox is opened with
+  `LaunchPersistentContext(Channel: "moz-firefox")`.
+- **Re-attach**: `<profile>/instance.json` (`{ engine, executable, pid, port, sessionId, startedAt }`)
+  lets a restarted server re-attach to a window the user still has open. Records whose
+  conversation is gone are killed (only when the pid still runs the recorded executable) and
+  records that point at nothing are pruned. Firefox is launch-only (Playwright owns the
+  process), so it cannot be re-attached.
+- **Headless**: `SOFIA_BROWSER_HEADLESS=1`, or no display at all (Docker/CI, Linux without
+  `DISPLAY`/`WAYLAND_DISPLAY`), starts the same installed browser with `--headless=new`; the
+  agent still works through snapshots and screenshots. With no engine installed, the headless
+  path falls back to Playwright's bundled Chromium (downloaded once).
+- **Lifetime**: the window stays open until the agent's `close` action, the user closes it
+  (the next request reports `open: false`), or the conversation is deleted. There is no idle
+  timer — the user may be browsing in it.
 
 Only `http(s)` pages (and `about:blank`) can be opened; bare hosts get a scheme
-and plain text becomes a web search. The browser closes with its conversation
-and after 20 idle minutes without viewers.
+and plain text becomes a web search.
 
 ## Workspace files, VCS, attachments
 
@@ -666,6 +670,7 @@ interface ConfigDto {
   sandboxNetwork: boolean       // allow network access inside the sandbox
   applyPatch: 'auto' | 'always' | 'never'  // exposure of the apply_patch tool (default 'auto')
   readBeforeEdit: boolean       // require a fresh read before edit/apply_patch/write-over-existing (default true)
+  defaultBrowser: string        // browser the `browser` tool opens: 'auto' (first installed Chromium-family) or an engine id (default 'auto')
   sandboxStatus: { available: boolean; backend: string; reason?: string }  // read-only
   lsp: {                        // language servers (see "Language servers (LSP)")
     enabled: boolean            // global switch for all LSP features

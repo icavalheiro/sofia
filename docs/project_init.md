@@ -27,7 +27,8 @@ src/Sofia.Server/
 ├── Tools/                     # read, write, edit, apply_patch (Codex-style patches + PatchParser +
 │                              #   ReadTracker), ls, find, grep, bash/powershell, web_fetch, web_search,
 │                              #   browser, question, task, skill, notes, memory, sofia_info
-├── Browser/BrowserService.cs  # headless Chromium (Playwright), per-conversation contexts, screencast
+├── Browser/                   # BrowserCatalog (installed engines), BrowserLauncher (CDP attach /
+│                              #   Firefox BiDi), BrowserInstanceStore (re-attach records), session + service
 ├── Agent/                     # AgentService, SessionRun (the loop), prompts,
 │                              #   history, tool registry, store, maintenance
 ├── Changes/ChangeTracker.cs   # per-message file snapshots, session diff, revert
@@ -268,43 +269,65 @@ Settings: `ServerConfig.Lsp` (`enabled`, `autoDiagnostics`, per-server
 `POST /api/lsp/{id}/install` (runs the install command; the UI confirms first),
 `POST /api/lsp/{id}/restart`.
 
-## Browser (`Browser/BrowserService.cs`, `Tools/BrowserTool.cs`)
+## Browser (`Browser/`, `Tools/BrowserTool.cs`)
 
-The `browser` tool (build and general agents) drives a real headless Chromium so
-the user can watch the agent work inside Sofia instead of getting a Chrome window
-on their desktop. `BrowserService` launches one shared browser through Playwright
-(system Chrome, then Edge, then a one-time download of Playwright's Chromium) and
-gives every conversation an isolated context (own cookies, tabs; subagents share
-their parent's). It closes with the conversation and after 20 idle minutes.
+The `browser` tool (build and general agents) opens a **real browser window on the
+desktop of the machine running the server** — an installed Chrome-family browser
+that Sofia starts itself and drives over CDP, or the installed Firefox driven over
+WebDriver BiDi. There is no live view: nothing is streamed to the UI, the user
+simply uses the window (right-click menu, DevTools, native `<select>`/file pickers,
+their own keyboard layout and IME) while the agent reads the page through
+snapshots and screenshots. A remote client only sees the chat screenshots.
 
+- **Detection:** `BrowserCatalog` finds the installed engines (`chrome`, `edge`,
+  `brave`, `vivaldi`, `opera`, `chromium`, `firefox`) from the platform install
+  paths plus `PATH`; `SOFIA_BROWSER_<ID>` overrides one. `auto` (the
+  `ServerConfig.DefaultBrowser` default) is the first installed Chromium-family
+  engine, else Firefox; asking for a missing engine fails listing what is installed.
+- **Launch:** `BrowserLauncher` starts the Chromium binary itself with
+  `--user-data-dir=<profile> --remote-debugging-port=<free loopback port>` and
+  connects with `ConnectOverCDP(NoDefaults: true, IsLocal: true)`, so the window has
+  no Playwright automation flags and the session drives `browser.Contexts[0]`
+  (an attached browser cannot create contexts). Firefox uses
+  `LaunchPersistentContext(Channel: "moz-firefox")`, which is launch-only: it cannot
+  outlive the server.
+- **Profiles:** `<SOFIA_HOME>/browsers/<sessionId>/<engine>/` per conversation and
+  engine, so logins survive restarts. The daily-driver profile is never touched
+  (Chrome 136+ refuses remote debugging on it and a running Chrome locks it).
+  `<profile>/instance.json` records engine/executable/pid/port/session; at startup
+  `BrowserInstanceStore.Reconcile` attaches windows whose conversation still exists,
+  kills windows whose conversation is gone (verifying the pid's executable first) and
+  prunes records that point at nothing. Deleting a conversation closes its window and
+  removes its profiles (`BrowserCleanupHandler`).
+- **Lifetime:** no idle timer. The window closes on the agent's `close` action, when
+  the user closes it (`Browser.Disconnected` → publish `open: false`), or when the
+  conversation is deleted. One Chromium per conversation costs 0.5–1.5 GB, which is
+  why opening one is an explicit, visible action.
+- **Headless:** `SOFIA_BROWSER_HEADLESS=1`, or no display (Docker/CI, Linux without
+  `DISPLAY`/`WAYLAND_DISPLAY`), uses the same engine with `--headless=new`; with no
+  engine installed at all the headless path falls back to Playwright's bundled
+  Chromium. The debug port is loopback-only and never exposed.
 - **Reading pages:** `snapshot` walks the visible DOM and returns a text outline
   where interactive elements carry refs (`[e12] button "Go"`), stored as
   `data-sofia-ref` attributes; click/type/select/hover/press/scroll address those
   refs. Every acting call returns a fresh snapshot, so one call per step is enough.
-  Other actions: navigate, wait, back/forward/reload, evaluate, tabs/new_tab/switch_tab/close_tab, close.
+  The user may navigate between calls, so refs can be stale — the tool answers with
+  "take a new snapshot". Other actions: launch, navigate, wait, back/forward/reload
+  (history is walked through the page so a back/forward-cache restore does not wait
+  for a navigation event that never fires), evaluate, tabs/new_tab/switch_tab/
+  close_tab, focus, close.
 - **Screenshots:** `screenshot` (optionally `ref` for one element or `full_page`, capped at
-  6000px) saves a JPEG as an attachment and returns it in `ToolResult.Images`; the
-  tool card shows it and `ToolCall.images` carries it. Tool results are text-only, so
-  `HistoryBuilder` sends the image in a user turn right after the tool results, only
-  for models not known to be text-only, and only the latest 2 screenshots are resent
-  as images (older ones become a text note).
-- **Live view:** a CDP screencast (`Page.startScreencast`, JPEG, 1280 px, quality
-  45, acknowledgements paced to 8 fps) is pushed over the
-  `/api/sessions/{id}/browser/stream` WebSocket only while a viewer is connected
-  *and active* (`{ type: 'active' }`: panel visible, window focused); viewers also
-  send mouse/keyboard input, so the user can log in or solve a captcha. While a
-  tool call runs the browser is `agentBusy` and user input is ignored. Click
-  targets are sent as `cursor` messages so the UI can show them.
-- **Cost control:** one headless Chromium costs 0.4–2 cores and 0.7–1.5 GB per
-  conversation, so `BrowserService` closes a session after 3 min without viewers
-  or 10 min with a viewer but no activity, tells the sockets with close code
-  `4001` (`?create=1` is required to start one), and keeps exactly one screencast
-  per session by stopping and starting it under a single lock. Launch flags block
-  autoplay (`--autoplay-policy=user-gesture-required`), mute audio and disable
-  background networking. Do not freeze pages with `Page.setWebLifecycleState`:
-  measured on headless Edge it made an animated page burn 3.7 cores while
-  "frozen" and 8.4 cores after resuming.
-- **Safety:** only `http(s)` URLs; the tool asks for approval (`ToolKind.Browser`).
+  6000px) takes a Playwright `page.screenshot` JPEG (works on both engines) and saves it as
+  an attachment in `ToolResult.Images`; the tool card shows it and `ToolCall.images`
+  carries it. Tool results are text-only, so `HistoryBuilder` sends the image in a user
+  turn right after the tool results, only for models not known to be text-only, and only
+  the latest 2 screenshots are resent as images (older ones become a text note).
+- **Dialogs** are still answered by the `page.Dialog` handler (alerts accepted, the rest
+  dismissed) and reported as a note, so an agent-driven page never hangs on a dialog.
+- **Safety:** only `http(s)` URLs; the tool asks for approval (`ToolKind.Browser`) — a
+  visible window on the user's desktop is more intrusive than a headless one. The CDP
+  debug port is an unauthenticated local control surface, bound to `127.0.0.1` and one
+  port per session.
 
 ## Knowledge notes (`Agent/KnowledgeService.cs`)
 

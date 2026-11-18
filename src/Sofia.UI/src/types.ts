@@ -276,6 +276,8 @@ export interface ConfigDto
   applyPatch: 'auto' | 'always' | 'never';
   /** Require a fresh `read` before edit / apply_patch / write-over-existing. */
   readBeforeEdit: boolean;
+  /** Browser the `browser` tool opens: 'auto' (first installed Chrome-family engine) or an engine id. */
+  defaultBrowser: string;
   /** Language servers (LSP); see `LspServerView`. */
   lsp: {
     enabled: boolean;
@@ -285,6 +287,29 @@ export interface ConfigDto
   sandboxStatus: { available: boolean; backend: string; reason?: string };
   dataDir: string;
   configPath: string;
+}
+
+/** An installed browser the server can drive (`GET /api/browsers`). */
+export interface BrowserEngineDto
+{
+  /** Catalog id: chrome, edge, brave, vivaldi, opera, chromium or firefox. */
+  id: string;
+  /** Automation family: 'chromium' (CDP) or 'firefox' (WebDriver BiDi). */
+  kind: string;
+  path: string;
+  version?: string | null;
+}
+
+/** Installed browsers plus what `auto` currently resolves to. */
+export interface BrowserListDto
+{
+  engines: BrowserEngineDto[];
+  /** Engine `auto` picks; null when nothing is installed. */
+  auto: string | null;
+  /** Engine the server config currently asks for. */
+  default: string;
+  /** True when the server opens browsers without a window (no display, or SOFIA_BROWSER_HEADLESS=1). */
+  headless: boolean;
 }
 
 /** Per-language-server settings override (Settings → Language servers). */

@@ -85,6 +85,7 @@ builder.Services.AddSingleton<ProcessManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessManager>());
 builder.Services.AddSingleton<IEventHandler, ProcessCleanupHandler>();
 builder.Services.AddSingleton<IEventHandler, BrowserCleanupHandler>();
+builder.Services.AddHostedService<BrowserStartupService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<McpManager>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LspManager>());
 builder.Services.AddSingleton<ToolRegistry>();

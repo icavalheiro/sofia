@@ -512,6 +512,8 @@ public sealed class ServerConfig
     public List<string> MultiClientModels { get; set; } = [];
     /// <summary>Language Server Protocol settings (diagnostics, definition/references/hover, rename).</summary>
     public LspConfig Lsp { get; set; } = new();
+    /// <summary>Browser the `browser` tool opens: 'auto' (first installed Chromium-family engine) or a catalog id.</summary>
+    public string DefaultBrowser { get; set; } = "auto";
 }
 
 /// <summary>Per-language server override: `Enabled` gates the whole language, `Command` replaces the built-in command line.</summary>

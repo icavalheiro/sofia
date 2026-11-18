@@ -18,6 +18,7 @@ import {
 import { api, installLspServer, listLspServers, onServerEvent, restartLspServer } from '@/services/sofia'
 import { useI18n } from '@/i18n'
 import type {
+  BrowserListDto,
   ConfigDto,
   CopilotDeviceFlow,
   CopilotLoginPoll,
@@ -487,6 +488,33 @@ async function refreshConfig(): Promise<void> {
   }
 }
 
+// --- installed browsers (Settings → General: default browser) ----------------------
+const browsers = ref<BrowserListDto | null>(null)
+
+async function refreshBrowsers(): Promise<void> {
+  try {
+    browsers.value = await api<BrowserListDto>('GET', '/api/browsers')
+  } catch {
+    // The server may be older than the UI: hide the picker instead of breaking the tab.
+    browsers.value = null
+  }
+}
+
+/** Options of the default-browser select: auto, the installed engines, and the saved one if it is missing. */
+const browserOptions = computed(() => {
+  const installed = browsers.value?.engines ?? []
+  const options = installed.map((engine) => ({ id: engine.id, label: t(`settings.browser.${engine.id}`) }))
+  const saved = config.value?.defaultBrowser
+  if (saved && saved !== 'auto' && !options.some((option) => option.id === saved)) {
+    options.push({ id: saved, label: `${t(`settings.browser.${saved}`)} (not installed)` })
+  }
+  return options
+})
+
+function browserLabel(id: string | null | undefined): string {
+  return id ? t(`settings.browser.${id}`) : t('settings.browser.auto')
+}
+
 /** PATCHes the server config (optimistic; re-read on failure). */
 async function saveConfig(patch: Partial<ConfigDto>): Promise<void> {
   if (!config.value) return
@@ -580,11 +608,16 @@ function saveSearxng(): void {
   void saveConfig({ searxngUrl: searxngDraft.value.trim() })
 }
 
+function saveDefaultBrowser(event: Event): void {
+  void saveConfig({ defaultBrowser: (event.target as HTMLSelectElement).value })
+}
+
 watch(
   () => props.open && tab.value === 'general',
   (active) => {
     if (!active) return
     void refreshConfig()
+    void refreshBrowsers()
     void rediscoverModels()
   },
   { immediate: true },
@@ -1107,6 +1140,29 @@ onBeforeUnmount(stopEvents)
                       @change="saveShell"
                       @keyup.enter="saveShell"
                     />
+                  </div>
+
+                  <div class="row">
+                    <span class="row-text">
+                      <span class="row-title">{{ t('settings.defaultBrowser') }}</span>
+                      <span class="row-sub">
+                        {{ t('settings.defaultBrowserSub') }}
+                        <template v-if="browsers?.headless"> No display here, so the browser opens headless.</template>
+                        <template v-else-if="browsers && !browsers.engines.length"> No supported browser found.</template>
+                      </span>
+                    </span>
+                    <select
+                      class="field-input cfg-input"
+                      :value="config.defaultBrowser"
+                      @change="saveDefaultBrowser"
+                    >
+                      <option value="auto">
+                        {{ t('settings.browser.auto') }}<template v-if="browsers?.auto"> — {{ browserLabel(browsers.auto) }}</template>
+                      </option>
+                      <option v-for="engine in browserOptions" :key="engine.id" :value="engine.id">
+                        {{ engine.label }}
+                      </option>
+                    </select>
                   </div>
 
                   <label class="row">

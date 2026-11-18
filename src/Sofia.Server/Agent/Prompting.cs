@@ -120,7 +120,7 @@ public static class SystemPromptBuilder
         if (tools.Any(t => t.Name is "tasks" or "task_list" or "todo"))
             sb.AppendLine("- Use `tasks` to plan multi-step work: create a task list before starting, mark items in_progress as you work and completed when done, and make sure every task is finished (or explicitly skipped) before you finish. Never leave the list with unfinished items you forgot about.");
         if (tools.Any(t => t.Name == "browser"))
-            sb.AppendLine("- The `browser` tool is a headless browser the user watches live in the Sofia UI. Read the snapshot before acting, use refs from the latest snapshot only, and if a page needs a login, captcha or other personal input, ask the user to do it in the browser panel instead of guessing.");
+            sb.AppendLine("- The `browser` tool opens a real browser window on the server's desktop: the user can click, type and scroll in it while you work, so read the snapshot before acting, use refs from the latest snapshot only, and re-snapshot after the user may have moved. If a page needs a login, captcha or other personal input, ask the user to do it in that window instead of guessing; `screenshot` is how you see the page.");
         sb.AppendLine("- Be concise. Show file paths clearly. Format replies in Markdown.");
         sb.AppendLine(LanguageGuideline(session.Language));
         sb.AppendLine("</guidelines>");

@@ -16,7 +16,7 @@ public enum ToolKind
     Execute,
     /// <summary>Reads from the network.</summary>
     Network,
-    /// <summary>Drives the live browser (can click, type and submit on real sites); asks for approval like writes do.</summary>
+    /// <summary>Drives the conversation's browser window (can click, type and submit on real sites); asks for approval like writes do.</summary>
     Browser,
     /// <summary>Talks to the user.</summary>
     Interactive,

@@ -75,9 +75,20 @@ Environment variables the server reads:
   `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`,
   `XAI_API_KEY`, `OPENCODE_API_KEY`, `QWENCLOUD_API_KEY` (or set keys in Settings).
 
-Optional dependencies: `git`, `ripgrep` and a browser are not required; without
-them the related features degrade. The browser tool may download Chromium once
-on first use.
+Optional dependencies: `git`, `ripgrep` and an installed browser are not required;
+without them the related features degrade. The `browser` tool drives a browser
+**already installed on the machine running the server** — Google Chrome, Microsoft
+Edge, Brave, Vivaldi, Opera, Chromium or Firefox, looked up in the platform's
+standard install locations and on `PATH` (override one with
+`SOFIA_BROWSER_CHROME=/path/to/chrome`). It opens a **real window** on that
+machine's desktop, with a dedicated Sofia profile under
+`<SOFIA_HOME>/browsers/`, so the user can log in and keep using it; the agent
+drives the same window. Firefox is supported over WebDriver BiDi and is
+experimental. Chrome 136+ cannot be remote-debugged on your daily-driver profile,
+so Sofia always uses its own. With no display (Docker, CI) or
+`SOFIA_BROWSER_HEADLESS=1` the browser runs headless — the agent keeps working
+through snapshots and screenshots, and only then may Playwright download its own
+Chromium if no browser is installed at all.
 
 Unsigned builds: on Windows, SmartScreen may warn ("More info" → "Run anyway").
 On macOS, if Gatekeeper blocks it run

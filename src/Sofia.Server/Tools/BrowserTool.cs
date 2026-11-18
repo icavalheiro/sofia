@@ -10,8 +10,9 @@ using Sofia.Server.Infrastructure;
 namespace Sofia.Server.Tools;
 
 /// <summary>
-/// Drives the conversation's headless browser. The page is read as a text snapshot whose interactive elements carry
-/// short refs (e1, e2…); the user watches the same page live in the UI and can take over between calls.
+/// Drives the conversation's real browser window — an installed Chrome-family browser or Firefox, opened on the
+/// desktop of the machine running Sofia. The page is read as a text snapshot whose interactive elements carry short
+/// refs (e1, e2…); the user works in the same window natively, so refs may go stale between calls.
 /// </summary>
 public sealed partial class BrowserTool(BrowserService browser, Func<byte[], string, string, Attachment>? saveImage = null) : ITool
 {
@@ -19,28 +20,34 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
 
     private static readonly string[] Actions =
     [
-        "navigate", "snapshot", "screenshot", "click", "hover", "type", "select", "press", "scroll", "wait",
-        "back", "forward", "reload", "evaluate", "tabs", "new_tab", "switch_tab", "close_tab", "close", "resize",
+        "launch", "navigate", "snapshot", "screenshot", "click", "hover", "type", "select", "press", "scroll", "wait",
+        "back", "forward", "reload", "evaluate", "tabs", "new_tab", "switch_tab", "close_tab", "close", "focus",
     ];
 
     public string Name => "browser";
 
     public string Description =>
-        "Control a real headless web browser that the user can watch live in the Sofia UI. Open pages, read them as a text snapshot " +
-        "where interactive elements have refs (e1, e2…), then click, type, select, press keys and scroll. " +
-        "Typical loop: navigate, read the snapshot, act on a ref, read the new snapshot. Refs are renumbered by every snapshot, so use refs from the latest one. " +
-        "Use it for JavaScript-heavy sites, forms, logins (the user can take over in the UI) and checking web apps you build; prefer web_fetch/web_search for plain reading. " +
-        "Use screenshot to actually look at a page (layout, charts, images, visual bugs); it only helps if you can see images, otherwise rely on snapshot. " +
-        "Use the resize action to switch the browser mode: desktop1080 (1920x1080 desktop), mobilePortrait (393x852 mobile) or mobileLandscape (852x393 mobile). " +
-        "Mobile modes emulate a mobile user agent, touch and mobile detection (navigator.userAgent, maxTouchPoints, viewport).";
+        "Drive a real web browser window on the desktop of the machine running Sofia (an installed Chrome-family browser by " +
+        "default, Firefox optionally). Open pages, read them as a text snapshot where interactive elements have refs (e1, e2…), " +
+        "then click, type, select, press keys and scroll. Typical loop: launch or navigate, read the snapshot, act on a ref, read " +
+        "the new snapshot. Refs are renumbered by every snapshot, so use refs from the latest one. " +
+        "The window is the user's: they can click, type, scroll, right-click, open DevTools, upload files and log in while you " +
+        "work, so never assume the page is where your last call left it — take a new snapshot before acting. " +
+        "'browser' picks the engine (auto = first installed Chrome-family browser; chrome, edge, brave, vivaldi, opera, chromium " +
+        "and firefox are accepted; Firefox is experimental). 'screenshot' is the only way you see the page: use it for layout, " +
+        "charts and images when you can see images, otherwise rely on snapshot. 'close' closes the window; until then it stays " +
+        "open for the user. Prefer web_fetch/web_search for plain reading.";
 
     public ToolKind Kind => ToolKind.Browser;
 
     public JsonObject Parameters => Schema.Object(
-        ("action", Schema.Enum("What to do. navigate (url) · snapshot · screenshot (ref?, full_page?) · click (ref) · hover (ref) · type (ref?, text, submit?) · select (ref, value) · press (key, ref?) · " +
-            "scroll (direction up|down|top|bottom, amount?, ref?) · wait (seconds? or text?) · back · forward · reload · evaluate (script) · tabs · new_tab (url?) · switch_tab (tab) · close_tab (tab?) · close · " +
-            "resize (mode? or width? height?).", Actions), true),
+        ("action", Schema.Enum("What to do. launch (browser?) · navigate (url, browser?) · snapshot · screenshot (ref?, full_page?) · click (ref) · hover (ref) · " +
+            "type (ref?, text, submit?) · select (ref, value) · press (key, ref?) · scroll (direction up|down|top|bottom, amount?, ref?) · " +
+            "wait (seconds? or text?) · back · forward · reload · evaluate (script) · tabs · new_tab (url?) · switch_tab (tab) · close_tab (tab?) · " +
+            "focus · close.", Actions), true),
         ("url", Schema.String("Address for navigate/new_tab. Bare hosts get https://; plain text becomes a web search."), false),
+        ("browser", Schema.Enum("Browser to use for launch/navigate. 'auto' (default) picks the first installed Chrome-family browser; Firefox is experimental.",
+            BrowserCatalog.Auto, "chrome", "edge", "brave", "vivaldi", "opera", "chromium", "firefox"), false),
         ("ref", Schema.String("Element ref from the latest snapshot, e.g. e12."), false),
         ("text", Schema.String("Text to type (type) or to wait for (wait)."), false),
         ("value", Schema.String("Option value or label to choose (select)."), false),
@@ -52,9 +59,6 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         ("seconds", Schema.Integer("Seconds to wait (max 30)."), false),
         ("script", Schema.String("JavaScript expression or function to evaluate in the page; the result is returned as JSON."), false),
         ("tab", Schema.Integer("Tab number from the tabs action (0-based)."), false),
-        ("mode", Schema.Enum("Browser viewport/emulation mode for the resize action.", "desktop", "desktop1080", "mobile", "mobilePortrait", "mobileLandscape"), false),
-        ("width", Schema.Integer("Viewport width for the resize action (ignored when mode is given)."), false),
-        ("height", Schema.Integer("Viewport height for the resize action (ignored when mode is given)."), false),
         ("saveTo", Schema.String("Optional absolute file path to also save the screenshot to (for post-processing)."), false));
 
     public string Summarize(JsonObject args)
@@ -72,13 +76,13 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         if (action == "close")
         {
             await browser.CloseAsync(rootId);
-            return ToolResult.Ok("Browser closed.");
+            return ToolResult.Ok("Browser window closed.");
         }
 
         BrowserSession session;
         try
         {
-            session = await browser.GetAsync(rootId, ctx.Workspace.Id, ct);
+            session = await browser.EnsureAsync(rootId, ctx.Workspace.Id, Args.Optional(args, "browser"), ct);
         }
         catch (InvalidOperationException ex)
         {
@@ -88,22 +92,40 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         using var scope = await session.BeginAgentAsync(ct);
         try
         {
+            if (action == "focus")
+            {
+                await session.BringToFrontAsync();
+                return ToolResult.Ok($"{Prefix(session)}Brought the browser window to the front.");
+            }
+            if (action == "launch")
+            {
+                await session.BringToFrontAsync();
+                return ToolResult.Ok(await DescribeAsync(session,
+                    $"{Prefix(session)}Opened the browser window{(session.Headless ? " (headless: no display on this machine)" : "")}. " +
+                    $"Profile: {session.ProfileDir}", ctx.Config.MaxToolOutput));
+            }
             if (action == "screenshot") return await ScreenshotAsync(session, args);
             return ToolResult.Ok(await RunAsync(session, action, args, ctx.Config.MaxToolOutput, ct));
         }
         catch (PlaywrightException ex) when (ex.Message.Contains("Timeout", StringComparison.OrdinalIgnoreCase))
         {
-            return ToolResult.Fail($"{Text.FirstLine(ex.Message, 300)} The element may be hidden or covered; take a new snapshot and try again.");
+            return ToolResult.Fail($"{Prefix(session)}{Text.FirstLine(ex.Message, 300)} The element may be hidden or covered; take a new snapshot and try again.");
         }
         catch (PlaywrightException ex)
         {
-            return ToolResult.Fail(Text.FirstLine(ex.Message, 400));
+            return ToolResult.Fail($"{Prefix(session)}{Text.FirstLine(ex.Message, 400)}");
         }
         catch (ArgumentException ex)
         {
             return ToolResult.Fail(ex.Message);
         }
+        catch (InvalidOperationException ex)
+        {
+            return ToolResult.Fail($"{Prefix(session)}{Text.FirstLine(ex.Message, 300)}");
+        }
     }
+
+    private static string Prefix(BrowserSession session) => $"Browser: {session.EngineId}. ";
 
     private async Task<string> RunAsync(BrowserSession session, string action, JsonObject args, int maxChars, CancellationToken ct)
     {
@@ -157,15 +179,15 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 done = await WaitAsync(page, args, ct);
                 break;
             case "back":
-                await page.GoBackAsync();
+                await session.GoHistoryAsync(back: true);
                 done = "Went back.";
                 break;
             case "forward":
-                await page.GoForwardAsync();
+                await session.GoHistoryAsync(back: false);
                 done = "Went forward.";
                 break;
             case "reload":
-                await page.ReloadAsync();
+                await page.ReloadAsync(new PageReloadOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
                 done = "Reloaded.";
                 break;
             case "evaluate":
@@ -181,10 +203,11 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 return Text.Truncate(text, maxChars);
             }
             case "tabs":
-                return TabList(session);
+                return $"{Prefix(session)}\n{TabList(session)}";
             case "new_tab":
             {
                 var fresh = await session.Page.Context.NewPageAsync();
+                await session.ActivateAsync(fresh);
                 if (Args.Optional(args, "url") is { Length: > 0 } url) await session.GotoAsync(url);
                 done = $"Opened tab {session.Pages.IndexOf(fresh)}.";
                 break;
@@ -207,22 +230,6 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 done = $"Closed tab {index}.";
                 break;
             }
-            case "resize":
-            {
-                if (Args.Optional(args, "mode") is { Length: > 0 } mode)
-                {
-                    await session.SetModeAsync(mode, ct);
-                    done = $"Switched browser to {session.Mode} mode ({session.Width}x{session.Height}).";
-                }
-                else
-                {
-                    var w = Args.Int(args, "width") ?? session.Width;
-                    var h = Args.Int(args, "height") ?? session.Height;
-                    await session.ResizeAsync(w, h);
-                    done = $"Resized browser to {session.Width}x{session.Height}.";
-                }
-                break;
-            }
             default:
                 throw new ArgumentException($"Unknown action '{action}'.");
         }
@@ -235,10 +242,9 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
     {
         if (saveImage is null) return ToolResult.Fail("Screenshots are not available in this setup.");
         var page = session.Page;
-        byte[] bytes;
         var note = "";
         Clip? clip = null;
-        var captureBeyondViewport = false;
+        var fullPage = false;
         var quality = 75;
         if (Args.Optional(args, "ref") is { Length: > 0 })
         {
@@ -251,22 +257,23 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         }
         else if (Args.Bool(args, "full_page"))
         {
-            captureBeyondViewport = true;
+            fullPage = true;
             var height = await page.EvaluateAsync<int>("() => Math.ceil(document.documentElement.scrollHeight)");
             if (height > MaxShotHeight)
             {
-                clip = new Clip { X = 0, Y = 0, Width = session.Width, Height = MaxShotHeight };
+                var width = await page.EvaluateAsync<int>("() => Math.ceil(document.documentElement.scrollWidth)");
+                clip = new Clip { X = 0, Y = 0, Width = Math.Max(1, width), Height = MaxShotHeight };
                 note = $" The page is {height}px tall; only the first {MaxShotHeight}px are shown.";
             }
-            else
-            {
-                clip = new Clip { X = 0, Y = 0, Width = session.Width, Height = height < 1 ? session.Height : height };
-            }
         }
-        // Viewport shot: no clip -> CDP captures the current viewport (matches device metrics exactly).
 
-        bytes = await session.CaptureScreenshotAsync(clip, captureBeyondViewport, ScreenshotType.Jpeg, quality, CancellationToken.None);
-
+        var bytes = await page.ScreenshotAsync(new PageScreenshotOptions
+        {
+            Type = ScreenshotType.Jpeg,
+            Quality = quality,
+            FullPage = fullPage,
+            Clip = clip,
+        });
         var image = saveImage(bytes, "image/jpeg", $"browser-{DateTime.Now:yyyyMMdd-HHmmss}.jpg");
         var path = image.StoragePath;
         var saveTo = Args.Optional(args, "saveTo");
@@ -282,8 +289,8 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 note += $" Could not save to '{saveTo}': {Text.FirstLine(ex.Message, 120)}.";
             }
         }
-        var text = $"Screenshot attached ({image.Size}).{note}\nPath: {path}\nURL: {page.Url}\nTitle: {await page.TitleAsync()}\n" +
-                   $"Viewport: {session.Width}x{session.Height} (devicePixelRatio {session.DeviceScaleFactor}).\n" +
+        var text = $"{Prefix(session)}Screenshot attached ({image.Size}).{note}\nPath: {path}\nURL: {page.Url}\nTitle: {await page.TitleAsync()}\n" +
+                   "The window is visible to the user on the server's desktop; they may move it while you work.\n" +
                    "If you cannot see the image, use the snapshot action to read the page as text.";
         return ToolResult.WithImages(text, [image]);
     }
@@ -294,8 +301,7 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         if (!RefPattern().IsMatch(raw)) throw new ArgumentException($"'{raw}' is not a ref. Refs look like e12 and come from the latest snapshot.");
         var locator = session.Page.Locator($"[data-sofia-ref=\"{raw}\"]").First;
         if (await locator.CountAsync() == 0)
-            throw new ArgumentException($"Ref {raw} was not found. The page changed; run snapshot and use a fresh ref.");
-        await session.ShowCursorAsync(locator, verb);
+            throw new ArgumentException($"Ref {raw} was not found ({verb}). The page changed — the user may have navigated — so run snapshot and use a fresh ref.");
         return locator;
     }
 
@@ -334,7 +340,6 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
             return "Scrolled the element into view.";
         }
         var direction = (Args.Optional(args, "direction") ?? "down").ToLowerInvariant();
-        var amount = Args.Int(args, "amount") ?? (int)(session.Height * 0.8);
         switch (direction)
         {
             case "top":
@@ -345,9 +350,14 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 break;
             case "up":
             case "down":
-                await page.Mouse.MoveAsync(session.Width / 2f, session.Height / 2f);
+            {
+                var height = await page.EvaluateAsync<int>("() => window.innerHeight");
+                var width = await page.EvaluateAsync<int>("() => window.innerWidth");
+                var amount = Args.Int(args, "amount") ?? (int)(height * 0.8);
+                await page.Mouse.MoveAsync(width / 2f, height / 2f);
                 await page.Mouse.WheelAsync(0, direction == "up" ? -amount : amount);
                 break;
+            }
             default:
                 throw new ArgumentException("direction must be up, down, top or bottom.");
         }
@@ -374,7 +384,7 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         {
             await session.Page.WaitForLoadStateAsync(LoadState.Load, new PageWaitForLoadStateOptions { Timeout = 5_000 });
         }
-        catch (PlaywrightException)
+        catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
         {
             // Slow page: read what is there.
         }
@@ -397,6 +407,7 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         if (done.Length > 0) sb.AppendLine(done);
         var notes = session.DrainNotes();
         if (notes.Length > 0) sb.AppendLine(notes);
+        sb.AppendLine($"Browser: {session.EngineId}{(session.Headless ? " (headless, no window)" : " (window on the server's desktop)")}");
         sb.AppendLine($"URL: {page.Url}");
         sb.AppendLine($"Title: {await page.TitleAsync()}");
         if (session.Pages.Count > 1) sb.AppendLine($"Tabs: {session.Pages.Count} (use the tabs action)");

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Sofia.Server.Agent;
+using Sofia.Server.Browser;
 using Sofia.Server.Context;
 using Sofia.Server.Data;
 using Sofia.Server.Domain;
@@ -49,6 +50,8 @@ public sealed record ConfigPatch
     public string? ApplyPatch { get; init; }
     /// <summary>Read-before-edit policy for edit/apply_patch/write-over-existing.</summary>
     public bool? ReadBeforeEdit { get; init; }
+    /// <summary>'auto' or a browser catalog id (chrome, edge, brave, vivaldi, opera, chromium, firefox).</summary>
+    public string? DefaultBrowser { get; init; }
     public LspConfigPatch? Lsp { get; init; }
 }
 
@@ -454,6 +457,13 @@ public static class PlatformEndpoints
                 config.ApplyPatch = applyPatch;
             }
             if (body.ReadBeforeEdit is { } readBeforeEdit) config.ReadBeforeEdit = readBeforeEdit;
+            if (body.DefaultBrowser is { } defaultBrowser)
+            {
+                var browser = defaultBrowser.Trim().ToLowerInvariant();
+                if (browser != BrowserCatalog.Auto && !BrowserCatalog.IsKnown(browser))
+                    throw new ArgumentException($"defaultBrowser must be 'auto' or one of: {string.Join(", ", BrowserCatalog.Ids)}.");
+                config.DefaultBrowser = browser;
+            }
             if (body.Lsp is { } lspPatch)
             {
                 if (lspPatch.Enabled is { } lspEnabled) config.Lsp.Enabled = lspEnabled;
@@ -524,6 +534,7 @@ public static class PlatformEndpoints
             c.SandboxNetwork,
             c.ApplyPatch,
             c.ReadBeforeEdit,
+            c.DefaultBrowser,
             lsp = new { c.Lsp.Enabled, c.Lsp.AutoDiagnostics, c.Lsp.Servers },
             sandboxStatus = new { available = status.Available, backend = status.Backend, reason = status.Reason },
             dataDir = options.DataDir,
