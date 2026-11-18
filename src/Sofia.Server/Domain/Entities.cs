@@ -159,6 +159,10 @@ public sealed class Attachment
     public long Bytes { get; set; }
     public string Url { get; set; } = "";
     [JsonIgnore] public string StoragePath { get; set; } = "";
+    /// <summary>What the fallback vision model saw in this image; sent to chat models that cannot see images instead of the pixels.</summary>
+    [JsonIgnore] public string? Analysis { get; set; }
+    /// <summary>Label of the model that produced <see cref="Analysis"/>; changing the configured fallback re-analyzes the image.</summary>
+    [JsonIgnore] public string? AnalyzedBy { get; set; }
     [JsonIgnore] public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -463,6 +467,8 @@ public sealed class ServerConfig
 {
     [BsonId] public string Id { get; set; } = "config";
     public string DefaultModel { get; set; } = "";
+    /// <summary>Vision model ('providerId/modelId') that describes images when the conversation model cannot see them; '' = disabled.</summary>
+    public string ImageFallbackModel { get; set; } = "";
     public string Shell { get; set; } = "";
     public bool AutoCompact { get; set; } = true;
     public double CompactThreshold { get; set; } = 0.8;

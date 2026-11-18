@@ -42,6 +42,7 @@ public sealed class RunServices(
     GitService git,
     ModelGate gate,
     LspManager lsp,
+    ImageAnalysisService imageAnalysis,
     ILogger<SessionRun> log)
 {
     public ModelGate Gate => gate;
@@ -56,6 +57,7 @@ public sealed class RunServices(
     public ChangeTracker Changes => changes;
     public GitService Git => git;
     public LspManager Lsp => lsp;
+    public ImageAnalysisService ImageAnalysis => imageAnalysis;
     public ILogger<SessionRun> Log => log;
 }
 
@@ -80,6 +82,10 @@ public sealed class SessionRun : IToolHost
     private readonly TurnClock _turn = new();
     private bool _finished;
     private bool _dropImages;
+    /// <summary>The provider refused image input this run: images are described by the fallback vision model instead of sent.</summary>
+    private bool _blindImages;
+    /// <summary>This turn's fallback-vision runner (null when unset or the chat model can see); reset with the turn context.</summary>
+    private ImageAnalysisService.Runner? _vision;
     private bool _compactedOnTooLarge;
     private Message? _current;
     private bool _askedAboutUnfinished;
@@ -218,6 +224,7 @@ public sealed class SessionRun : IToolHost
                 {
                     // A new turn: re-read the live facts once (frozen prompt reused, changes become context notes).
                     _turnPrompt = null;
+                    _vision = null;
                     _askedAboutUnfinished = false;
                     if (next.Kind == "continue")
                     {
@@ -396,7 +403,37 @@ public sealed class SessionRun : IToolHost
                 ? "No model is available. Start a local runtime (Unsloth, Ollama, LM Studio, llama.cpp, vLLM) or add a provider in Settings → Models."
                 : $"Model '{Session.ModelId}' is not available. Pick another model.");
         if (!resolved.Value.Provider.Enabled) throw new InvalidOperationException($"Provider '{resolved.Value.Provider.Name}' is disabled.");
-        return resolved.Value;
+        // The provider rejected image input this run: keep the same model but stop sending it pictures (the fallback
+        // vision model describes them instead).
+        return _blindImages ? (resolved.Value.Provider, resolved.Value.Model.WithoutVision()) : resolved.Value;
+    }
+
+    /// <summary>
+    /// This turn's view of the configured fallback vision model (null when unset or unusable). Created once per turn so
+    /// descriptions cached by an earlier step are reused; the run analyses images a history build asked for and rebuilds.
+    /// </summary>
+    private ImageAnalysisService.Runner? VisionFallback(ModelInfo model)
+    {
+        if (_vision is { } cached) return cached;
+        // A chat model that can see images never needs the fallback: keep the common path free of config and catalog lookups.
+        if (model.CanSeeImages) return null;
+        var fallback = _s.ImageAnalysis.Resolve(model.Id);
+        if (fallback is null) return null;
+        return _vision = _s.ImageAnalysis.For(fallback.Value.Provider, fallback.Value.Model);
+    }
+
+    /// <summary>The history builder's hook for one runner (null when there is none).</summary>
+    private static HistoryBuilder.ImageDescription? Describe(ImageAnalysisService.Runner? vision) =>
+        vision is null ? null : new HistoryBuilder.ImageDescription(vision.Describe);
+
+    /// <summary>History for one request: built with the fallback's descriptions, and — when images still have none —
+    /// analysed once and rebuilt. The second build is identical whenever nothing new was described.</summary>
+    private async Task<List<ChatMessage>> BuildHistoryAsync(ImageAnalysisService.Runner? vision, ModelInfo model, HistoryBuilder.PruneOptions? prune, CancellationToken ct)
+    {
+        var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune, Describe(vision));
+        if (vision is null || vision.Pending.Count == 0) return history;
+        await vision.AnalyzePendingAsync(Session.Id, ct);
+        return vision.Pending.Count > 0 ? history : HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune, vision.Describe);
     }
 
     /// <summary>
@@ -450,11 +487,12 @@ public sealed class SessionRun : IToolHost
             Session.Context.ToolTokens = toolSpecs.Sum(t => Text.EstimateTokens(JsonSerializer.Serialize(t, Json.Options)));
 
             HistoryBuilder.PruneOptions? prune = Session.PrunedThroughSeq > 0 ? new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars) : null;
-            var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
+            var vision = VisionFallback(model);
+            var history = await BuildHistoryAsync(vision, model, prune, ct);
             int EstimatedInput(HistoryBuilder.PruneOptions? p)
             {
                 // Same build as the request (same prune watermark, same image drop), so the estimate matches what is sent.
-                var (messagesTok, images) = HistoryBuilder.EstimateBreakdown(_s.Db.SessionMessages(Session.Id), model, !_dropImages, p);
+                var (messagesTok, images) = HistoryBuilder.EstimateBreakdown(_s.Db.SessionMessages(Session.Id), model, !_dropImages, p, Describe(vision));
                 return Session.Context.SystemTokens + Session.Context.ToolTokens + messagesTok + images * 1000;
             }
             var estimatedInput = EstimatedInput(prune);
@@ -467,7 +505,7 @@ public sealed class SessionRun : IToolHost
                 if (pruned is not null)
                 {
                     prune = new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars);
-                    history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
+                    history = await BuildHistoryAsync(vision, model, prune, ct);
                     estimatedInput = EstimatedInput(prune);
                 }
             }
@@ -480,7 +518,7 @@ public sealed class SessionRun : IToolHost
             {
                 if (await CompactAsync(auto: true, ct))
                 {
-                    history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune);
+                    history = await BuildHistoryAsync(vision, model, prune, ct);
                     estimatedInput = EstimatedInput(prune);
                 }
             }
@@ -532,6 +570,17 @@ public sealed class SessionRun : IToolHost
                     continue;
                 }
                 throw;
+            }
+            catch (Exception ex) when (!_blindImages && RetryPolicy.IsImageRejected(ex))
+            {
+                // The endpoint refused the image input although metadata claimed vision. Drop the failed card and
+                // retry the step blind: images go through the fallback vision model as text descriptions.
+                _current = null;
+                try { _s.Store.DeleteMessages(Session, [assistant.Id]); } catch { }
+                _blindImages = true;
+                _vision = null;
+                _s.Log.LogWarning("Provider rejected image input ({Reason}); retrying with fallback image descriptions.", Text.FirstLine(ex.Message, 200));
+                continue;
             }
             if (calls.Count == 0)
             {

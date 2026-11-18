@@ -64,6 +64,27 @@ public static class RetryPolicy
         return p.Status == 413;
     }
 
+    /// <summary>Whether the failure means the endpoint refused image input although the model was expected to take it
+    /// (a text-only model behind a vision-capable alias, a gateway with images disabled). Repeating such a request
+    /// unchanged fails again; withholding the images — and describing them with the fallback vision model instead —
+    /// lets the step succeed.</summary>
+    private static readonly string[] ImageRejectedText =
+    [
+        "image input", "image content", "images are not supported", "image_url", "does not support images",
+        "unsupported image", "invalid image", "vision is not supported", "not vision-capable", "multimodal",
+        "too many images", "image request",
+    ];
+
+    public static bool IsImageRejected(Exception ex)
+    {
+        if (ex is not ProviderException p) return false;
+        if (p.Status is not (400 or 415 or 422)) return false;
+        var message = p.Message ?? "";
+        foreach (var marker in ImageRejectedText)
+            if (message.Contains(marker, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
     /// <summary>Fixed 5s wait between attempts.</summary>
 
     public static TimeSpan Delay(int attempt) => TimeSpan.FromSeconds(5);

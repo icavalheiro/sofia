@@ -466,6 +466,134 @@ public class HistoryImageTests
     }
 }
 
+public class HistoryImageFallbackTests
+{
+    private static (Message Message, Attachment Image) Upload()
+    {
+        var path = Path.GetTempFileName();
+        File.WriteAllBytes(path, [1, 2, 3]);
+        var image = new Attachment { Id = "a1", Name = "shot.png", Kind = "image", Mime = "image/png", Bytes = 3, Size = "3 B", StoragePath = path };
+        return (new Message { Id = "m1", Role = "user", Text = "look", Attachments = [image] }, image);
+    }
+
+    [Fact]
+    public void BlindModelReceivesTheFallbackDescriptionInsteadOfPixels()
+    {
+        var (message, image) = Upload();
+        try
+        {
+            var history = HistoryBuilder.Build([message], new ModelInfo { ModelId = "deepseek-chat" }, true,
+                describe: _ => "A red button labelled Cancel.");
+            var text = history.Single().TextContent;
+            Assert.DoesNotContain("cannot see images", text);
+            Assert.Contains("<image_description", text);
+            Assert.Contains("A red button labelled Cancel.", text);
+            Assert.Contains("untrusted", text);
+            Assert.DoesNotContain(history.Single().Content, p => p.ImageBase64 is not null);
+        }
+        finally { File.Delete(image.StoragePath); }
+    }
+
+    [Fact]
+    public void VisionModelStillGetsPixelsAndIsNeverAskedForDescriptions()
+    {
+        var (message, image) = Upload();
+        try
+        {
+            var asked = 0;
+            var history = HistoryBuilder.Build([message], new ModelInfo { ModelId = "gpt-4o", Vision = true }, true,
+                describe: _ => { asked++; return "unused"; });
+            Assert.Equal(0, asked);
+            Assert.Contains(history.Single().Content, p => p.ImageBase64 is not null);
+        }
+        finally { File.Delete(image.StoragePath); }
+    }
+
+    [Fact]
+    public void WithoutADescriptionTheBlindModelGetsTheOldNote()
+    {
+        var (message, image) = Upload();
+        try
+        {
+            var history = HistoryBuilder.Build([message], new ModelInfo { ModelId = "deepseek-chat" }, true, describe: _ => null);
+            Assert.Contains("cannot see images", history.Single().TextContent);
+        }
+        finally { File.Delete(image.StoragePath); }
+    }
+
+    [Fact]
+    public void MarkedBlindModelGetsDescriptionsEvenWhenMetadataClaimsVision()
+    {
+        var (message, image) = Upload();
+        try
+        {
+            var history = HistoryBuilder.Build([message], new ModelInfo { ModelId = "gpt-4o", Vision = true, Blind = true }, true,
+                describe: _ => "A dialog.");
+            Assert.DoesNotContain(history.Single().Content, p => p.ImageBase64 is not null);
+            Assert.Contains("<image_description", history.Single().TextContent);
+        }
+        finally { File.Delete(image.StoragePath); }
+    }
+
+    [Fact]
+    public void ScreenshotsOfRecentCallsAreDescribedForBlindModels()
+    {
+        var path = Path.GetTempFileName();
+        File.WriteAllBytes(path, [1, 2, 3]);
+        try
+        {
+            var shot = new Message
+            {
+                Id = "a1", Role = "assistant", Seq = 1,
+                ToolCalls =
+                [
+                    new ToolCall
+                    {
+                        Id = "c1", Name = "browser", Arguments = "{}", Result = "shot", Status = "success", Completed = true,
+                        Images = [new Attachment { Id = "i1", Name = "s.jpg", Kind = "image", Mime = "image/jpeg", StoragePath = path }],
+                    },
+                ],
+            };
+            var history = HistoryBuilder.Build([shot], new ModelInfo { ModelId = "deepseek-chat" }, true, describe: _ => "A login form.");
+            var last = history[^1];
+            Assert.Equal("user", last.Role);
+            Assert.Contains("<image_description", last.TextContent);
+            Assert.Contains("A login form.", last.TextContent);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void BlindCopyDoesNotTouchTheCatalogEntry()
+    {
+        var model = new ModelInfo { ModelId = "gpt-4o", Vision = true };
+        Assert.True(model.CanSeeImages);
+        var blind = model.WithoutVision();
+        Assert.True(blind.Blind);
+        Assert.False(blind.CanSeeImages);
+        Assert.True(model.CanSeeImages);
+        Assert.Equal(model.Id, blind.Id);
+    }
+}
+
+public class ImageRejectionTests
+{
+    [Theory]
+    [InlineData(400, "The image_url content type is not supported by this model", true)]
+    [InlineData(400, "This model does not support images.", true)]
+    [InlineData(400, "Invalid image or dimension too large", true)]
+    [InlineData(415, "vision is not supported for this deployment", true)]
+    [InlineData(400, "Invalid API key", false)]
+    [InlineData(401, "This model does not support images", false)]
+    [InlineData(null, "does not support images", false)]
+    public void DetectsProviderImageRefusals(int? status, string message, bool expected)
+        => Assert.Equal(expected, RetryPolicy.IsImageRejected(new ProviderException(message, status)));
+
+    [Fact]
+    public void ImageRejectionIsNotRequestTooLarge()
+        => Assert.False(RetryPolicy.IsRequestTooLarge(new ProviderException("The image_url content type is not supported", 400)));
+}
+
 public class HistoryMediaTests
 {
     private static List<ChatMessage> Build(ModelInfo model, string kind, string mime, string name)

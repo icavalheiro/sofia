@@ -255,6 +255,8 @@ export interface FileDiffDto
 export interface ConfigDto
 {
   defaultModel: string;
+  /** Vision model that describes images when the conversation model cannot see them; '' = disabled. */
+  imageFallbackModel: string;
   shell: string;
   autoCompact: boolean;
   compactThreshold: number;

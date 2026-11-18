@@ -192,6 +192,7 @@ public sealed class SofiaInfoTool(
         sb.AppendLine();
         sb.AppendLine("Current values:");
         sb.AppendLine($"- defaultModel: \"{c.DefaultModel}\" ('' = first connected model)");
+        sb.AppendLine($"- imageFallbackModel: \"{c.ImageFallbackModel}\" (vision model that describes images when the conversation model cannot see them; '' = disabled)");
         sb.AppendLine($"- shell: \"{c.Shell}\" ('' = pwsh/powershell on Windows, bash elsewhere)");
         sb.AppendLine($"- autoCompact: {Json(c.AutoCompact)}; compactThreshold: {c.CompactThreshold} (fraction of the context window, 0.3–0.98)");
         sb.AppendLine($"- pruneToolResults: {Json(c.PruneToolResults)}; pruneThreshold: {c.PruneThreshold} (context fraction that triggers pruning old tool results, kept at least 5% below compactThreshold); pruneKeepSteps: {c.PruneKeepSteps} (assistant steps whose tool results stay intact); pruneMinChars: {c.PruneMinChars} (results shorter than this are never pruned)");

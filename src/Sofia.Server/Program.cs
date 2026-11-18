@@ -89,6 +89,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<McpManager>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LspManager>());
 builder.Services.AddSingleton<ToolRegistry>();
 builder.Services.AddSingleton<ModelGate>();
+builder.Services.AddSingleton<ImageAnalysisService>();
 builder.Services.AddSingleton<RunServices>();
 builder.Services.AddSingleton<AgentService>();
 

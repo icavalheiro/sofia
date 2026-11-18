@@ -648,6 +648,7 @@ interface FileDiffDto {
 ```ts
 interface ConfigDto {
   defaultModel: string          // '' = first connected model
+  imageFallbackModel: string    // vision model that describes images for chats whose model cannot see them; '' = disabled
   shell: string                 // '' = pwsh/powershell on Windows, bash elsewhere
   autoCompact: boolean
   compactThreshold: number      // fraction of the context window, e.g. 0.8
@@ -730,6 +731,23 @@ writes refresh the tracked state, so consecutive edits work without re-reading; 
 detection compares length + mtime first and falls back to SHA-256, so a touch-only rewrite is not reported as a
 change. When the toggle is off everything passes, but reads keep being recorded so turning it back on works
 immediately.
+
+## Fallback vision model (`imageFallbackModel`)
+
+When a conversation runs on a model that cannot see images (a text-only model, or one whose provider refused image
+input at runtime), the model configured in `ConfigDto.imageFallbackModel` describes each image instead and its
+description reaches the conversation in place of the pixels. The setting is global (Settings → Server); `''` disables
+the feature and leaves the previous behavior intact ("the current model cannot see images").
+
+- A non-empty value must resolve to an available model that could see images, or `PATCH /api/config` returns 400.
+- Each image is analysed once with a faithful-description prompt (verbatim text/OCR, layout, exact values); the result
+  is stored on the attachment (`Analysis`) and reused by every later step, so it is never re-billed. Changing the
+  configured fallback re-analyses on next use.
+- The description is injected inside an `<image_description name=… path=…>` block labelled as untrusted visual content;
+  audio/video attachments and vision-capable chat models are untouched (pixels go through as before).
+- If a provider rejects image input despite claiming vision (a 400/415/422 mentioning images/vision/multimodal), the
+  step is retried in blind mode: same model, no pixels, descriptions from the fallback. A missing or broken fallback
+  never fails a run — it only removes the descriptions.
 
 ## Session origin
 

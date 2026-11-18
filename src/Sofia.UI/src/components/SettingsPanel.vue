@@ -982,6 +982,21 @@ onBeforeUnmount(stopEvents)
                     </select>
                   </div>
 
+                  <div class="row">
+                    <span class="row-text">
+                      <span class="row-title">Image fallback model</span>
+                      <span class="row-sub">Describes images when the conversation model cannot see them; its description reaches the model instead of the picture.</span>
+                    </span>
+                    <select
+                      class="field-input cfg-input"
+                      :value="config.imageFallbackModel ?? ''"
+                      @change="saveConfig({ imageFallbackModel: ($event.target as HTMLSelectElement).value })"
+                    >
+                      <option value="">Disabled</option>
+                      <option v-for="m in models.filter((x) => x.enabled !== false && x.vision)" :key="m.id" :value="m.id">{{ m.label }} · {{ m.provider }}</option>
+                    </select>
+                  </div>
+
                   <label class="row">
                     <span class="row-text">
                       <span class="row-title">Auto-compact</span>

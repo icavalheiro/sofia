@@ -23,6 +23,9 @@ public sealed class ModelInfo
     public bool Connected { get; set; }
     public bool Reasoning { get; set; }
     public bool Vision { get; set; }
+    /// <summary>Withholds images from this model even when metadata claims vision: set on the per-run copy after the
+    /// provider rejected image input, so the retry sends descriptions from the fallback vision model instead.</summary>
+    [JsonIgnore] public bool Blind { get; set; }
     /// <summary>Accepts audio input (only set from runtime metadata or a known model family; never guessed).</summary>
     public bool Audio { get; set; }
     public bool Video { get; set; }
@@ -36,6 +39,21 @@ public sealed class ModelInfo
 
     public double Cost(Usage usage) =>
         (Math.Max(0, usage.Input - usage.CacheRead) * InputPrice + usage.CacheRead * InputPrice * 0.1 + usage.Output * OutputPrice) / 1_000_000;
+
+    /// <summary>Whether images may go to this model as pixels. Vision flags come from name heuristics and runtime
+    /// metadata that are often incomplete, so only models known to be text-only (or marked blind after a provider
+    /// rejection) have their images withheld.</summary>
+    public bool CanSeeImages => !Blind && (Vision || ModelLimits.Known(ModelId) is null);
+
+    /// <summary>Copy of this model that no longer accepts image input (the cached catalog entry is never mutated).</summary>
+    public ModelInfo WithoutVision() => new()
+    {
+        Id = Id, ProviderId = ProviderId, ModelId = ModelId, Label = Label, Provider = Provider,
+        ProviderIcon = ProviderIcon, Local = Local, ContextLength = ContextLength, MaxOutput = MaxOutput,
+        Context = Context, Connected = Connected, Reasoning = Reasoning, Vision = Vision, Blind = true,
+        Audio = Audio, Video = Video, Loaded = Loaded, Enabled = Enabled, SingleClient = SingleClient,
+        InputPrice = InputPrice, OutputPrice = OutputPrice,
+    };
 }
 
 public sealed class ProviderView

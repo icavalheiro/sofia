@@ -28,6 +28,8 @@ public sealed record PairConnectRequest(string Code);
 public sealed record ConfigPatch
 {
     public string? DefaultModel { get; init; }
+    /// <summary>Vision model ('providerId/modelId') that describes images for chats whose model cannot see them; '' disables it.</summary>
+    public string? ImageFallbackModel { get; init; }
     public string? Shell { get; init; }
     public bool? AutoCompact { get; init; }
     public double? CompactThreshold { get; init; }
@@ -401,6 +403,18 @@ public static class PlatformEndpoints
             var config = db.GetConfig();
             var rediscover = false;
             if (body.DefaultModel is { } model) config.DefaultModel = model;
+            if (body.ImageFallbackModel is { } fallback)
+            {
+                fallback = fallback.Trim();
+                // An empty value switches the feature off; anything else has to be a real model that could see images.
+                if (fallback.Length > 0)
+                {
+                    var resolvedFallback = providers.Resolve(fallback);
+                    if (resolvedFallback is null || !resolvedFallback.Value.Model.CanSeeImages)
+                        throw new ArgumentException("imageFallbackModel must be an available vision model ('providerId/modelId'), or '' to disable it.");
+                }
+                config.ImageFallbackModel = fallback;
+            }
             if (body.Shell is { } shell) config.Shell = shell.Trim();
             if (body.AutoCompact is { } auto) config.AutoCompact = auto;
             if (body.CompactThreshold is { } threshold) config.CompactThreshold = Math.Clamp(threshold, 0.3, 0.98);
@@ -492,6 +506,7 @@ public static class PlatformEndpoints
         return new
         {
             c.DefaultModel,
+            c.ImageFallbackModel,
             c.Shell,
             c.AutoCompact,
             c.CompactThreshold,
