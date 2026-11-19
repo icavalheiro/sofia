@@ -59,7 +59,7 @@ public sealed class BrowserService(SofiaDb db, SofiaOptions options, IEventBus b
                 Directory.CreateDirectory(profileDir);
                 var handle = engine is null
                     ? await launcher.LaunchBundledChromiumAsync(profileDir, ct)
-                    : await launcher.LaunchAsync(engine, sessionId, profileDir, headless, ct);
+                    : await LaunchAsync(launcher, engine, sessionId, profileDir, headless, ct);
                 session = Track(new BrowserSession(handle, sessionId, workspaceId, bus, log));
                 try
                 {
@@ -94,6 +94,25 @@ public sealed class BrowserService(SofiaDb db, SofiaOptions options, IEventBus b
         finally
         {
             _launch.Release();
+        }
+    }
+
+    /// <summary>
+    /// Launches the engine, retrying once when Chromium exits during startup. A browser started right after another
+    /// one on the same profile was closing hands its command line to the dying instance and exits immediately, which
+    /// is exactly the "reopen after the user closed the window" path; one short retry makes it reliable.
+    /// </summary>
+    private async Task<BrowserHandle> LaunchAsync(BrowserLauncher launcher, BrowserEngine engine, string sessionId, string profileDir, bool headless, CancellationToken ct)
+    {
+        try
+        {
+            return await launcher.LaunchAsync(engine, sessionId, profileDir, headless, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("exited while starting", StringComparison.Ordinal))
+        {
+            log.LogInformation("The {Engine} window exited while starting; retrying once (profile hand-off)", engine.Id);
+            await Task.Delay(700, ct);
+            return await launcher.LaunchAsync(engine, sessionId, profileDir, headless, ct);
         }
     }
 

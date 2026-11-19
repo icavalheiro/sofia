@@ -96,6 +96,22 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
             return ToolResult.Fail(ex.Message);
         }
 
+        // A window the user closed leaves this session behind while Chromium finishes exiting (and a browser kept
+        // alive in the background has no pages at all). The agent asked for the browser, so give it a fresh window
+        // instead of a session without a page.
+        if (session.Pages.Count == 0)
+        {
+            await browser.CloseAsync(rootId);
+            try
+            {
+                session = await browser.EnsureAsync(rootId, ctx.Workspace.Id, Args.Optional(args, "browser"), ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return ToolResult.Fail(ex.Message);
+            }
+        }
+
         using var scope = await session.BeginAgentAsync(ct);
         try
         {
@@ -245,6 +261,8 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 var index = Args.Int(args, "tab") ?? pages.IndexOf(page);
                 if (index < 0 || index >= pages.Count) throw new ArgumentException($"No tab {index}. {TabList(session)}");
                 await pages[index].CloseAsync();
+                // Closing the last tab closes the window (that is the point of not resurrecting it).
+                if (pages.Count == 1) return $"{Prefix(session)}Closed the last tab; the browser window is closing.";
                 await session.SettleActiveAsync();
                 done = $"Closed tab {index}.";
                 break;

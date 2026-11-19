@@ -317,6 +317,45 @@ public class BrowserToolTests
         TryDelete(dataDir);
     }
 
+    /// <summary>
+    /// Closing the last tab is how the user closes the window, so Chromium must be allowed to exit there. The old
+    /// fallback opened a replacement page immediately, and a target created while the window was going away kept the
+    /// browser alive: the window "closed and came back" with a fresh about:blank tab (reported 2026-11-19).
+    /// </summary>
+    [Fact]
+    public async Task Closing_the_last_tab_closes_the_window_instead_of_reopening_it()
+    {
+        if (!Enabled) return;
+        Environment.SetEnvironmentVariable("SOFIA_BROWSER_HEADLESS", "1");
+        var dataDir = Directory.CreateTempSubdirectory("sofia-browser").FullName;
+        var options = new SofiaOptions { DataDir = dataDir };
+        using (var db = new SofiaDb(options))
+        {
+            await using var service = new BrowserService(db, options, new EventBus(), NullLogger<BrowserService>.Instance);
+            var tool = new BrowserTool(service, (bytes, mime, name) => SaveShot(bytes, mime, name, dataDir));
+
+            var opened = await RunAsync(tool, "ses_last_tab", new { action = "navigate", url = "about:blank" });
+            if (NoBrowser(opened)) return;
+            Assert.False(opened.IsError, opened.Output);
+            Assert.NotNull(service.Find("ses_last_tab"));
+
+            var closed = await RunAsync(tool, "ses_last_tab", new { action = "close_tab" });
+            Assert.False(closed.IsError, closed.Output);
+            Assert.Contains("last tab", closed.Output, StringComparison.OrdinalIgnoreCase);
+
+            // The browser must exit on its own and the service forget the session; a replacement page would keep it.
+            for (var attempt = 0; attempt < 100 && service.Find("ses_last_tab") is not null; attempt++) await Task.Delay(100);
+            Assert.Null(service.Find("ses_last_tab"));
+
+            // Asking again opens a new window, so a closed window is never a dead end for the agent.
+            var reopened = await RunAsync(tool, "ses_last_tab", new { action = "snapshot" });
+            Assert.False(reopened.IsError, reopened.Output);
+            Assert.NotNull(service.Find("ses_last_tab"));
+            await OkAsync(tool, "ses_last_tab", new { action = "close" });
+        }
+        TryDelete(dataDir);
+    }
+
     private static void TryDelete(string directory)
     {
         try

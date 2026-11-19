@@ -83,6 +83,19 @@ public sealed class BrowserSession : IAsyncDisposable
         lock (_gate) _pages.Clear();
         _page = null;
         _log.LogInformation("Browser window for session {Session} was closed", Id);
+        // The window is gone, so its re-attach record points at nothing: drop it now instead of leaving a stale pid
+        // behind for the next startup to reconcile (a recycled pid must never be trusted). Only this browser's own
+        // record: a reopen of the same conversation reuses the profile dir and may already have written a new one.
+        try
+        {
+            var record = BrowserInstanceStore.Read(_handle.ProfileDir);
+            if (record is null || (_handle.Process is { } process && record.Pid == process.Id))
+                BrowserInstanceStore.Delete(_handle.ProfileDir);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A profile still in use will be reconciled at the next startup.
+        }
         Publish(open: false);
         Closed?.Invoke(this);
     }
@@ -206,14 +219,35 @@ public sealed class BrowserSession : IAsyncDisposable
         if (_page != page || _disposed) return;
         if (next is null)
         {
-            // The last tab: Chromium quits on its own (which raises Disconnected). Give the agent a page either way.
-            try
+            // The last tab is gone, which is how the user closes the window: Chromium exits on its own and raises
+            // Disconnected. Never open a replacement page here — a target created while the window is going away
+            // keeps the browser alive and resurrects it (the closed window came back with a fresh about:blank tab).
+            // When the agent needs the browser again, BrowserTool reopens a window on demand.
+            _page = null;
+            Publish(open: true);
+            // A headless browser has no window to close and stays alive with zero tabs, so nobody would ever close
+            // it: stop it here (Disconnected then forgets the session). A windowed one exits by itself.
+            if (_handle.Headless)
             {
-                Adopt(await _handle.Context.NewPageAsync());
-            }
-            catch (PlaywrightException)
-            {
-                // The window is closing.
+                try
+                {
+                    if (_handle.Browser is { } browser) await browser.CloseAsync();
+                }
+                catch (PlaywrightException)
+                {
+                    // Already gone.
+                }
+                // Playwright's close asks the browser to quit; if it did not (or the process is a child Sofia
+                // started), make sure nothing is left behind — the service drops the session on Disconnected and
+                // would never dispose it.
+                try
+                {
+                    if (_handle.Process is { HasExited: false } process) process.Kill(entireProcessTree: true);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+                {
+                    // Already gone.
+                }
             }
             return;
         }

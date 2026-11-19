@@ -301,7 +301,10 @@ snapshots and screenshots. A remote client only sees the chat screenshots.
   removes its profiles (`BrowserCleanupHandler`).
 - **Lifetime:** no idle timer. The window closes on the agent's `close` action, when
   the user closes it (`Browser.Disconnected` → publish `open: false`), or when the
-  conversation is deleted. One Chromium per conversation costs 0.5–1.5 GB, which is
+  conversation is deleted. Closing the last tab *is* closing the window: the session
+  never opens a replacement page on tab close (a target created while the window goes
+  away keeps Chromium alive and the window reappears), and the next agent call opens
+  a fresh window instead. One Chromium per conversation costs 0.5–1.5 GB, which is
   why opening one is an explicit, visible action.
 - **Headless:** `SOFIA_BROWSER_HEADLESS=1`, or no display (Docker/CI, Linux without
   `DISPLAY`/`WAYLAND_DISPLAY`), uses the same engine with `--headless=new`; with no
