@@ -20,7 +20,7 @@ RUN dotnet publish src/Sofia.Server/Sofia.Server.csproj -c Release -o /out --no-
 COPY --from=ui /src/src/Sofia.UI/dist/ /out/wwwroot/
 
 # 3. Runtime: server + UI on one port
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS final
 # git powers change tracking and worktrees; curl is used by the healthcheck and to create pairing codes.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git curl ca-certificates \
