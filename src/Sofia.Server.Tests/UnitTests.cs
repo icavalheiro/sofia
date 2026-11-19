@@ -583,15 +583,28 @@ public class ImageRejectionTests
     [InlineData(400, "This model does not support images.", true)]
     [InlineData(400, "Invalid image or dimension too large", true)]
     [InlineData(415, "vision is not supported for this deployment", true)]
+    // Unsloth Studio / llama.cpp wording, reported as an in-stream error with no status code at all.
+    [InlineData(null, "Unsloth Studio: Image provided but current GGUF model does not support vision.", true)]
+    [InlineData(400, "Unsloth Studio: Image provided but current GGUF model does not support vision.", true)]
+    [InlineData(null, "unsloth: this model is text-only and cannot take screenshots", true)]
+    [InlineData(null, "ollama: multimodal content is disabled for this runtime", true)]
+    [InlineData(null, "The model cannot accept image input.", true)]
     [InlineData(400, "Invalid API key", false)]
     [InlineData(401, "This model does not support images", false)]
-    [InlineData(null, "does not support images", false)]
+    [InlineData(404, "vision model not found", false)]
+    [InlineData(null, "Provider is overloaded, try again", false)]
     public void DetectsProviderImageRefusals(int? status, string message, bool expected)
         => Assert.Equal(expected, RetryPolicy.IsImageRejected(new ProviderException(message, status)));
 
     [Fact]
     public void ImageRejectionIsNotRequestTooLarge()
         => Assert.False(RetryPolicy.IsRequestTooLarge(new ProviderException("The image_url content type is not supported", 400)));
+
+    /// <summary>An in-stream refusal has no status code, so it must not be mistaken for a transient failure either —
+    /// retrying the same pixels would just fail again with the same message.</summary>
+    [Fact]
+    public void StatuslessImageRefusalIsNotTransient()
+        => Assert.False(RetryPolicy.IsTransient(new ProviderException("Unsloth Studio: Image provided but current GGUF model does not support vision.")));
 }
 
 public class HistoryMediaTests

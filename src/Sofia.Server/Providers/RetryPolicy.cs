@@ -65,22 +65,40 @@ public static class RetryPolicy
     }
 
     /// <summary>Whether the failure means the endpoint refused image input although the model was expected to take it
-    /// (a text-only model behind a vision-capable alias, a gateway with images disabled). Repeating such a request
+    /// (a text-only GGUF loaded under a vision-capable alias, a gateway with images disabled). Repeating such a request
     /// unchanged fails again; withholding the images — and describing them with the fallback vision model instead —
     /// lets the step succeed.</summary>
-    private static readonly string[] ImageRejectedText =
+    /// <remarks>
+    /// Providers word this in far too many ways to enumerate ("does not support vision", "current GGUF model does not
+    /// support vision", "This model does not support image input", "image_url is not supported here", "multimodal
+    /// content is disabled"), so the test is a refusal phrase next to an image concept instead of exact sentences.
+    /// Over-triggering is cheap — the worst case is one retry that sends descriptions instead of pixels.
+    /// </remarks>
+    private static readonly string[] RefusalText =
     [
-        "image input", "image content", "images are not supported", "image_url", "does not support images",
-        "unsupported image", "invalid image", "vision is not supported", "not vision-capable", "multimodal",
-        "too many images", "image request",
+        "not supported", "does not support", "doesn't support", "don't support", "do not support", "unsupported",
+        "cannot accept", "can't accept", "can not accept", "unable to process", "unable to handle", "invalid",
+        "no support for", "is disabled", "not accepted", "only text", "text-only", "text only",
+    ];
+
+    private static readonly string[] ImageConceptText =
+    [
+        "image", "vision", "multimodal", "screenshot", "picture", "photo", "visual",
     ];
 
     public static bool IsImageRejected(Exception ex)
     {
         if (ex is not ProviderException p) return false;
-        if (p.Status is not (400 or 415 or 422)) return false;
+        // An in-stream provider error carries no status code, and that is exactly how llama.cpp-family runtimes report
+        // this — so a missing status must not veto the check. A present status has to be an input-level refusal:
+        // 401/403/404 wording about images is an auth or routing problem, not a blind model.
+        if (p.Status is not (null or 400 or 415 or 422)) return false;
         var message = p.Message ?? "";
-        foreach (var marker in ImageRejectedText)
+        var refuses = false;
+        foreach (var marker in RefusalText)
+            if (message.Contains(marker, StringComparison.OrdinalIgnoreCase)) { refuses = true; break; }
+        if (!refuses) return false;
+        foreach (var marker in ImageConceptText)
             if (message.Contains(marker, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }

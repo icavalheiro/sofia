@@ -29,11 +29,18 @@ internal sealed class VisionFallbackHandler : HttpMessageHandler
     /// <see cref="RefusedModel"/>, so the fallback model's own analysis request still goes through.</summary>
     public static volatile bool RefuseImages;
 
+    /// <summary>When true, refusals arrive as a 200 SSE stream carrying an `error` chunk (no HTTP status code), which is
+    /// how llama.cpp-family runtimes (Unsloth Studio, Ollama, LM Studio) report an image to a text-only GGUF.</summary>
+    public static volatile bool RefuseInStream;
+
     /// <summary>The model whose image-carrying requests get refused (the chat model in the refusal test).</summary>
     public const string RefusedModel = "gpt-4o";
 
     /// <summary>How many times image-carrying requests were refused (so a test can prove it happened once).</summary>
     public static int Refusals;
+
+    /// <summary>The wording the runtime uses: Unsloth Studio's real message, which mentions vision rather than images.</summary>
+    public const string RefusalMessage = "Image provided but current GGUF model does not support vision.";
 
     public const string Description = "A terminal window showing the error: CS8978 method group cannot be made nullable.";
 
@@ -51,10 +58,13 @@ internal sealed class VisionFallbackHandler : HttpMessageHandler
 
         var hasImage = body.Contains("image_url", StringComparison.Ordinal);
         if (RefuseImages && hasImage && model == RefusedModel && Interlocked.Increment(ref Refusals) == 1)
-            return new HttpResponseMessage(HttpStatusCode.BadRequest)
-            {
-                Content = new StringContent("""{"error":{"message":"The image_url content type is not supported by this model"}}""", Encoding.UTF8, "application/json"),
-            };
+            return RefuseInStream
+                // A 200 stream whose error chunk carries the refusal: the client sees no status code at all.
+                ? Sse(["{\"error\":{\"message\":" + JsonSerializer.Serialize(RefusalMessage) + "}}"])
+                : new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent("{\"error\":{\"message\":" + JsonSerializer.Serialize(RefusalMessage) + "}}", Encoding.UTF8, "application/json"),
+                };
 
         // Any vision request (the fallback describing an image) answers with the description; the knowledge review gets [].
         if (hasImage) return Sse(Delta(Description));
@@ -101,6 +111,7 @@ public sealed class ImageFallbackTests : IDisposable
         VisionFallbackHandler.Bodies.Clear();
         VisionFallbackHandler.Models.Clear();
         VisionFallbackHandler.RefuseImages = false;
+        VisionFallbackHandler.RefuseInStream = false;
         VisionFallbackHandler.Refusals = 0;
         // Data dir through host configuration, not the SOFIA_HOME env var: xUnit runs classes in parallel and the
         // env var is process-wide, so setting it would make another test class open the wrong database.
@@ -204,6 +215,38 @@ public sealed class ImageFallbackTests : IDisposable
         var retried = VisionFallbackHandler.Bodies.Where(b => b.Contains("\"model\":\"gpt-4o\"", StringComparison.Ordinal))
             .Where(b => b.Contains("read the error in this picture", StringComparison.Ordinal)).ToList();
         Assert.Contains(retried, b => b.Contains("image_description", StringComparison.Ordinal) && !b.Contains("image_url", StringComparison.Ordinal));
+    }
+
+    /// <summary>The shape the user actually hit: a local runtime that claims vision, accepts the request (HTTP 200),
+    /// then fails mid-stream with "…does not support vision" and no status code. The step must still recover.</summary>
+    [Fact]
+    public async Task InStreamRefusalWithoutStatusCodeAlsoFallsBackToDescriptions()
+    {
+        var http = _factory.CreateClient();
+        var providerId = (await SetupAsync(http)).ChatModel.Split('/')[0];
+        var (chat, fallback) = ($"{providerId}/gpt-4o", $"{providerId}/llava-v1.6");
+        VisionFallbackHandler.RefuseImages = true;
+        VisionFallbackHandler.RefuseInStream = true;
+
+        var patched = await http.PatchAsJsonAsync("/api/config", new { imageFallbackModel = fallback });
+        patched.EnsureSuccessStatusCode();
+
+        var workspace = await Post(http, "/api/workspaces", new { kind = "folder", path = _project });
+        var sessionId = workspace.GetProperty("conversations")[0].GetProperty("id").GetString()!;
+        var attachmentId = await UploadPngAsync(http);
+
+        await Post(http, $"/api/sessions/{sessionId}/prompt", new { text = "what is in this screenshot?", attachments = new[] { attachmentId }, modelId = chat, permissionMode = "full" });
+        await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle");
+
+        Assert.Equal(1, VisionFallbackHandler.Refusals);
+        var session = await http.GetFromJsonAsync<JsonElement>($"/api/sessions/{sessionId}");
+        Assert.DoesNotContain(session.GetProperty("messages").EnumerateArray(), m =>
+            m.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String && e.GetString()!.Contains("support vision", StringComparison.Ordinal));
+
+        // Recovered exactly like the HTTP-400 case: description in, no pixels.
+        Assert.Contains(VisionFallbackHandler.Bodies, b => b.Contains("\"model\":\"gpt-4o\"", StringComparison.Ordinal)
+            && b.Contains("what is in this screenshot?", StringComparison.Ordinal)
+            && b.Contains("image_description", StringComparison.Ordinal) && !b.Contains("image_url", StringComparison.Ordinal));
     }
 
     [Fact]

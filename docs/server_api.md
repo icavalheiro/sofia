@@ -750,9 +750,12 @@ the feature and leaves the previous behavior intact ("the current model cannot s
   configured fallback re-analyses on next use.
 - The description is injected inside an `<image_description name=… path=…>` block labelled as untrusted visual content;
   audio/video attachments and vision-capable chat models are untouched (pixels go through as before).
-- If a provider rejects image input despite claiming vision (a 400/415/422 mentioning images/vision/multimodal), the
-  step is retried in blind mode: same model, no pixels, descriptions from the fallback. A missing or broken fallback
-  never fails a run — it only removes the descriptions.
+- If a provider rejects image input despite claiming vision, the step is retried in blind mode: same model, no pixels,
+  descriptions from the fallback. Detection is wording-based ("not supported" / "cannot accept" near "image" / "vision"
+  / "multimodal") and accepts either an HTTP 400/415/422 or a status-less in-stream error — llama.cpp-family runtimes
+  (Unsloth Studio, Ollama, LM Studio) report this inside a 200 SSE stream. A missing or broken fallback never fails a
+  run — it only removes the descriptions. The blind flag is per run: a model reloaded with vision support is retried
+  with pixels on the next run.
 
 ## Session origin
 
