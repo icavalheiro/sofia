@@ -316,6 +316,22 @@ snapshots and screenshots. A remote client only sees the chat screenshots.
   (history is walked through the page so a back/forward-cache restore does not wait
   for a navigation event that never fires), evaluate, tabs/new_tab/switch_tab/
   close_tab, focus, close.
+- **Viewports:** the `viewport` action emulates a layout viewport (Chrome DevTools
+  device mode) without touching the OS window: `width`/`height` (200–4096 px) plus
+  optional `mobile` and `device_scale_factor` (0.1–4). Chromium applies it with CDP
+  `Emulation.setDeviceMetricsOverride`; Firefox applies `width`/`height` through
+  `Page.SetViewportSizeAsync` and ignores the other two (WebDriver BiDi has no
+  equivalent). The emulation is session state (`BrowserSession.SetViewportAsync`),
+  re-applied when the agent switches or opens a tab, and every tool result reports
+  the **measured** layout viewport (`innerWidth/innerHeight`, `screen`,
+  `devicePixelRatio`) plus the real OS window size from `Browser.getWindowForTarget`
+  — never the requested numbers alone, and never `window.outerWidth`, which moves in
+  mobile mode. Media queries, flex wrapping and screenshots follow the emulated size.
+  `viewport` without a size clears it: Chromium returns to the window, Firefox returns
+  to the content size measured before the first override (a fixed Playwright viewport
+  cannot go back to following the window). `window.resizeTo` is a silent no-op in this
+  window — Chrome only allows it for windows opened by `window.open` — so physical
+  window resizing is deliberately not exposed: the user's window stays theirs.
 - **Screenshots:** `screenshot` (optionally `ref` for one element or `full_page`, capped at
   6000px) takes a Playwright `page.screenshot` JPEG (works on both engines) and saves it as
   an attachment in `ToolResult.Images`; the tool card shows it and `ToolCall.images`

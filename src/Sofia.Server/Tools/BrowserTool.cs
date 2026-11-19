@@ -20,8 +20,8 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
 
     private static readonly string[] Actions =
     [
-        "launch", "navigate", "snapshot", "screenshot", "click", "hover", "type", "select", "press", "scroll", "wait",
-        "back", "forward", "reload", "evaluate", "tabs", "new_tab", "switch_tab", "close_tab", "close", "focus",
+        "launch", "navigate", "snapshot", "screenshot", "viewport", "click", "hover", "type", "select", "press", "scroll",
+        "wait", "back", "forward", "reload", "evaluate", "tabs", "new_tab", "switch_tab", "close_tab", "close", "focus",
     ];
 
     public string Name => "browser";
@@ -35,14 +35,17 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         "work, so never assume the page is where your last call left it — take a new snapshot before acting. " +
         "'browser' picks the engine (auto = first installed Chrome-family browser; chrome, edge, brave, vivaldi, opera, chromium " +
         "and firefox are accepted; Firefox is experimental). 'screenshot' is the only way you see the page: use it for layout, " +
-        "charts and images when you can see images, otherwise rely on snapshot. 'close' closes the window; until then it stays " +
+        "charts and images when you can see images, otherwise rely on snapshot. 'viewport' emulates a layout viewport without " +
+        "touching the user's window (width/height plus optional mobile/device_scale_factor; call it again without a size to reset), " +
+        "so media queries, flex wrapping and screenshots follow the emulated size — use it for responsive/mobile layout checks, " +
+        "because window.resizeTo is a silent no-op in a window the page did not open. 'close' closes the window; until then it stays " +
         "open for the user. Prefer web_fetch/web_search for plain reading.";
 
     public ToolKind Kind => ToolKind.Browser;
 
     public JsonObject Parameters => Schema.Object(
-        ("action", Schema.Enum("What to do. launch (browser?) · navigate (url, browser?) · snapshot · screenshot (ref?, full_page?) · click (ref) · hover (ref) · " +
-            "type (ref?, text, submit?) · select (ref, value) · press (key, ref?) · scroll (direction up|down|top|bottom, amount?, ref?) · " +
+        ("action", Schema.Enum("What to do. launch (browser?) · navigate (url, browser?) · snapshot · screenshot (ref?, full_page?) · viewport (width?, height?, mobile?, device_scale_factor?) · " +
+            "click (ref) · hover (ref) · type (ref?, text, submit?) · select (ref, value) · press (key, ref?) · scroll (direction up|down|top|bottom, amount?, ref?) · " +
             "wait (seconds? or text?) · back · forward · reload · evaluate (script) · tabs · new_tab (url?) · switch_tab (tab) · close_tab (tab?) · " +
             "focus · close.", Actions), true),
         ("url", Schema.String("Address for navigate/new_tab. Bare hosts get https://; plain text becomes a web search."), false),
@@ -54,6 +57,10 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         ("key", Schema.String("Key or combo for press, e.g. Enter, Escape, Tab, ArrowDown, Control+a."), false),
         ("submit", Schema.Boolean("Press Enter after typing (type)."), false),
         ("full_page", Schema.Boolean("Capture the whole scrollable page instead of the visible viewport (screenshot; capped at 6000px tall)."), false),
+        ("width", Schema.Integer("Emulated layout width for the viewport action, 200-4096 px (screenshots and media queries follow it). Needs height."), false),
+        ("height", Schema.Integer("Emulated layout height for the viewport action, 200-4096 px. Needs width; omit both to reset to the window size."), false),
+        ("mobile", Schema.Boolean("Emulate device-style viewport/meta handling (viewport action; no user-agent or touch change)."), false),
+        ("device_scale_factor", Schema.Number("Device pixel ratio to emulate, 0.1-4 (viewport action; default 1). dsf 2 makes a 400x800 layout capture at 800x1600 px."), false),
         ("direction", Schema.Enum("Scroll direction.", "up", "down", "top", "bottom"), false),
         ("amount", Schema.Integer("Pixels to scroll (default: most of a screen)."), false),
         ("seconds", Schema.Integer("Seconds to wait (max 30)."), false),
@@ -105,11 +112,23 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                     $"Profile: {session.ProfileDir}", ctx.Config.MaxToolOutput));
             }
             if (action == "screenshot") return await ScreenshotAsync(session, args);
+            if (action == "viewport")
+            {
+                var viewport = BrowserViewport.Validate(
+                    Args.Int(args, "width"), Args.Int(args, "height"), Args.Bool(args, "mobile"), Args.Double(args, "device_scale_factor") ?? 1);
+                var report = await session.SetViewportAsync(viewport, ct);
+                return ToolResult.Ok(Text.Truncate($"{Prefix(session)}{report}", ctx.Config.MaxToolOutput));
+            }
             return ToolResult.Ok(await RunAsync(session, action, args, ctx.Config.MaxToolOutput, ct));
         }
         catch (PlaywrightException ex) when (ex.Message.Contains("Timeout", StringComparison.OrdinalIgnoreCase))
         {
             return ToolResult.Fail($"{Prefix(session)}{Text.FirstLine(ex.Message, 300)} The element may be hidden or covered; take a new snapshot and try again.");
+        }
+        catch (TimeoutException ex)
+        {
+            // Playwright surfaces a few waits (navigation, CDP calls) as a plain TimeoutException.
+            return ToolResult.Fail($"{Prefix(session)}{Text.FirstLine(ex.Message, 300)} The page may be slow or unreachable; take a snapshot to see what loaded.");
         }
         catch (PlaywrightException ex)
         {
@@ -206,8 +225,7 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 return $"{Prefix(session)}\n{TabList(session)}";
             case "new_tab":
             {
-                var fresh = await session.Page.Context.NewPageAsync();
-                await session.ActivateAsync(fresh);
+                var fresh = await session.OpenTabAsync();
                 if (Args.Optional(args, "url") is { Length: > 0 } url) await session.GotoAsync(url);
                 done = $"Opened tab {session.Pages.IndexOf(fresh)}.";
                 break;
@@ -227,6 +245,7 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                 var index = Args.Int(args, "tab") ?? pages.IndexOf(page);
                 if (index < 0 || index >= pages.Count) throw new ArgumentException($"No tab {index}. {TabList(session)}");
                 await pages[index].CloseAsync();
+                await session.SettleActiveAsync();
                 done = $"Closed tab {index}.";
                 break;
             }
@@ -407,6 +426,7 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         if (done.Length > 0) sb.AppendLine(done);
         var notes = session.DrainNotes();
         if (notes.Length > 0) sb.AppendLine(notes);
+        if (session.ViewportNote is { Length: > 0 } viewportNote) sb.AppendLine(viewportNote);
         sb.AppendLine($"Browser: {session.EngineId}{(session.Headless ? " (headless, no window)" : " (window on the server's desktop)")}");
         sb.AppendLine($"URL: {page.Url}");
         sb.AppendLine($"Title: {await page.TitleAsync()}");

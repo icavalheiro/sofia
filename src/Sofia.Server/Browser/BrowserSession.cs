@@ -14,11 +14,19 @@ public sealed class BrowserSession : IAsyncDisposable
     private readonly List<IPage> _pages = [];
     private readonly List<string> _notes = [];
     private readonly object _gate = new();
+    // Emulated viewport state: one CDP session per page, the pages that carry an override and, for Firefox, the
+    // content size measured before the first override (a Playwright viewport cannot go back to following the window).
+    private readonly Dictionary<IPage, ICDPSession> _cdp = [];
+    private readonly HashSet<IPage> _emulated = [];
+    private readonly SemaphoreSlim _viewportGate = new(1, 1);
     private readonly BrowserHandle _handle;
     private readonly IEventBus _bus;
     private readonly ILogger _log;
     private IPage? _page;
     private string _title = "";
+    private BrowserViewport? _viewport;
+    private ICDPSession? _browserCdp;
+    private (int Width, int Height)? _natural;
     private bool _disposed;
     private volatile bool _agentBusy;
 
@@ -49,7 +57,8 @@ public sealed class BrowserSession : IAsyncDisposable
     {
         get
         {
-            lock (_gate) return [.. _pages];
+            // A closed tab can stay in the list until its close event runs; numbering must never point at it.
+            lock (_gate) return [.. _pages.Where(page => !page.IsClosed)];
         }
     }
 
@@ -111,9 +120,16 @@ public sealed class BrowserSession : IAsyncDisposable
 
     private void Adopt(IPage page)
     {
+        if (!Attach(page)) return;
+        _ = ActivateAsync(page);
+    }
+
+    /// <summary>Registers a page (tabs, close handler, dialogs). Returns false when it was already known.</summary>
+    private bool Attach(IPage page)
+    {
         lock (_gate)
         {
-            if (_pages.Contains(page)) return;
+            if (_pages.Contains(page)) return false;
             _pages.Add(page);
         }
         page.Close += (_, _) => _ = OnPageClosedAsync(page);
@@ -132,7 +148,19 @@ public sealed class BrowserSession : IAsyncDisposable
                 // The page navigated away while the dialog was open.
             }
         };
-        _ = ActivateAsync(page);
+        return true;
+    }
+
+    /// <summary>
+    /// Opens a page and makes it the active tab. The page is adopted here instead of waiting for the context's
+    /// <c>Page</c> event, so the caller can address it immediately (the event can arrive after the call returns).
+    /// </summary>
+    public async Task<IPage> OpenTabAsync()
+    {
+        var page = await _handle.Context.NewPageAsync();
+        Attach(page);
+        await ActivateAsync(page);
+        return page;
     }
 
     public async Task ActivateAsync(IPage page)
@@ -146,6 +174,8 @@ public sealed class BrowserSession : IAsyncDisposable
         {
             // Closed meanwhile.
         }
+        // Chromium device metrics are per target: give the newly activated tab the conversation's viewport back.
+        await ReapplyViewportAsync(page);
         await RefreshAsync();
     }
 
@@ -169,6 +199,8 @@ public sealed class BrowserSession : IAsyncDisposable
         lock (_gate)
         {
             _pages.Remove(page);
+            _cdp.Remove(page);
+            _emulated.Remove(page);
             next = _pages.LastOrDefault();
         }
         if (_page != page || _disposed) return;
@@ -259,6 +291,220 @@ public sealed class BrowserSession : IAsyncDisposable
 
     public async Task<(string Url, string Title)> InfoAsync() => (Page.Url, await Page.TitleAsync());
 
+    // --- emulated viewport -------------------------------------------------------
+
+    /// <summary>
+    /// Emulated layout viewport currently applied to this conversation's pages, or null when pages follow the window.
+    /// Chrome DevTools device mode: it changes the layout, never the OS window.
+    /// </summary>
+    public BrowserViewport? Viewport => _viewport;
+
+    /// <summary>One line for tool results while an emulation is active, so the emulated size is never mistaken for the window.</summary>
+    public string ViewportNote => _viewport is { } viewport
+        ? $"Viewport: {viewport.Describe()} emulated (layout only; the window is unchanged). Reset with viewport (no width/height)."
+        : "";
+
+    /// <summary>
+    /// Applies an emulated layout viewport, or clears it when <paramref name="viewport"/> is null, and returns what the
+    /// page actually reports — so a silent no-op (like <c>window.resizeTo</c> in this window) cannot be mistaken for
+    /// success. The OS window is never resized or moved.
+    /// </summary>
+    public async Task<string> SetViewportAsync(BrowserViewport? viewport, CancellationToken ct)
+    {
+        await _viewportGate.WaitAsync(ct);
+        try
+        {
+            if (viewport is null) return await ResetViewportAsync();
+            _viewport = viewport;
+            var note = await ApplyViewportAsync(Page, viewport);
+            var applied = $"Viewport emulated: {viewport.Describe()} " +
+                          $"(via {(_handle.IsChromium ? "Chromium CDP Emulation.setDeviceMetricsOverride" : "Firefox Playwright page viewport")}).{note}";
+            if (viewport.Mobile)
+                applied += " In mobile mode a page without <meta name=\"viewport\"> lays out at 980px wide (the mobile default) " +
+                           "and scales down, so the effective layout can be wider than the device size.";
+            return await DescribeLayoutAsync(applied) +
+                   "\nMedia queries, flex wrapping and screenshots use the emulated viewport; the OS window was not resized. " +
+                   "The page may look narrower than the window frame, and native browser UI is unaffected.";
+        }
+        finally
+        {
+            _viewportGate.Release();
+        }
+    }
+
+    /// <summary>Emulation is session state: a new or switched tab gets the same viewport back.</summary>
+    private async Task ReapplyViewportAsync(IPage page)
+    {
+        await _viewportGate.WaitAsync();
+        try
+        {
+            if (_viewport is not { } viewport) return;
+            try
+            {
+                var note = await ApplyViewportAsync(page, viewport);
+                if (note.Length > 0) lock (_notes) _notes.Add(note.Trim());
+            }
+            catch (PlaywrightException ex)
+            {
+                lock (_notes) _notes.Add($"The emulated viewport {viewport.Describe()} could not be re-applied to this tab: {Text.FirstLine(ex.Message, 160)}");
+            }
+        }
+        finally
+        {
+            _viewportGate.Release();
+        }
+    }
+
+    private async Task<string> ApplyViewportAsync(IPage page, BrowserViewport viewport)
+    {
+        if (_handle.IsChromium)
+        {
+            await (await CdpAsync(page)).SendAsync("Emulation.setDeviceMetricsOverride", new Dictionary<string, object>
+            {
+                ["width"] = viewport.Width,
+                ["height"] = viewport.Height,
+                ["deviceScaleFactor"] = viewport.DeviceScaleFactor,
+                ["mobile"] = viewport.Mobile,
+            });
+            lock (_gate) _emulated.Add(page);
+            return "";
+        }
+
+        // WebDriver BiDi has no device-metrics override in this Playwright version: width/height only.
+        _natural ??= await MeasureAsync(page);
+        await page.SetViewportSizeAsync(viewport.Width, viewport.Height);
+        return " This engine applies width/height only: mobile and device_scale_factor are ignored over WebDriver BiDi.";
+    }
+
+    private async Task<string> ResetViewportAsync()
+    {
+        List<IPage> pages;
+        lock (_gate) pages = [.. _pages];
+        var notes = new List<string>();
+
+        if (_handle.IsChromium)
+        {
+            // Clear on every open page, not only the tracked ones: the override lives on the target, so whatever path
+            // applied it, the page must not keep a stale emulation after a reset.
+            foreach (var page in pages)
+            {
+                try
+                {
+                    await (await CdpAsync(page)).SendAsync("Emulation.clearDeviceMetricsOverride");
+                }
+                catch (PlaywrightException ex)
+                {
+                    notes.Add($"Could not clear the override on {page.Url}: {Text.FirstLine(ex.Message, 140)}.");
+                }
+            }
+            lock (_gate) _emulated.Clear();
+            if (_viewport is null && notes.Count == 0) return "No emulated viewport is active; the page follows the window.";
+            _viewport = null;
+            notes.Insert(0, "Viewport emulation cleared; the page follows the window again.");
+        }
+        else
+        {
+            if (_viewport is null) return "No emulated viewport is active; the page follows the window.";
+            _viewport = null;
+            if (_natural is { } natural)
+            {
+                try
+                {
+                    await Page.SetViewportSizeAsync(natural.Width, natural.Height);
+                }
+                catch (PlaywrightException ex)
+                {
+                    notes.Add($"Could not restore the pre-emulation size: {Text.FirstLine(ex.Message, 140)}.");
+                }
+                notes.Insert(0, $"Viewport emulation cleared; this engine cannot go back to following the window, so the " +
+                                $"viewport is fixed at the pre-emulation size {natural.Width}x{natural.Height} " +
+                                "(close and reopen the window to let it follow the window again).");
+            }
+            else notes.Insert(0, "Viewport emulation cleared.");
+        }
+
+        return await DescribeLayoutAsync(string.Join(" ", notes));
+    }
+
+    /// <summary>The measured layout, never the requested numbers: the caller can see whether the change took effect.</summary>
+    private async Task<string> DescribeLayoutAsync(string message)
+    {
+        var page = Page;
+        try
+        {
+            var inner = await page.EvaluateAsync<int[]>("() => [window.innerWidth, window.innerHeight]");
+            var screen = await page.EvaluateAsync<int[]>("() => [window.screen.width, window.screen.height]");
+            var dpr = await page.EvaluateAsync<double>("() => window.devicePixelRatio");
+            var window = await WindowBoundsAsync();
+            var windowText = window is null
+                ? "this engine cannot report the OS window size here"
+                : $"the OS window is still {window}";
+            return $"{message}\nEffective layout viewport: {inner[0]}x{inner[1]} " +
+                   $"(the page sees screen {screen[0]}x{screen[1]}, dpr {dpr:0.##}); {windowText}.";
+        }
+        catch (PlaywrightException ex)
+        {
+            return $"{message}\nCould not measure the layout viewport: {Text.FirstLine(ex.Message, 200)}";
+        }
+    }
+
+    /// <summary>
+    /// The real OS window size from the browser, independent of any emulation (a mobile override also changes what
+    /// <c>window.outerWidth</c> reports, so it cannot prove the window was left alone).
+    /// </summary>
+    private async Task<string?> WindowBoundsAsync()
+    {
+        if (!_handle.IsChromium || _handle.Browser is not { } browser) return null;
+        try
+        {
+            var info = await (await CdpAsync(Page)).SendAsync("Target.getTargetInfo");
+            var targetId = info?.GetProperty("targetInfo").GetProperty("targetId").GetString();
+            if (targetId is null) return null;
+            _browserCdp ??= await browser.NewBrowserCDPSessionAsync();
+            var window = await _browserCdp.SendAsync("Browser.getWindowForTarget", new Dictionary<string, object> { ["targetId"] = targetId });
+            if (window is not { } value) return null;
+            var bounds = value.GetProperty("bounds");
+            return $"{bounds.GetProperty("width").GetInt32()}x{bounds.GetProperty("height").GetInt32()}";
+        }
+        catch (Exception ex) when (ex is PlaywrightException or InvalidOperationException or KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// After a tab closes: wait until the session points at an open page and re-apply the emulated viewport, so the
+    /// snapshot of the closing action is not read from the tab that is going away.
+    /// </summary>
+    public async Task SettleActiveAsync()
+    {
+        IPage? active;
+        for (var attempt = 0; attempt < 60; attempt++)
+        {
+            lock (_gate) active = _page;
+            if (active is not null && !active.IsClosed) break;
+            await Task.Delay(50);
+        }
+        IPage? page;
+        lock (_gate) page = _page;
+        if (page is null || page.IsClosed) return;
+        await ReapplyViewportAsync(page);
+    }
+
+    private async Task<(int Width, int Height)> MeasureAsync(IPage page)
+    {
+        var size = await page.EvaluateAsync<int[]>("() => [window.innerWidth, window.innerHeight]");
+        return size.Length >= 2 ? (size[0], size[1]) : (0, 0);
+    }
+
+    private async Task<ICDPSession> CdpAsync(IPage page)
+    {
+        lock (_gate) if (_cdp.TryGetValue(page, out var cached)) return cached;
+        var session = await _handle.Context.NewCDPSessionAsync(page);
+        lock (_gate) _cdp[page] = session;
+        return session;
+    }
+
     /// <summary>The page is agent-driven right now (used by events/handlers, not to lock the user out).</summary>
     public bool AgentBusy => _agentBusy;
 
@@ -292,6 +538,7 @@ public sealed class BrowserSession : IAsyncDisposable
         }
         BrowserInstanceStore.Delete(_handle.ProfileDir);
         Gate.Dispose();
+        _viewportGate.Dispose();
     }
 
     /// <summary>
@@ -316,5 +563,40 @@ public sealed class BrowserSession : IAsyncDisposable
         }
         _handle.Process?.Dispose();
         Gate.Dispose();
+        _viewportGate.Dispose();
     }
+}
+
+/// <summary>
+/// An emulated layout viewport (Chrome DevTools device mode): the page is laid out at this size while the OS window
+/// keeps its own size. <c>Mobile</c> toggles device-style viewport/meta handling only — the user agent and touch input
+/// are left alone, so pages keep serving what they serve to this browser.
+/// </summary>
+public sealed record BrowserViewport(int Width, int Height, bool Mobile, double DeviceScaleFactor)
+{
+    public const int MinSide = 200;
+    public const int MaxSide = 4096;
+
+    /// <summary>
+    /// Turns the tool arguments into a viewport: both sides or neither (neither means "reset to the window"), 200–4096
+    /// px per side and a device scale factor in 0.1–4.
+    /// </summary>
+    public static BrowserViewport? Validate(int? width, int? height, bool mobile, double deviceScaleFactor)
+    {
+        if (width is null && height is null)
+        {
+            if (mobile || Math.Abs(deviceScaleFactor - 1) > 1e-9)
+                throw new ArgumentException("viewport needs 'width' and 'height' to change mobile or device_scale_factor; without them the call resets the emulation.");
+            return null;
+        }
+        if (width is null || height is null)
+            throw new ArgumentException("viewport needs both 'width' and 'height' (or neither of them, to reset to the window size).");
+        if (width is < MinSide or > MaxSide || height is < MinSide or > MaxSide)
+            throw new ArgumentException($"viewport sides must be between {MinSide} and {MaxSide} px (got {width}x{height}).");
+        if (deviceScaleFactor is < 0.1 or > 4)
+            throw new ArgumentException($"device_scale_factor must be between 0.1 and 4 (got {deviceScaleFactor}).");
+        return new BrowserViewport(width.Value, height.Value, mobile, deviceScaleFactor);
+    }
+
+    public string Describe() => $"{Width}x{Height}{(Mobile ? " mobile" : "")} at dpr {DeviceScaleFactor:0.##}";
 }

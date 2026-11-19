@@ -37,6 +37,76 @@ public class BrowserUrlTests
 }
 
 /// <summary>
+/// Validation of the <c>viewport</c> arguments: the tool must reject half a viewport and sizes that cannot be a
+/// layout, before a page is touched.
+/// </summary>
+public class BrowserViewportTests
+{
+    [Fact]
+    public void Accepts_a_full_size_with_defaults()
+    {
+        var viewport = BrowserViewport.Validate(400, 800, mobile: false, deviceScaleFactor: 1);
+        Assert.NotNull(viewport);
+        Assert.Equal(400, viewport!.Width);
+        Assert.Equal(800, viewport.Height);
+        Assert.False(viewport.Mobile);
+        Assert.Equal(1, viewport.DeviceScaleFactor);
+    }
+
+    [Fact]
+    public void Accepts_mobile_and_a_fractional_device_scale_factor()
+    {
+        var viewport = BrowserViewport.Validate(390, 844, mobile: true, deviceScaleFactor: 1.5);
+        Assert.NotNull(viewport);
+        Assert.True(viewport!.Mobile);
+        Assert.Equal(1.5, viewport.DeviceScaleFactor);
+        Assert.Contains("mobile", viewport.Describe());
+        Assert.Contains("390x844", viewport.Describe());
+    }
+
+    [Fact]
+    public void No_size_means_reset()
+    {
+        Assert.Null(BrowserViewport.Validate(null, null, mobile: false, deviceScaleFactor: 1));
+    }
+
+    [Theory]
+    [InlineData(400, null)]
+    [InlineData(null, 800)]
+    public void Rejects_half_a_viewport(int? width, int? height)
+    {
+        var error = Assert.Throws<ArgumentException>(() => BrowserViewport.Validate(width, height, false, 1));
+        Assert.Contains("both", error.Message);
+    }
+
+    [Theory]
+    [InlineData(199, 800)]
+    [InlineData(400, 4097)]
+    [InlineData(0, 0)]
+    public void Rejects_sizes_outside_the_supported_range(int width, int height)
+    {
+        var error = Assert.Throws<ArgumentException>(() => BrowserViewport.Validate(width, height, false, 1));
+        Assert.Contains("between", error.Message);
+    }
+
+    [Theory]
+    [InlineData(0.05)]
+    [InlineData(4.5)]
+    public void Rejects_an_out_of_range_device_scale_factor(double deviceScaleFactor)
+    {
+        var error = Assert.Throws<ArgumentException>(() => BrowserViewport.Validate(400, 800, false, deviceScaleFactor));
+        Assert.Contains("device_scale_factor", error.Message);
+    }
+
+    [Fact]
+    public void Rejects_mobile_or_dsf_without_a_size()
+    {
+        Assert.Throws<ArgumentException>(() => BrowserViewport.Validate(null, null, mobile: true, deviceScaleFactor: 1));
+        Assert.Throws<ArgumentException>(() => BrowserViewport.Validate(null, null, mobile: false, deviceScaleFactor: 2));
+    }
+}
+
+/// <summary>
 /// Runs the real-browser tests serially with the rest of the suite: starting a browser is CPU-heavy for the first
 /// seconds and the session-based tests around it poll with fixed budgets.
 /// </summary>
@@ -181,6 +251,35 @@ public class BrowserToolTests
                     Assert.True(jpeg.Length > 500 && jpeg[0] == 0xFF && jpeg[1] == 0xD8, "expected a JPEG");
                 }
 
+                // The viewport action emulates a layout without touching the window, and reports what took effect.
+                var emulated = await OkAsync(tool, "ses_test", new { action = "viewport", width = 400, height = 800 });
+                Assert.Contains("400x800", emulated);
+                Assert.Contains("Effective layout viewport: 400x800", emulated);
+                Assert.Contains("OS window was not resized", emulated);
+                var narrow = await OkAsync(tool, "ses_test", new { action = "evaluate", script = "() => matchMedia('(max-width: 500px)').matches" });
+                Assert.Equal("true", narrow.Trim(), ignoreCase: true);
+                var emulatedShot = await RunAsync(tool, "ses_test", new { action = "screenshot" });
+                Assert.False(emulatedShot.IsError, emulatedShot.Output);
+                var (emulatedWidth, emulatedHeight) = JpegSize(File.ReadAllBytes(Assert.Single(emulatedShot.Images!).StoragePath));
+                Assert.Equal((400, 800), (emulatedWidth, emulatedHeight));
+
+                // Session state, not per-tab: a new tab gets the same viewport back.
+                await OkAsync(tool, "ses_test", new { action = "new_tab", url });
+                var switched = await OkAsync(tool, "ses_test", new { action = "snapshot" });
+                Assert.Contains("Viewport: 400x800", switched);
+                Assert.Contains("Viewport 400x800", switched);
+                await OkAsync(tool, "ses_test", new { action = "close_tab" });
+
+                // Reset goes back to the window's own size and drops the note.
+                var reset = await OkAsync(tool, "ses_test", new { action = "viewport" });
+                Assert.Contains("cleared", reset);
+                Assert.DoesNotContain("Effective layout viewport: 400x800", reset);
+                Assert.DoesNotContain("Viewport: 400x800", await OkAsync(tool, "ses_test", new { action = "snapshot" }));
+                var resetShot = await RunAsync(tool, "ses_test", new { action = "screenshot" });
+                Assert.False(resetShot.IsError, resetShot.Output);
+                var (resetWidth, _) = JpegSize(File.ReadAllBytes(Assert.Single(resetShot.Images!).StoragePath));
+                Assert.True(resetWidth > 400, $"expected the window's own width after the reset, got {resetWidth}");
+
                 // The window is remembered on disk so a restart can re-attach instead of opening a second one.
                 var instance = Assert.Single(BrowserInstanceStore.Enumerate(service.BrowsersRoot)).Instance;
                 Assert.Equal("ses_test", instance.SessionId);
@@ -234,5 +333,21 @@ public class BrowserToolTests
     {
         var line = snapshot.Split('\n').First(l => l.Contains(marker));
         return line[(line.IndexOf('[') + 1)..line.IndexOf(']')];
+    }
+
+    /// <summary>Reads the pixel size from a JPEG's SOF marker, so screenshots are asserted, not trusted.</summary>
+    private static (int Width, int Height) JpegSize(byte[] jpeg)
+    {
+        var i = 2;
+        while (i < jpeg.Length - 9)
+        {
+            if (jpeg[i] != 0xFF) { i++; continue; }
+            var marker = jpeg[i + 1];
+            var length = (jpeg[i + 2] << 8) | jpeg[i + 3];
+            if (marker is 0xC0 or 0xC1 or 0xC2)
+                return (((jpeg[i + 7] << 8) | jpeg[i + 8]), ((jpeg[i + 5] << 8) | jpeg[i + 6]));
+            i += 2 + length;
+        }
+        return (0, 0);
     }
 }

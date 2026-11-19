@@ -190,6 +190,15 @@ public static class Args
         return null;
     }
 
+    public static double? Double(JsonObject args, string name)
+    {
+        if (args[name] is not JsonValue v) return null;
+        if (v.TryGetValue<double>(out var d)) return d;
+        if (v.TryGetValue<int>(out var i)) return i;
+        if (v.TryGetValue<string>(out var s) && double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var p)) return p;
+        return null;
+    }
+
     public static bool Bool(JsonObject args, string name)
     {
         if (args[name] is not JsonValue v) return false;
@@ -216,6 +225,8 @@ public static class Schema
     public static JsonObject String(string description) => new() { ["type"] = "string", ["description"] = description };
 
     public static JsonObject Integer(string description) => new() { ["type"] = "integer", ["description"] = description };
+
+    public static JsonObject Number(string description) => new() { ["type"] = "number", ["description"] = description };
 
     public static JsonObject Boolean(string description) => new() { ["type"] = "boolean", ["description"] = description };
 

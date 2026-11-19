@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Viewport check</title>
+  <style>
+    body { margin: 0; font: 16px/1.4 sans-serif; background: #f3efe9; color: #2b2b2b; }
+    h1 { margin: 16px; font-size: 28px; }
+    #flex { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 16px; }
+    #flex div { width: 260px; height: 80px; background: #a9744f; color: #fff; display: flex; align-items: center; justify-content: center; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1 id="size">measuring…</h1>
+  <div id="flex">
+    <div>one</div><div>two</div><div>three</div><div>four</div><div>five</div><div>six</div>
+  </div>
+  <script>
+    const update = () => {
+      document.getElementById('size').textContent =
+        innerWidth + ' x ' + innerHeight + '  ·  dpr ' + devicePixelRatio + '  ·  matchMedia(max-width:500px) ' +
+        matchMedia('(max-width: 500px)').matches;
+    };
+    update();
+    addEventListener('resize', update);
+  </script>
+</body>
+</html>
