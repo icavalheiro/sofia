@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # 1. Web UI
-FROM node:22-alpine AS ui
+FROM node:26-alpine AS ui
 WORKDIR /src/src/Sofia.UI
 COPY src/Sofia.UI/package.json src/Sofia.UI/package-lock.json ./
 RUN npm ci
