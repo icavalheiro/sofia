@@ -9,7 +9,7 @@ COPY src/Sofia.UI/ ./
 RUN npm run build
 
 # 2. Server (the UI is built above, so the publish-time npm build is skipped)
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS server
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS server
 WORKDIR /src
 COPY Sofia.slnx ./
 COPY src/Sofia.Server/Sofia.Server.csproj src/Sofia.Server/
