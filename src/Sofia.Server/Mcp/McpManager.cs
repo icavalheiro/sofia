@@ -90,7 +90,7 @@ public sealed class McpManager(SofiaDb db, IEventBus bus, ILoggerFactory loggers
         config.Id = Ids.New("mcp");
         db.McpServers.Insert(config);
         await ConnectAsync(config.Id, ct);
-        return View(db.McpServers.FindById(config.Id));
+        return View(FindConfig(config.Id) ?? config);
     }
 
     public async Task RemoveAsync(string id)
@@ -111,7 +111,7 @@ public sealed class McpManager(SofiaDb db, IEventBus bus, ILoggerFactory loggers
         {
             if (globalMatch.Enabled) return View(globalMatch);
             await ConnectAsync(globalMatch.Id, ct);
-            return View(db.McpServers.FindById(globalMatch.Id));
+            return View(FindConfig(globalMatch.Id) ?? globalMatch);
         }
         // Dedupe within the same session.
         if (_ephemeralBySession.TryGetValue(sessionId, out var existingIds))
