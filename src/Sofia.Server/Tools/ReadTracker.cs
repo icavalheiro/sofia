@@ -8,7 +8,7 @@ namespace Sofia.Server.Tools;
 
 /// <summary>
 /// Per-session read-before-edit state: which files the session has read (or written) and how they looked on disk
-/// at that moment. Persisted in LiteDB (`file_reads`) so a server restart does not force re-reads, and scoped per
+/// at that moment. Persisted in SQLite (`file_reads`) so a server restart does not force re-reads, and scoped per
 /// session id, so subagents track their own reads independently of the parent.
 /// </summary>
 public sealed class ReadTracker(SofiaDb db)

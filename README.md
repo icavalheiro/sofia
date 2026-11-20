@@ -5,7 +5,7 @@
 </p>
 <p align="center">
   <img src="https://img.shields.io/badge/C%23-blue.svg" alt="C#" />
-  <img src="https://img.shields.io/badge/LiteDB-green.svg" alt="LiteDB" />
+  <img src="https://img.shields.io/badge/SQLite-blue.svg" alt="SQLite" />
   <img src="https://img.shields.io/badge/TypeScript-blue.svg" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Vue-blue.svg" alt="Vue" />
   <img src="https://img.shields.io/badge/Vite-cyan.svg" alt="Vite" />
@@ -26,7 +26,7 @@ Sofia is a local AI harness—an ASP.NET Core agent server and a Vue web interfa
 ```
 Sofia.UI (Vue 3.5 + Vite + TypeScript) ──REST + SignalR
 ├─ Sofia.Server (ASP.NET, .NET 10)
-├─ LiteDB (~/.sofia/sofia.db)
+├─ SQLite (~/.sofia/sofia.sqlite)
 ├─ local runtimes: Unsloth, Ollama, LM Studio, llama.cpp, vLLM
 ├─ cloud: OpenAI-compatible and Anthropic APIs
 └─ MCP servers (stdio and HTTP)

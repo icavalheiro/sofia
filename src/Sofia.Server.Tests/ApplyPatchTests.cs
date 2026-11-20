@@ -1,4 +1,3 @@
-using LiteDB;
 using Sofia.Server.Agent;
 using Sofia.Server.Changes;
 using Sofia.Server.Data;
@@ -230,7 +229,7 @@ public class ApplyPatchTests : IDisposable
     [Fact]
     public async Task RevertRestoresUpdatedDeletedMovedFilesAndDeletesAddedOnes()
     {
-        var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
+        var db = new SofiaDb(":memory:");
         using var _ = db;
         var changes = new ChangeTracker(db);
         var (ctx, path) = Setup([("a.txt", "one\ntwo\n")], extra: [("old.txt", "keep me\n")], changes: changes);
@@ -313,7 +312,7 @@ public class ApplyPatchTests : IDisposable
         Directory.CreateDirectory(_dir);
         foreach (var (name, content) in files.Concat(extra ?? []))
             File.WriteAllText(Path.Combine(_dir, name), content);
-        var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
+        var db = new SofiaDb(":memory:");
         var session = new Session { Id = "s", WorkspaceId = "ws" };
         db.Sessions.Insert(session);
         changes ??= new ChangeTracker(db);

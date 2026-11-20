@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
-using LiteDB;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sofia.Server.Data;
 using Sofia.Server.Domain;
@@ -79,7 +78,7 @@ public class ModelCatalogTests
     [Fact]
     public void BundledSnapshotCarriesTheLimitsThatMatter()
     {
-        using var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
+        using var db = new SofiaDb(":memory:");
         var catalog = Catalog(db, Unreachable());
 
         Assert.True(catalog.ModelCount > 1000, $"the embedded snapshot only has {catalog.ModelCount} models");
@@ -97,7 +96,7 @@ public class ModelCatalogTests
     [Fact]
     public async Task ExactProviderBeatsModelIdOnlyLookup()
     {
-        using var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
+        using var db = new SofiaDb(":memory:");
         var catalog = Catalog(db, Reachable());
         await catalog.RefreshAsync(CancellationToken.None);
 
@@ -112,7 +111,7 @@ public class ModelCatalogTests
     [Fact]
     public async Task OutputFallsBackToTheDefaultWhenTheCatalogOnlyKnowsTheWindow()
     {
-        using var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
+        using var db = new SofiaDb(":memory:");
         var catalog = Catalog(db, Reachable());
         await catalog.RefreshAsync(CancellationToken.None);
         Assert.Equal(40_000, catalog.Lookup("alpha", "context-only")?.Context);
@@ -137,7 +136,7 @@ public class ModelCatalogTests
     [Fact]
     public async Task FetchesTheCatalogAndRevalidatesWithTheEtag()
     {
-        using var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
+        using var db = new SofiaDb(":memory:");
         var handler = Reachable();
         var catalog = Catalog(db, handler);
 
@@ -164,7 +163,7 @@ public class ModelCatalogTests
     [Fact]
     public async Task UnreachableCatalogKeepsTheBundledSnapshot()
     {
-        using var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
+        using var db = new SofiaDb(":memory:");
         var catalog = Catalog(db, Unreachable());
 
         await catalog.RefreshAsync(CancellationToken.None);
@@ -176,7 +175,7 @@ public class ModelCatalogTests
     [Fact]
     public async Task FreshCatalogIsNotRefetched()
     {
-        using var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
+        using var db = new SofiaDb(":memory:");
         var handler = Reachable();
         var catalog = Catalog(db, handler);
 
@@ -192,16 +191,16 @@ public class ModelCatalogTests
         var path = Path.Combine(Path.GetTempPath(), $"sofia-catalog-{Guid.NewGuid():N}.db");
         try
         {
-            using (var db = new SofiaDb(new ConnectionString { Filename = path }))
+            using (var db = new SofiaDb(path))
             {
                 var catalog = Catalog(db, Reachable());
                 await catalog.RefreshAsync(CancellationToken.None);
                 Assert.Equal(777_777, catalog.Lookup("cachetest", "cache-only")?.Context);
             }
 
-            // A new process: the bundled snapshot does not know 'cache-only', the LiteDB cache does, and the
+            // A new process: the bundled snapshot does not know 'cache-only', the SQLite cache does, and the
             // network is down.
-            using (var db = new SofiaDb(new ConnectionString { Filename = path }))
+            using (var db = new SofiaDb(path))
             {
                 var offline = Unreachable();
                 var catalog = Catalog(db, offline);
@@ -219,7 +218,7 @@ public class ModelCatalogTests
 
 public class ProviderServiceLimitsTests
 {
-    private static SofiaDb Db() => new(new LiteDB.ConnectionString { Filename = ":memory:" });
+    private static SofiaDb Db() => new(":memory:");
 
     private static ProviderService Providers(SofiaDb db, HttpMessageHandler? handler = null) =>
         new(db, new StubFactory(handler ?? new StubHandler(_ => throw new HttpRequestException("no network"))), new EventBus(),

@@ -151,7 +151,7 @@ public class KeepAwakeTests
     [Fact]
     public void HoldsOnlyWhileBusyAndEnabled()
     {
-        using var db = new SofiaDb(new LiteDB.ConnectionString { Filename = ":memory:" });
+        using var db = new SofiaDb(":memory:");
         using var awake = new KeepAwakeService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<KeepAwakeService>.Instance);
 
         awake.SetBusy(true);
@@ -261,7 +261,7 @@ public class NotesToolTests
 {
     private static (NotesTool Tool, KnowledgeService Service, SofiaDb Db) Create()
     {
-        var db = new SofiaDb(new LiteDB.ConnectionString { Filename = ":memory:" });
+        var db = new SofiaDb(":memory:");
         var service = new KnowledgeService(db, null!, null!);
         return (new NotesTool(service), service, db);
     }
