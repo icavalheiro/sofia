@@ -1,7 +1,7 @@
 # Sofia.Server API
 
 `src/Sofia.Server` is Sofia's own harness backend (ASP.NET Core, .NET 10,
-minimal APIs, LiteDB, SignalR). `src/Sofia.UI` is its only client. This file is
+minimal APIs, SQLite, SignalR). `src/Sofia.UI` is its only client. This file is
 the contract between the two: REST for commands and queries, one SignalR hub
 for live events.
 
@@ -90,7 +90,7 @@ interface ConversationSummaryDto {
   archivedAt?: string     // set while archived
   pinned?: boolean        // kept at the top of the workspace's list
   lastTurnMs?: number     // how long the last request took, start to finish (waiting on the
-                          // user's answers excluded); persisted in LiteDB, so it survives a reload
+                          // user's answers excluded); persisted in SQLite, so it survives a reload
   lastTurnAt?: string     // when that request finished
 }
 
@@ -490,7 +490,7 @@ interface KnowledgeNote {
 
 ## Session search
 
-`GET /api/search` runs an in-memory inverted index (BM25) over user/assistant message text, rebuilt from LiteDB on startup and kept current by `message.created`, debounced `message.updated`, `message.deleted` and `session.deleted` events. Tokenizer: lowercase + diacritic folding; the last query term matches by prefix (`sess` -> `session`); quoted phrases are matched verbatim. Results are grouped by session (best score first, up to 3 snippets per session, each with `[start, len]` highlight ranges relative to its snippet) and filtered by `workspaceId` (all workspaces when omitted), `includeArchived` (default false) and `includeSubagents` (default false: sessions whose parent is another session are excluded).
+`GET /api/search` runs an in-memory inverted index (BM25) over user/assistant message text, rebuilt from SQLite on startup and kept current by `message.created`, debounced `message.updated`, `message.deleted` and `session.deleted` events. Tokenizer: lowercase + diacritic folding; the last query term matches by prefix (`sess` -> `session`); quoted phrases are matched verbatim. Results are grouped by session (best score first, up to 3 snippets per session, each with `[start, len]` highlight ranges relative to its snippet) and filtered by `workspaceId` (all workspaces when omitted), `includeArchived` (default false) and `includeSubagents` (default false: sessions whose parent is another session are excluded).
 
 Agents get two read-only tools over the same index (available to every built-in agent, allowed in plan mode):
 

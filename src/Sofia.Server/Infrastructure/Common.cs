@@ -14,7 +14,7 @@ public sealed class SofiaOptions
     public string UiPath { get; set; } = "";
     public string[] AllowedOrigins { get; set; } = [];
 
-    public string DbPath => Path.Combine(DataDir, "sofia.db");
+    public string DbPath => Path.Combine(DataDir, "sofia.sqlite");
     public string AttachmentsDir => Path.Combine(DataDir, "attachments");
     public string SkillsDir => Path.Combine(DataDir, "skills");
     public string PromptsDir => Path.Combine(DataDir, "prompts");

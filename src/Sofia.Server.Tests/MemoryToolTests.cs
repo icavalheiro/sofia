@@ -9,7 +9,7 @@ public class MemoryToolTests
 {
     private static (MemoryTool Tool, SofiaDb Db) Create()
     {
-        var db = new SofiaDb(new LiteDB.ConnectionString { Filename = ":memory:" });
+        var db = new SofiaDb(":memory:");
         return (new MemoryTool(db), db);
     }
 

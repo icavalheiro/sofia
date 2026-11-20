@@ -15,7 +15,7 @@ public sealed record ModelLimit(int Context, int MaxOutput);
 /// Model metadata read at runtime from <c>models.dev</c> — the catalog the surrounding ecosystem uses —
 /// so Sofia never ships a hardcoded context/output table. The service boots from an embedded snapshot
 /// (so a first start without network still knows limits), then refreshes itself at most once per
-/// <see cref="MaxAge"/> with an ETag-conditional GET, caching the trimmed result in LiteDB.
+/// <see cref="MaxAge"/> with an ETag-conditional GET, caching the trimmed result in SQLite.
 /// Lookups prefer the exact <c>(provider, model)</c> pair and only then any provider serving that model id.
 /// </summary>
 public sealed class ModelCatalog
@@ -182,7 +182,7 @@ public sealed class ModelCatalog
 
     /// <summary>
     /// Trims a raw models.dev document to <c>{"provider":{"model":{"c":context,"o":output}}}</c>, the shape
-    /// the snapshot and the LiteDB cache use. Returns null when the document is not a JSON object.
+    /// the snapshot and the SQLite cache use. Returns null when the document is not a JSON object.
     /// </summary>
     internal static string? Trim(string rawJson)
     {
