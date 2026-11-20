@@ -59,7 +59,7 @@ public static class ConfigPaths
         ProjectFolders.Any(f => name.Equals(f, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// The folders to watch: the harness home recursively (filtered by <see cref="IsConfig"/>, so the database file and
+    /// The folders to watch: the harness home recursively (filtered by <see cref="IsConfig"/>, so the LiteDB file and
     /// attachments never count) plus every workspace folder — its root for <c>AGENTS.md</c> / <c>CLAUDE.md</c> and for a
     /// config folder appearing or vanishing, and each existing config folder recursively.
     /// </summary>

@@ -9,7 +9,7 @@ namespace Sofia.Server.Search;
 /// Keeps the search index in step with the event bus. Streaming assistant messages publish a
 /// <c>message.updated</c> per delta batch, so updates are debounced per message id: each new update
 /// reschedules a single reindex that only runs once the message has been quiet for <see cref="Debounce"/>.
-/// The debounced upsert reads the message back from SQLite and skips it if it no longer exists, which also
+/// The debounced upsert reads the message back from LiteDB and skips it if it no longer exists, which also
 /// closes the race where a delete lands between scheduling and firing.
 /// </summary>
 public sealed class SearchIndexHandler(ISessionSearch search, SofiaDb db) : IEventHandler
@@ -68,7 +68,7 @@ public sealed class SearchIndexHandler(ISessionSearch search, SofiaDb db) : IEve
         try
         {
             var msg = _db.Messages.FindById(id);
-            // A delete that landed after scheduling removes the message from SQLite; skip it rather than reindex.
+            // A delete that landed after scheduling removes the message from LiteDB; skip it rather than reindex.
             if (msg is not null) _search.Upsert(msg);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

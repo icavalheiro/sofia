@@ -34,7 +34,7 @@ public class SingleClientModelTests
         public HttpClient CreateClient(string name) => new();
     }
 
-    private static SofiaDb Db() => new(":memory:");
+    private static SofiaDb Db() => new(new LiteDB.ConnectionString { Filename = ":memory:" });
 
     private static ProviderService Providers(SofiaDb db) =>
         new(db, new StubHttpFactory(), new EventBus(), new ModelCatalog(db, new StubHttpFactory(), NullLogger<ModelCatalog>.Instance), NullLogger<ProviderService>.Instance);

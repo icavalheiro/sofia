@@ -185,7 +185,7 @@ public sealed class ConfigWatcherTests : IDisposable
     [Fact]
     public async Task NotifiesWhenACommandFileIsWritten()
     {
-        using var db = new SofiaDb(":memory:");
+        using var db = new SofiaDb(new LiteDB.ConnectionString { Filename = ":memory:" });
         db.Workspaces.Insert(new Workspace { Id = "ws_1", Name = "Project", Path = _project, Kind = "folder" });
 
         var bus = new EventBus();

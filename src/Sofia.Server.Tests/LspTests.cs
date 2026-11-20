@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
+using LiteDB;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sofia.Server.Changes;
 using Sofia.Server.Data;
@@ -326,7 +327,7 @@ public class LspTests
 {
     private static (SofiaDb Db, LspManager Manager) NewManager()
     {
-        var db = new SofiaDb(":memory:");
+        var db = new SofiaDb(new LiteDB.ConnectionString { Filename = ":memory:" });
         var manager = new LspManager(db, new EventBus(), NullLoggerFactory.Instance);
         return (db, manager);
     }

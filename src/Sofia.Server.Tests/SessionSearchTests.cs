@@ -16,7 +16,7 @@ namespace Sofia.Server.Tests;
 
 public class SessionSearchIndexTests
 {
-    private static SofiaDb Db() => new(":memory:");
+    private static SofiaDb Db() => new(new LiteDB.ConnectionString { Filename = ":memory:" });
 
     private static (Session S, Workspace W) AddSession(SofiaDb db, string id, string workspaceId, bool archived = false, string? parentId = null)
     {
@@ -256,7 +256,7 @@ public class SessionSearchIndexTests
 
 public class SessionSearchToolTests
 {
-    private static SofiaDb Db() => new(":memory:");
+    private static SofiaDb Db() => new(new LiteDB.ConnectionString { Filename = ":memory:" });
 
     private static ToolContext Context(string workspaceId, string sessionId) => new()
     {
@@ -267,7 +267,7 @@ public class SessionSearchToolTests
 
     private static (SessionSearchTool Search, SessionReadTool Read, SessionSearchIndex Index, SofiaDb Db) Create()
     {
-        var db = new SofiaDb(":memory:");
+        var db = new SofiaDb(new LiteDB.ConnectionString { Filename = ":memory:" });
         var index = new SessionSearchIndex();
         return (new SessionSearchTool(index, db), new SessionReadTool(db), index, db);
     }
@@ -512,9 +512,9 @@ public class SessionSearchEndpointTests : IDisposable
         db.Messages.Insert(subMsg);
         bus.Publish(EventTypes.MessageCreated, subMsg, subId, idB);
 
-        var indexed = await SearchUntil(http, el => el.GetProperty("results").EnumerateArray().Any(r => r.GetProperty("sessionId").GetString() == subId), "wombat", includeSubagents: true);
-        Assert.Contains(indexed.GetProperty("results").EnumerateArray(), r => r.GetProperty("sessionId").GetString() == subId);
-        var noSub = await Search(http, "wombat");
+        var noSub = await SearchUntil(http, el => el.GetProperty("results").EnumerateArray().Count() == 0, "wombat");
         Assert.Empty(noSub.GetProperty("results").EnumerateArray().ToArray());
+        var withSub = await Search(http, "wombat", includeSubagents: true);
+        Assert.Contains(withSub.GetProperty("results").EnumerateArray(), r => r.GetProperty("sessionId").GetString() == subId);
     }
 }

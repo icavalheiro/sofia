@@ -307,6 +307,6 @@ public sealed class ImageFallbackTests : IDisposable
     public void Dispose()
     {
         _factory.Dispose();
-        try { Directory.Delete(_home, true); } catch { /* the database may still hold the file briefly */ }
+        try { Directory.Delete(_home, true); } catch { /* LiteDB may still hold the file briefly */ }
     }
 }

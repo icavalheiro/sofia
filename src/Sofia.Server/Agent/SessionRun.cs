@@ -106,7 +106,7 @@ public sealed class SessionRun : IToolHost
     public SessionRun Root { get; }
     public SandboxPolicy? Sandbox => SandboxPolicy.Resolve(_s.Db.GetConfig(), Workspace, Session);
     public SandboxPolicy? EffectiveSandbox => Sandbox;
-    /// <summary>Read-before-edit tracker for this run (state lives in SQLite, so the instance is cheap and cacheable).</summary>
+    /// <summary>Read-before-edit tracker for this run (state lives in LiteDB, so the instance is cheap and cacheable).</summary>
     private ReadTracker? _reads;
     private ReadTracker Reads => _reads ??= new(_s.Db);
     public string? LastError { get; private set; }

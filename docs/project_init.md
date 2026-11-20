@@ -1,7 +1,7 @@
 # Sofia.Server — architecture
 
 `src/Sofia.Server` is Sofia's own agent harness: an ASP.NET Core (.NET 10)
-service with minimal APIs, SQLite persistence (EF Core), an in-process event bus and a
+service with minimal APIs, LiteDB persistence, an in-process event bus and a
 SignalR hub. `src/Sofia.UI` is its web client. The HTTP/SignalR contract lives
 in [server_api.md](./server_api.md).
 
@@ -19,9 +19,8 @@ and pairing.
 src/Sofia.Server/
 ├── Program.cs                 # composition root (DI, JSON, SignalR, access, static UI)
 ├── Infrastructure/            # options/paths, ids, JSON, text helpers, process runner
-├── Domain/Entities.cs         # entities that double as wire DTOs
-├── Data/SofiaDbContext.cs     # EF Core model: columns, JSON columns and indexes
-├── Data/SofiaDb.cs            # store facade + one-shot LiteDB migration
+├── Domain/Entities.cs         # LiteDB entities that double as wire DTOs
+├── Data/SofiaDb.cs            # LiteDB collections + indexes
 ├── Events/EventBus.cs         # bus, dispatcher, IEventHandler, SignalR hub + broadcaster
 ├── Providers/                 # OpenAI-compatible + Anthropic streaming clients,
 │                              #   discovery, model catalog, limits/pricing table
@@ -45,7 +44,7 @@ src/Sofia.Server/
 src/Sofia.Server.Tests/        # xUnit: unit tests + in-process agent-loop test
 ```
 
-Data lives in `~/.sofia` (override with `SOFIA_HOME`): `sofia.sqlite` (SQLite),
+Data lives in `~/.sofia` (override with `SOFIA_HOME`): `sofia.db` (LiteDB),
 `attachments/`, plus optional `AGENTS.md`, `SYSTEM.md`, `APPEND_SYSTEM.md`,
 `skills/`, `commands/` (and legacy `prompts/`) and `agents/`. Settings,
 providers and MCP servers live in the database, not in files.
@@ -59,32 +58,6 @@ later mutations never leak into an event already in flight.
 - `HubBroadcaster` forwards every event to SignalR clients (`/hubs/events`).
 - `EventDispatcher` feeds `IEventHandler`s (for example `TitleHandler`, which
   names a conversation after its first user message).
-
-## Persistence (`Data/`)
-
-One SQLite database (`~/.sofia/sofia.sqlite`, WAL mode) holds everything:
-workspaces, sessions, messages, attachments metadata, providers, MCP servers,
-config, knowledge, memory, task lists, file snapshots and read records.
-
-- `SofiaDbContext` is the EF Core model. Scalars are real columns (so `Find`,
-  `Count`, `Exists` and `DeleteMany` push down to SQL); nested DTO graphs
-  (message attachments/tool calls/cards, usage, provider model lists, LSP
-  settings) are JSON columns serialized with `JsonStore.Options`, which
-  persists the fields the wire hides (`[JsonIgnore]`) and skips the transient
-  ones (`[BsonIgnore]`). The entity shape, and therefore the HTTP/SignalR
-  contract, is unchanged from the LiteDB era.
-- `SofiaDb` is the store facade: it owns the `PooledDbContextFactory`, one
-  write gate (SQLite has a single writer, writes retry on busy) and a monotonic
-  `NextSeq()`. `EntitySet<T>` recreates the familiar collection surface
-  (`Find`, `FindById`, `Upsert`, `DeleteMany`, …) on top of short-lived pooled
-  contexts.
-- Schema creation is `EnsureCreated()`: there are no EF migrations yet, so a
-  schema change means a new database (fine before 1.0).
-- `LiteDbMigration` converts a legacy LiteDB file once, on first start: it
-  streams every collection into SQLite through a staging file, renames the old
-  `sofia.db` to `sofia.db.migrated` and writes `sofia.sqlite.migrated`. Nothing
-  is touched when it fails. LiteDB is a package dependency **only** for this;
-  delete `LiteDbMigration` and the package reference in 1.0.
 
 ## The agent loop (`Agent/SessionRun.cs`)
 
@@ -399,7 +372,7 @@ Tool results are left out of the transcript so web pages and file
 contents cannot inject notes; notes that look like markup, injected instructions
 or secrets are refused, and duplicates of existing notes are dropped.
 
-Notes live in the `knowledge` table. `SystemPromptBuilder` injects
+Notes live in the `knowledge` LiteDB collection. `SystemPromptBuilder` injects
 them in a `<knowledge>` block: the running agent's notes plus the workspace's, the
 newest that fit a 3000-character budget per scope. That block is part of the
 request prefix frozen for the whole conversation (see the agent loop above), so
@@ -428,7 +401,7 @@ allowed in every permission mode and in plan/read-only sessions.
 
 The `memory` tool (`Tools/MemoryTool.cs`, in every built-in agent's tool set;
 custom agents list `memory`, alias `mem`) is a per-workspace key/value store over
-the `memory` table (`MemoryEntry`: workspace, key, value, timestamps).
+the LiteDB `memory` collection (`MemoryEntry`: workspace, key, value, timestamps).
 Actions `list` (default: keys with size and a short preview), `get` (`key`) and
 `set` (`key`, `value`; an empty value deletes the key). Keys ≤ 100 characters of
 `[A-Za-z0-9._:/-]`, values ≤ 20 000 characters, ≤ 200 keys per workspace. Every
@@ -465,7 +438,7 @@ finishes, the setting is turned off or the server stops.
 - `Providers/ModelCatalog.cs` is that catalog. It boots from the trimmed snapshot
   committed as `Providers/ModelsDevSnapshot.json` (embedded resource; regenerate
   with `node script/update-model-snapshot.mjs`), replaces it with the copy cached
-  in the `catalog` table when a previous process fetched one, and
+  in the `catalog` LiteDB collection when a previous process fetched one, and
   refetches at most once every 24 h with an `If-None-Match` GET of
   `https://models.dev/api.json` (`SOFIA_MODELS_URL` overrides it, 30 s timeout; a
   304, a network error or a body with no limits keeps the current data). Lookups

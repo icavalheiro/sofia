@@ -1,3 +1,4 @@
+using LiteDB;
 using Sofia.Server.Data;
 using Sofia.Server.Domain;
 
@@ -11,7 +12,7 @@ public class SessionDeleteTests : IDisposable
     private (SofiaDb Db, string Dir) Create()
     {
         Directory.CreateDirectory(_dir);
-        return (new SofiaDb(":memory:"), _dir);
+        return (new SofiaDb(new ConnectionString { Filename = ":memory:" }), _dir);
     }
 
     private Attachment File(string id)

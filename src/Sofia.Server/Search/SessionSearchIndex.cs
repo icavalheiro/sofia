@@ -14,7 +14,7 @@ public sealed record SessionSearchResult(string SessionId, string WorkspaceId, s
 
 /// <summary>
 /// In-memory inverted index over user/assistant message text with BM25 ranking.
-/// Rebuilt from SQLite on startup and kept current by <see cref="SearchIndexHandler"/>;
+/// Rebuilt from LiteDB on startup and kept current by <see cref="SearchIndexHandler"/>;
 /// session metadata (title, archived, parent) is resolved at query time so it never goes stale.
 /// </summary>
 public interface ISessionSearch
@@ -431,7 +431,7 @@ internal sealed class Doc
     public string Text { get; set; } = "";
 }
 
-/// <summary>Rebuilds the index from SQLite once per startup (background, never blocks boot).</summary>
+/// <summary>Rebuilds the index from LiteDB once per startup (background, never blocks boot).</summary>
 public sealed class SearchIndexRebuildService(ISessionSearch search, SofiaDb db) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

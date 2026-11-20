@@ -3,9 +3,8 @@ using LiteDB;
 
 namespace Sofia.Server.Domain;
 
-// Entities are persisted by SQLite through EF Core (see Data/SofiaDbContext.cs) and serialized straight to the UI.
-// Fields the UI must never see carry [JsonIgnore]; the JSON columns (and the matching table columns) still store
-// them. The [Bson*] attributes remain only because the one-shot LiteDB migration reads legacy files through LiteDB.
+// Entities are persisted by LiteDB and serialized straight to the UI. Fields the
+// UI must never see carry [JsonIgnore]; LiteDB still stores them.
 
 public static class SessionStatus
 {

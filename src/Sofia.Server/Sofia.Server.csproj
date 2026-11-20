@@ -14,9 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="DiffPlex" Version="1.9.0" />
-    <!-- Kept only to read legacy files in the one-shot LiteDB -> SQLite migration (Data/LiteDbMigration.cs); remove in 1.0. -->
     <PackageReference Include="LiteDB" Version="5.0.21" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
     <PackageReference Include="Microsoft.Playwright" Version="1.65.0" />
     <PackageReference Include="ModelContextProtocol" Version="2.4.0" />
   </ItemGroup>

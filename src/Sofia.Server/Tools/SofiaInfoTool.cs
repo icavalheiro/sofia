@@ -60,7 +60,7 @@ public sealed class SofiaInfoTool(
         var sb = new StringBuilder();
         sb.AppendLine("# Sofia configuration");
         sb.AppendLine($"Data directory: {options.DataDir} (the SOFIA_HOME environment variable overrides it; default ~/.sofia)");
-        sb.AppendLine($"Database: {options.DbPath} — SQLite. Holds settings, providers, MCP servers, conversations and knowledge notes. Never edit it directly; use the HTTP API.");
+        sb.AppendLine($"Database: {options.DbPath} — LiteDB. Holds settings, providers, MCP servers, conversations and knowledge notes. Never edit it directly; use the HTTP API.");
         sb.AppendLine(Api(baseUrl()));
         sb.AppendLine();
         sb.AppendLine("## Files you can create or edit (global)");

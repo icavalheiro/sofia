@@ -4,7 +4,7 @@
 
 Sofia is a local AI harness built from scratch (no other harness underneath):
 `src/Sofia.Server` is the backend — an ASP.NET Core (.NET 10) agent server with
-minimal APIs, SQLite (EF Core), DI, an in-process event bus and SignalR — and
+minimal APIs, LiteDB, DI, an in-process event bus and SignalR — and
 `src/Sofia.UI` (Vue) is its web client. The UI is the feature guide for the
 server: every widget maps to a server capability. The agent design follows
 pi.dev (minimal prompt, small core tool set, AGENTS.md context, skills,
@@ -24,13 +24,10 @@ installer remains future work.
 ## Stack
 
 - Server: `src/Sofia.Server` (net10.0, minimal APIs, `Sofia.slnx` at the repo
-  root, tests in `src/Sofia.Server.Tests`). SQLite data in `~/.sofia`
+  root, tests in `src/Sofia.Server.Tests`). LiteDB data in `~/.sofia`
   (`SOFIA_HOME` overrides). Listens on `http://127.0.0.1:5199`; remote clients
   must pair (`POST /api/pair` → `/api/pair/connect`).
-- Packages: Microsoft.EntityFrameworkCore.Sqlite, ModelContextProtocol (MCP
-  client, stdio + HTTP), DiffPlex. LiteDB is kept **only** for the one-shot
-  migration of legacy `sofia.db` files (see `Data/LiteDbMigration.cs`); remove
-  the package and that file in 1.0 once 0.x data no longer needs converting.
+- Packages: LiteDB, ModelContextProtocol (MCP client, stdio + HTTP), DiffPlex.
 - Events: `SessionStore` persists and publishes on `IEventBus`;
   `HubBroadcaster` pushes every event to SignalR (`/hubs/events`, client
   method `event`); `IEventHandler`s react (e.g. `TitleHandler`).

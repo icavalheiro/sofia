@@ -4,7 +4,7 @@ Sofia can be driven by editors that speak the Agent Client Protocol (ACP) over s
 
 ## Architecture
 
-`sofia-acp` is a thin bridge: it keeps the Sofia server (port 5199) as the single owner of the SQLite store and reuses its sessions, models and MCP servers. If no server answers on `:5199`, the bridge launches `Sofia.Server` as a child process and stops it on exit.
+`sofia-acp` is a thin bridge: it keeps the Sofia server (port 5199) as the single owner of LiteDB and reuses its sessions, models and MCP servers. If no server answers on `:5199`, the bridge launches `Sofia.Server` as a child process and stops it on exit.
 
 Components:
 

@@ -518,7 +518,7 @@ public sealed class AgentLoopTests : IDisposable
         var session = await WaitFor(http, sessionId, s => s.GetProperty("status").GetString() == "idle");
         Assert.Equal("Recovered", session.GetProperty("messages").EnumerateArray().Last().GetProperty("text").GetString());
 
-        // The duration is on the session itself (SQLite), so a client that reopens or switches chats reads it back.
+        // The duration is on the session itself (LiteDB), so a client that reopens or switches chats reads it back.
         Assert.True(session.GetProperty("lastTurnMs").GetInt64() >= 300, session.GetProperty("lastTurnMs").ToString());
         Assert.False(string.IsNullOrEmpty(session.GetProperty("lastTurnAt").GetString()));
         var reopened = await http.GetFromJsonAsync<JsonElement>($"/api/sessions/{sessionId}");
@@ -849,6 +849,6 @@ public sealed class AgentLoopTests : IDisposable
     public void Dispose()
     {
         _factory.Dispose();
-        try { Directory.Delete(_home, true); } catch { /* the database may still hold the file briefly */ }
+        try { Directory.Delete(_home, true); } catch { /* LiteDB may still hold the file briefly */ }
     }
 }

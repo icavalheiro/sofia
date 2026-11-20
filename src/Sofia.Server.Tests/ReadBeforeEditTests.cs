@@ -1,3 +1,4 @@
+using LiteDB;
 using Sofia.Server.Changes;
 using Sofia.Server.Data;
 using Sofia.Server.Domain;
@@ -112,7 +113,7 @@ public class ReadBeforeEditTests : IDisposable
     public async Task ASubagentSessionDoesNotInheritTheParentsReads()
     {
         Directory.CreateDirectory(_dir);
-        var db = new SofiaDb(":memory:");
+        var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
         using var _ = db;
         var file = Path.Combine(_dir, "a.txt");
         File.WriteAllText(file, "one\ntwo\n");
@@ -131,10 +132,10 @@ public class ReadBeforeEditTests : IDisposable
     [Fact]
     public async Task RecordsSurviveANewTrackerInstance()
     {
-        // Persistence: the record lives in SQLite, so a brand-new tracker over the same database
+        // Persistence: the record lives in LiteDB, so a brand-new tracker over the same database
         // (e.g. after a server restart) still lets the edit through.
         Directory.CreateDirectory(_dir);
-        var db = new SofiaDb(":memory:");
+        var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
         using var _ = db;
         var file = Path.Combine(_dir, "a.txt");
         File.WriteAllText(file, "one\ntwo\n");
@@ -151,7 +152,7 @@ public class ReadBeforeEditTests : IDisposable
     [Fact]
     public void DeletingASessionRemovesItsReadRecords()
     {
-        var db = new SofiaDb(":memory:");
+        var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
         using var _ = db;
         Directory.CreateDirectory(_dir);
         var file = Path.Combine(_dir, "a.txt");
@@ -200,7 +201,7 @@ public class ReadBeforeEditTests : IDisposable
     {
         Directory.CreateDirectory(_dir);
         File.WriteAllText(Path.Combine(_dir, name), content);
-        var db = new SofiaDb(":memory:");
+        var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
         var ctx = Ctx(db, "s", _dir);
         return (ctx, Path.Combine(_dir, name));
     }
@@ -210,7 +211,7 @@ public class ReadBeforeEditTests : IDisposable
         Directory.CreateDirectory(_dir);
         foreach (var (name, content) in files)
             File.WriteAllText(Path.Combine(_dir, name), content);
-        var db = new SofiaDb(":memory:");
+        var db = new SofiaDb(new ConnectionString { Filename = ":memory:" });
         var ctx = Ctx(db, "s", _dir);
         return (ctx, n => Path.Combine(_dir, n));
     }
