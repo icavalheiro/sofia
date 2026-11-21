@@ -27,6 +27,7 @@ public sealed class ShellViewModel : ObservableObject
         IsFixture = fixture;
         SidebarStore = new SidebarStore(Store);
         Sidebar = new SidebarViewModel(SidebarStore);
+        Composer = new Features.Composer.ComposerViewModel(Store);
         SidebarStore.Changed += SyncFromSidebar;
         SidebarStore.OpenSessionRequested += request =>
         {
@@ -56,6 +57,9 @@ public sealed class ShellViewModel : ObservableObject
 
     /// <summary>The open conversation's transcript (spec 041).</summary>
     public Features.Transcript.TranscriptViewModel Transcript { get; } = new();
+
+    /// <summary>The composer (spec 042): draft, attachments, chips, palettes, delivery mode and metrics.</summary>
+    public Features.Composer.ComposerViewModel Composer { get; }
 
     public ThemeService Theme => ThemeService.Current;
 
@@ -139,6 +143,7 @@ public sealed class ShellViewModel : ObservableObject
         OnPropertyChanged(nameof(ContextFill));
         if (empty) Transcript.Detach();
         else LoadTranscriptState("idle");
+        SyncComposer();
     }
 
     /// <summary>
@@ -153,6 +158,7 @@ public sealed class ShellViewModel : ObservableObject
         Transcript.Actions.Backend = null;
         ContextFill = 0.42;
         OnPropertyChanged(nameof(ContextFill));
+        SyncComposer();
     }
 
     /// <summary>Loads the live workspace tree once a backend is ready, then the open conversation's transcript.</summary>
@@ -164,7 +170,9 @@ public sealed class ShellViewModel : ObservableObject
         SyncFromSidebar();
         Transcript.Actions.Backend = backend;
         Transcript.Actions.OpenSession = OpenSessionAsync;
+        Composer.SetBackend(backend);
         await Transcript.LoadSessionAsync(backend, ActiveSessionId, ct);
+        SyncComposer();
     }
 
     /// <summary>Switches the open conversation and loads its transcript (sidebar row, search hit, subagent link, branch).</summary>
@@ -176,9 +184,13 @@ public sealed class ShellViewModel : ObservableObject
                             ?? ActiveWorkspaceId;
         Status = StatusFor(sessionId);
         OnPropertyChanged(nameof(ActiveSessionTitle));
+        // Park the previous conversation's draft before the composer binds to the new one (spec 042 risk).
+        Composer.FlushDraft();
+        SyncComposer();
         if (Connection.Backend is { } backend)
         {
             await Transcript.LoadSessionAsync(backend, sessionId);
+            SyncComposer();
         }
         else
         {
@@ -203,7 +215,26 @@ public sealed class ShellViewModel : ObservableObject
         OnPropertyChanged(nameof(ActiveSessionTitle));
         OnPropertyChanged(nameof(ActiveWorkspaceName));
         OnPropertyChanged(nameof(ActiveWorkspacePath));
+        SyncComposer();
     }
+
+    /// <summary>
+    /// Binds the composer to the open conversation: the session owns agent/model/permission/reasoning, the workspace's
+    /// folder scopes commands, agents, files and the branch chip, and the status drives send vs stop.
+    /// </summary>
+    private void SyncComposer()
+    {
+        var session = FindSession(ActiveSessionId);
+        var workspace = Store.Workspaces.FirstOrDefault(w => w.Id == (session?.WorkspaceId ?? ActiveWorkspaceId));
+        var directory = workspace is { Kind: "folder" } ? workspace.Path : "";
+        Composer.SetSession(session, ActiveSessionId, directory, Status);
+    }
+
+    /// <summary>The session entity of a conversation, or null when it is not loaded.</summary>
+    public Session? FindSession(string? sessionId) =>
+        sessionId is null
+            ? null
+            : Store.Workspaces.SelectMany(w => w.Conversations ?? []).FirstOrDefault(s => s.Id == sessionId);
 
     private string StatusFor(string sessionId)
     {

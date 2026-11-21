@@ -61,6 +61,8 @@
   <SolidColorBrush x:Key="BrushPrimaryInk" Color="{StaticResource ColorPrimaryInk}" />
   <SolidColorBrush x:Key="BrushPrimarySoft" Color="{StaticResource ColorPrimarySoft}" />
   <SolidColorBrush x:Key="BrushPrimarySoftStrong" Color="{StaticResource ColorPrimarySoftStrong}" />
+  <!-- color-mix(primary 38%, transparent): the composer's idle send pill. -->
+  <SolidColorBrush x:Key="BrushPrimaryIdle" Color="#61A9744F" />
 
   <SolidColorBrush x:Key="BrushDetail" Color="{StaticResource ColorDetail}" />
   <SolidColorBrush x:Key="BrushDetailSoft" Color="{StaticResource ColorDetailSoft}" />

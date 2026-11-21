@@ -411,4 +411,70 @@ Last line after the rule.
         LastTurnMs = 8_140,
         LastTurnAt = Base.AddMinutes(-minutes),
     };
+
+    // --- composer (spec 042) ------------------------------------------------------------------------------
+
+    /// <summary>Session the composer screenshots bind to: server-shaped chip values plus usage/context readouts.</summary>
+    public static Session ComposerSession() => new()
+    {
+        Id = "s_1",
+        WorkspaceId = "ws_sofia",
+        Title = "Avalonia shell scaffold",
+        CreatedAt = Base.AddDays(-2),
+        UpdatedAt = Base,
+        ModelId = "unsloth/nvidia-nemotron-3.5-bolt-e4b",
+        Agent = "build",
+        PermissionMode = "ask",
+        ReasoningMode = "medium",
+        Status = "idle",
+        Usage = new Usage { Input = 18_420, Output = 3_120, CacheRead = 9_612, Cost = 0.0187 },
+        Context = new ContextInfo { Used = 41_800, Limit = 131_072, SystemTokens = 3_900, ToolTokens = 7_420 },
+        LastTurnMs = 8_140,
+        LastTurnAt = Base,
+    };
+
+    /// <summary>Model catalogue rows for the model popover (<c>GET /api/models</c> shape, already parsed).</summary>
+    public static List<Features.Composer.ComposerModel> ComposerModels() =>
+    [
+        new("unsloth/nvidia-nemotron-3.5-bolt-e4b", "Nemotron 3.5 Bolt", "unsloth · 131K ctx", "cpu", "local"),
+        new("claude-sonnet-4.5", "Claude Sonnet 4.5", "anthropic · 200K ctx", "sparkles"),
+        new("gpt-5.1-codex", "GPT-5.1 Codex", "openai · 400K ctx", "sparkles"),
+    ];
+
+    /// <summary>Agent catalogue for the agent chip and the <c>@</c> popup (<c>GET /api/agents</c> shape).</summary>
+    public static List<Features.Composer.ComposerAgent> ComposerAgents() =>
+    [
+        new("build", "build", "The default agent: reads, edits and runs the workspace.", "primary", "builtin"),
+        new("plan", "plan", "Researches the codebase and proposes a plan without editing.", "primary", "builtin"),
+        new("general", "general", "Handles a task end to end in its own context.", "subagent", "builtin"),
+        new("explore", "explore", "Maps the codebase and reports back without changing files.", "subagent", "builtin"),
+        new("qa", "qa", "Runs the UI checks and returns screenshots.", "subagent", "project"),
+    ];
+
+    /// <summary>Server commands for the <c>/</c> palette (<c>GET /api/commands</c> shape).</summary>
+    public static List<Features.Composer.ComposerCommand> ComposerCommands() =>
+    [
+        new("compact", "Summarise the conversation to free context", "builtin"),
+        new("init-plan", "Initialise the local specs directory", "project"),
+        new("do", "Execute one work spec end to end", "project"),
+        new("review", "Review the working tree changes", "global"),
+    ];
+
+    /// <summary>Workspace files for the <c>@</c> popup (<c>GET /api/files</c> shape).</summary>
+    public static List<string> ComposerFiles() =>
+    [
+        "src/Sofia.App/Features/Composer/ComposerView.axaml",
+        "src/Sofia.App/Features/Composer/ComposerViewModel.cs",
+        "src/Sofia.App/Shell/ShellView.axaml.cs",
+        "src/Sofia.App/Theme/Tokens.axaml",
+        "docs/app_ui.md",
+    ];
+
+    /// <summary>Recent conversations offered by the <c>@</c> popup without a query.</summary>
+    public static List<Features.Composer.ComposerReference> ComposerSessions() =>
+    [
+        new("s_2", "Design tokens + Lucide icon port"),
+        new("s_3", "Working border motion parity"),
+        new("s_4", "Review the SQLite ordering fix"),
+    ];
 }

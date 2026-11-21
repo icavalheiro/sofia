@@ -3,6 +3,7 @@
              xmlns:controls="using:Sofia.App.Controls"
              xmlns:sidebar="using:Sofia.App.Features.Sidebar"
              xmlns:transcript="using:Sofia.App.Features.Transcript"
+             xmlns:composer="using:Sofia.App.Features.Composer"
              x:Class="Sofia.App.Shell.ShellView">
 
   <!-- Shell frame copied from App.vue: sidebar (288 normal / 236 compact) | main column | right panel (300, collapsible).
@@ -66,8 +67,11 @@
         <Border x:Name="ComposerBand"
                 VerticalAlignment="Bottom"
                 Padding="24,7.2,24,8.8"
+                ClipToBounds="False"
                 Classes="composer-band">
-          <Grid x:Name="ComposerInner" MaxWidth="1232" RowDefinitions="Auto,Auto" />
+          <Grid x:Name="ComposerInner" MaxWidth="1232" ClipToBounds="False">
+            <composer:ComposerView x:Name="ComposerPane" />
+          </Grid>
         </Border>
 
         <Border x:Name="TaskPanelHost"

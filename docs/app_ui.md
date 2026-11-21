@@ -9,7 +9,7 @@ lands (044).
 
 | Project | Target | Owns |
 | --- | --- | --- |
-| `src/Sofia.App` | `net10.0` class library | `App.axaml`, `Theme/`, `Controls/`, `Features/Sidebar/`, `Features/Transcript/`, `Shell/`, `Services/`, `Assets/`. References `Sofia.Client` + `Sofia.Contracts` only, so the WASM head can use it (no SQLite, Playwright, SoundFlow). |
+| `src/Sofia.App` | `net10.0` class library | `App.axaml`, `Theme/`, `Controls/`, `Features/Sidebar/`, `Features/Transcript/`, `Features/Composer/`, `Shell/`, `Services/`, `Assets/`. References `Sofia.Client` + `Sofia.Contracts` only, so the WASM head can use it (no SQLite, Playwright, SoundFlow). |
 | `src/Sofia.App.Desktop` | `net10.0` `WinExe` | `Program.cs` (flags, font options), `SoundFlowSoundPlayer`, `DesktopBackendResolver` (HTTP → in-process Core). References Core and `Sofia.Client.InProc`. |
 | `src/Sofia.App.Browser` | `net10.0-browser1.0` | WASM boot smoke. Static host, HTTP backend and WebAudio sounds land in 044. |
 | `src/Sofia.App.Tests` | `net10.0` | `Avalonia.Headless.XUnit` + `Avalonia.Skia`: token/motion/control tests and the screenshot + frame harness. |
@@ -163,6 +163,73 @@ session), `041-idle|streaming|permission|questions|diff|lightbox-1080p/2k/4k.png
 `041-pulse.frames/`, `041-retry-spin.frames/`, `041-carousel.frames/` and `041-spinner.frames/` (stop-motion at the
 motion-contract timestamps).
 
+## Composer (plan 042)
+
+`Features/Composer/` is the Vue `ChatComposer.vue` + `SofiaPopover.vue` + `AgentDropdown.vue` port:
+`ComposerView.axaml` (+ code-behind) renders the strips, the input box, the hint row and one in-window popup layer;
+`ComposerViewModel` owns the text, the per-conversation draft, attachments and session references, the four chips,
+the `/` palette, the `@` popup, the delivery mode, metrics and the context meter; `ComposerModels` holds the row
+records; `ComposerFormat`/`ContextMeter` are the pure formatting and segment rules; `ComposerKeys` is the key policy;
+`ComposerDrafts` is the `LocalState`-backed draft store. The shell hosts the view inside the existing
+`ComposerInner` 1232px column and forwards the measured height to `TranscriptView.SetComposerHeight` (the transcript
+pads `height + 1.25rem`).
+
+Feature map:
+
+| Area | Behaviour |
+| --- | --- |
+| Input | Multi-line `TextBox` 15px/1.5, auto-grow to the 220px cap, placeholder from the web's key; Enter sends, Shift+Enter inserts a line, `Key.ImeProcessed` never sends; the focus ring is the accent border + `0 0 0 3 rgba(169,116,79,.16)` halo. |
+| Drafts | Parked per conversation in `state.json` before a switch (and on every submit), restored on open, flushed immediately so a restart keeps them. Includes the attachment chips and session references. |
+| Attachments | Desktop picker (`StorageProvider`), 24×24 r5 thumbnail, 16rem chip with name and size, remove button; uploaded on submit through `ISofiaBackend.UploadAsync` (ids remembered, never uploaded twice); an upload failure keeps the chip and shows the error. Browser head pushes bytes through `AddAttachmentBytes` (044). |
+| References | `@session` picks attach a hidden `SessionReference` to the next prompt (`references`), shown as a strip chip. |
+| Chips | Branch pill (mono 11.2), then permission (icon-only, tone blue/beige/brown/red), agent (icon-only), model (icon + label + caret) and reasoning (icon + label + caret). Every pick is a `PATCH /api/sessions/{id}`; server values win, the local `sofia.chips` memory only fills a missing session value. |
+| Popovers | One open at a time (single `Menu` field = the shared lock), opening upward on the composer canvas, keyboard ↑/↓/Enter/Escape, click-outside and Escape close them, no open/close animation. Option rows keep the web's 8px radius, active soft fill, check mark and badges. |
+| `/` palette | Opens while the whole text is a command word and no run is active; filters `GET /api/commands?directory=` (re-read on open and on `config.changed`), ↑/↓/Enter picks, Escape closes, picking inserts `/name ` keeping arguments, submitting posts `POST /api/sessions/{id}/command`. Unknown slash words fall through to a prompt. |
+| `@` popup | Opens on an `@word` at a word start; groups agents (subagents only), sessions (recent, or the search API with a query) and files (`GET /api/files`, 40 shown), section headers are not selectable, picking an agent/file inserts `@id `, picking a session attaches a reference. |
+| Run state | Sent control becomes send + 24px caret, a stop button appears; the caret picks steer vs queue (persisted in `sofia.delivery`); the send glyph mirrors the mode (send/clock); the tooltip says Send message / Send steer / Send queued; Ctrl+. aborts. |
+| Metrics | Last turn duration, session cost (when available), tok/s, cache-hit % with its tooltip, all with tabular figures; live values from `session.metrics`, idle values from the session (`lastTurnMs`, `usage`, `context`). |
+| Context meter | 120×4 r999 bar with the system (grey `#94949B`), tools (accent) and messages (blue `#5A9BD8`) segments scaled to the window (usage above the limit scales down, real-but-tiny segments keep a 2px sliver) plus the `%` label; hovering shows the 236px legend above the row (pinned by click, state in `sofia.contextMeter.popover`). |
+| Shortcuts | `composer.focus` Ctrl+L, `agent.pick` Ctrl+Shift+A, `model.pick` Ctrl+M, `reasoning.pick` Ctrl+B, `permission.pick` Ctrl+P, `session.stop` Ctrl+. — all through `Services/Shortcuts.cs`. |
+| Sounds | Click on chips/buttons, select on picking, send on every submit (prompt, steer, queue or command). |
+
+Geometry (web px at the 16px base):
+
+| Element | Values |
+| --- | --- |
+| Overlay | Band padding `.45rem 1.5rem .55rem` (7.2/24/8.8), translucent canvas fill + 1px top hairline (039 deviation), inner column max 1232 centred. |
+| Input box | padding `6.4/6.4/6.4/9.6`, r14, fill `#B8242428` (surface-2 at 72%), border `#43434B` → accent + 3px soft halo on focus (`.15s`), gap 6.4, aligned to the bottom. |
+| Buttons | Attach and stop 34×34 r10; send pill 34 high r10 (idle 38% fill), caret 24 wide with the 28% ink divider; press translateY 1px `.08s`. |
+| Attachment chip | max 16rem, padding `4.8/6.4/4.8/8.8`, r8, 12px, thumb 24×24 r5, remove 18×18. |
+| Hint row | 11px, `margin-top 4.8`, gap `.35rem/.75rem`, metrics gap 14.4 with primary icons and tabular figures; branch pill r999 `2.4/8`, 11px/500, mono 11.2. |
+| Palettes | `/` and `@`: min(340, 100% − 1rem) wide, max-height 240, r12, surface fill, menu shadow, 8px above the input box; chip popovers 240–280 wide, max-height 420, 6px above their chip, z30; mode menu above the send pill; context legend 236 wide, 8px above the input box, z40. |
+
+Local state (`<app-data>/state.json`, the web's key names):
+
+| Key | Shape |
+| --- | --- |
+| `sofia.drafts` | `{ [sessionId]: { text, attachments: [{ id, name, kind, mime, bytes, uploadedId, previewUrl }], references: [{ id, title }] } }` |
+| `sofia.delivery` | `"steer"` \| `"queue"` |
+| `sofia.chips` | `{ permission?: string, reasoning?: string }` (fallback only; the session owns the values) |
+| `sofia.contextMeter.popover` | `{ open: boolean }` (pinned legend) |
+
+Deviations from the web (deliberate, evidence in `.specs/spec_assets/042-*`):
+
+| Web | App |
+| --- | --- |
+| `backdrop-filter: blur(14px) saturate(125%)` | translucent `BrushComposer` + hairline (039's deviation). |
+| `KeyboardEvent.isComposing` IME guard | `Key.ImeProcessed` never sends and the policy accepts an `imeComposing` flag; Avalonia's `TextBox` does not expose the composition state. |
+| 180ms debounced session search in `@` | same 180ms `DispatcherTimer`, skipped (direct await) off the UI thread; the sequence guard drops stale answers. |
+| Cache-hit % from the last message's usage | computed from the session totals, because the composer does not load messages (idle and live values only). |
+| `Cmd/Ctrl+V` image paste | not implemented: the desktop picker and the browser input cover the spec's attachment path; clipboard-media attach can be added with 044. |
+| Mono `cmd-name`/`file` labels in the palettes | UI font: the mono stack rendered a faint doubled glyph in the headless Skia capture; the branch pill keeps mono. |
+| Popovers positioned by CSS `bottom: 100%` | placed on the composer's canvas after arrange (no OS popups), clamped to the window; opening upward is the same. |
+| `font-variant-numeric: tabular-nums` | `TextBlock.FontFeatures="tnum"`. |
+
+Evidence (`.specs/spec_assets/`): `042-idle|attachments|model|palette|mention-1080p/2k/4k.png`,
+`042-focus|agent|permission|reasoning|running|steer|queue.png`, `042-press-frame-0/40/80.png` (send press),
+`042-chip-hover-frame-0/60/120.png` (chip hover). Frames are generated by
+`--composer-state <state> --composer-frame press|chip --frames …`.
+
 ## Theme and tokens
 
 | File | Contents |
@@ -295,7 +362,10 @@ dotnet run --project src/Sofia.App.Desktop -- --fixture --screenshot 039-frames 
 
 Flags: `--fixture`, `--screenshot <file>`, `--out-dir`, `--width`, `--height`, `--scale`, `--all-sizes`,
 `--frames <ms,ms,…>`, `--right-panel`, `--compact-sidebar`, `--accent <preset>`, `--font-size <sm|md|lg>`,
-`--reduced-motion`.
+`--reduced-motion`, `--sidebar-state <mixed|empty|working|search|settings|delete>`, `--transcript-state <state>`,
+`--transcript-frame <hover|fold|carousel|pulse|retry>`, `--hover-row`, `--hover-message`,
+`--composer-state <idle|focus|attachments|model|agent|permission|reasoning|running|steer|queue|palette|mention>`,
+`--composer-frame <press|chip>`.
 
 `ScreenshotHarness` (`Services/Screenshots.cs`) resizes the window, lays it out, renders it with
 `RenderTargetBitmap` at `width*scale` device pixels and, in frame mode, seeks the manual clock between captures

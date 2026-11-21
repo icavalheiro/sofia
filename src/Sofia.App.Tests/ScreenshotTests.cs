@@ -359,6 +359,98 @@ public class ScreenshotTests
         return window;
     }
 
+    [AvaloniaFact]
+    public void Composer_states_render_at_1080p_2k_and_4k()
+    {
+        var sizes = new (string Name, int Width, int Height, double Scale)[]
+        {
+            ("1080p", 1920, 1080, 1.0),
+            ("2k", 2560, 1440, 1.333),
+            ("4k", 3840, 2160, 2.0),
+        };
+
+        // The eight states of the spec: idle, focused, attachments, the four popovers, running steer/queue and both
+        // palettes. The five "primary" states get the three-size gate; the rest are extra evidence at 1080p.
+        foreach (var state in new[] { "idle", "attachments", "model", "palette", "mention" })
+        {
+            var window = OpenComposer(state);
+            foreach (var (name, width, height, scale) in sizes)
+            {
+                MotionService.Current.Seek(0);
+                var path = Evidence.File($"042-{state}-{name}.png");
+                ScreenshotHarness.Capture(window, path, width, height, scale);
+                Assert.True(new FileInfo(path).Length > 50_000, path);
+            }
+            window.Close();
+        }
+
+        foreach (var state in new[] { "focus", "agent", "permission", "reasoning", "running", "steer", "queue" })
+        {
+            var window = OpenComposer(state);
+            MotionService.Current.Seek(0);
+            var path = Evidence.File($"042-{state}.png");
+            ScreenshotHarness.Capture(window, path, 1920, 1080, 1);
+            Assert.True(new FileInfo(path).Length > 50_000, path);
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Composer_press_and_chip_hover_are_stop_motion()
+    {
+        // Motion #2: the send pill translates down 1px over 80ms (0 / 40 / 80).
+        var press = OpenComposer("running");
+        var composer = press.ShellView.ComposerView;
+        press.ViewModel.Composer.Text = "keep going";
+        Dispatcher.UIThread.RunJobs();
+        MotionService.Current.Seek(0);
+        composer.BeginPressFrame();
+        var offsets = new List<double>();
+        foreach (var ms in new[] { 0d, 40, 80 })
+        {
+            MotionService.Current.Seek(ms);
+            offsets.Add(composer.PressOffset);
+            var path = Evidence.File($"042-press-frame-{(int)ms}.png");
+            ScreenshotHarness.Capture(press, path, 1920, 1080, 1);
+            Assert.True(File.Exists(path));
+        }
+        Assert.Equal(0, offsets[0], 2);
+        Assert.InRange(offsets[1], 0.6, 0.95); // cubic-bezier(.25,.1,.25,1) at 50%
+        Assert.Equal(1, offsets[2], 2);
+        press.Close();
+
+        // Motion #1: chip hover moves the border #33333A -> #43434B over 120ms (0 / 60 / 120).
+        var hover = OpenComposer("attachments");
+        var hoverComposer = hover.ShellView.ComposerView;
+        MotionService.Current.Seek(0);
+        hoverComposer.BeginChipHoverFrame();
+        var borders = new List<Avalonia.Media.Color>();
+        foreach (var ms in new[] { 0d, 60, 120 })
+        {
+            MotionService.Current.Seek(ms);
+            if (hoverComposer.PreviewChipBorder is { } color) borders.Add(color);
+            var path = Evidence.File($"042-chip-hover-frame-{(int)ms}.png");
+            ScreenshotHarness.Capture(hover, path, 1920, 1080, 1);
+            Assert.True(File.Exists(path));
+        }
+        Assert.Equal(3, borders.Count);
+        Assert.Equal(Avalonia.Media.Color.Parse("#33333A"), borders[0]);
+        Assert.InRange(borders[1].R, (byte)60, (byte)66);
+        Assert.Equal(Avalonia.Media.Color.Parse("#43434B"), borders[2]);
+        hover.Close();
+    }
+
+    private static MainWindow OpenComposer(string state)
+    {
+        var window = new MainWindow(fixture: true);
+        window.Show();
+        Dispatcher.UIThread.RunJobs(DispatcherPriority.Loaded);
+        window.ShellView.ComposerView.ApplyPreviewState(state);
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
+        return window;
+    }
+
     private static MainWindow OpenShell()
     {
         var window = new MainWindow(fixture: true);

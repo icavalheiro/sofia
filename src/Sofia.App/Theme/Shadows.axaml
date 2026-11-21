@@ -9,5 +9,7 @@
   <BoxShadows x:Key="ShadowPanel">0 24 60 0 #80000000</BoxShadows>
   <BoxShadows x:Key="ShadowHero">0 24 70 0 #8C000000</BoxShadows>
   <BoxShadows x:Key="ShadowOverlay">0 30 80 0 #8C000000</BoxShadows>
+  <!-- Composer focus ring: 0 0 0 3px rgba(169,116,79,.16), the web's primary-soft halo. -->
+  <BoxShadows x:Key="ShadowFocusRing">0 0 0 3 #29A9744F</BoxShadows>
 
 </ResourceDictionary>

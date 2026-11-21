@@ -79,6 +79,15 @@ public sealed class ScreenshotRequest
     /// <summary>Message whose actions/fold/carousel the frame harness drives (defaults to the transcript's last reply).</summary>
     public string? HoverMessage { get; set; }
 
+    /// <summary>
+    /// Composer fixture state (042): idle, focus, attachments, model, agent, permission, reasoning, running, steer,
+    /// queue, palette or mention.
+    /// </summary>
+    public string? ComposerState { get; set; }
+
+    /// <summary>Composer animation to start at frame 0: <c>press</c> (send pill, .08s) or <c>chip</c> (hover, .12s).</summary>
+    public string? ComposerFrame { get; set; }
+
     /// <summary>All three logical sizes in one run; individual width/height/scale override it.</summary>
     public bool AllSizes { get; set; }
 
@@ -143,6 +152,12 @@ public sealed class ScreenshotRequest
                     break;
                 case "--hover-message":
                     request.HoverMessage = Next();
+                    break;
+                case "--composer-state":
+                    request.ComposerState = Next() ?? request.ComposerState;
+                    break;
+                case "--composer-frame":
+                    request.ComposerFrame = Next();
                     break;
                 case "--all-sizes":
                     request.AllSizes = true;

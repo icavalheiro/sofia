@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -121,6 +121,8 @@ public sealed class ThemeService : ObservableObject
         SetBrush("BrushPrimaryInk", accent.Ink);
         SetBrush("BrushPrimarySoft", accent.Soft);
         SetBrush("BrushPrimarySoftStrong", accent.SoftStrong);
+        // color-mix(primary 38%, transparent): the composer's idle send pill follows the accent like the web.
+        SetBrush("BrushPrimaryIdle", Color.FromArgb(0x61, accent.Base.R, accent.Base.G, accent.Base.B));
         SetColor("ColorPrimary", accent.Base);
         SetColor("ColorPrimaryStrong", accent.Strong);
         SetColor("ColorPrimaryInk", accent.Ink);

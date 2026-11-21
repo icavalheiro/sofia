@@ -24,6 +24,13 @@ public sealed class ShortcutService
         new("search", Key.K, KeyModifiers.Control, "Ctrl+K", "navigation"),
         new("panel.toggle", Key.OemBackslash, KeyModifiers.Control, @"Ctrl+\", "navigation"),
         new("settings.open", Key.OemComma, KeyModifiers.Control, "Ctrl+,", "app"),
+        // composer (spec 042): focus, the four pickers and stop.
+        new("composer.focus", Key.L, KeyModifiers.Control, "Ctrl+L", "composer"),
+        new("agent.pick", Key.A, KeyModifiers.Control | KeyModifiers.Shift, "Ctrl+Shift+A", "composer"),
+        new("model.pick", Key.M, KeyModifiers.Control, "Ctrl+M", "composer"),
+        new("reasoning.pick", Key.B, KeyModifiers.Control, "Ctrl+B", "composer"),
+        new("permission.pick", Key.P, KeyModifiers.Control, "Ctrl+P", "composer"),
+        new("session.stop", Key.OemPeriod, KeyModifiers.Control, "Ctrl+.", "session"),
     ];
 
     private readonly Dictionary<string, Func<Task>?> _handlers = new(StringComparer.Ordinal);

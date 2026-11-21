@@ -51,6 +51,8 @@ public sealed class LocalState
     public const string SoundKey = "sofia.sound";
     public const string ConnectionKey = "sofia.connection";
     public const string WindowKey = "sofia.window";
+    /// <summary>Pin state of the composer's context-meter popup (the web opens it on hover only).</summary>
+    public const string ContextPopoverKey = "sofia.contextMeter.popover";
 
     public T? Get<T>(string key)
     {

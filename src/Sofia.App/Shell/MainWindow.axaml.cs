@@ -47,10 +47,25 @@ public partial class MainWindow : Window
             ApplySidebarState(screenshot);
             ApplyTranscriptState(screenshot);
             Shell.Attach(_viewModel);
+            ApplyComposerState(screenshot);
             var frameActionApplied = false;
+            var composerFrameApplied = false;
             ScreenshotHarness.FrameBegin = () =>
             {
                 if (screenshot.HoverSession is { } row) Shell.Sidebar.HoverConversation(row);
+                if (!composerFrameApplied)
+                {
+                    composerFrameApplied = true;
+                    switch (screenshot.ComposerFrame)
+                    {
+                        case "press":
+                            Shell.ComposerView.BeginPressFrame();
+                            break;
+                        case "chip":
+                            Shell.ComposerView.BeginChipHoverFrame();
+                            break;
+                    }
+                }
                 // Fold/hover/carousel animations must start at clock 0 exactly once (the sizes loop calls this again).
                 if (frameActionApplied) return;
                 frameActionApplied = true;
@@ -141,6 +156,15 @@ public partial class MainWindow : Window
         if (screenshot.TranscriptState == "lightbox")
         {
             Shell.Transcript.PreviewLightbox("m_1");
+        }
+    }
+
+    /// <summary>Loads the 042 composer fixture state (idle, focus, attachments, popovers, running, palettes).</summary>
+    private void ApplyComposerState(ScreenshotRequest screenshot)
+    {
+        if (screenshot.ComposerState is { Length: > 0 } state)
+        {
+            Shell.ComposerView.ApplyPreviewState(state);
         }
     }
 

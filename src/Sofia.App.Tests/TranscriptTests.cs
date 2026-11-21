@@ -418,7 +418,10 @@ Inline <img src=x onerror=alert(1)> tag.
         // 1.25rem top, 1.5rem sides and composer height + 1.25rem bottom.
         Assert.Equal(20, transcript.ColumnHostControl.Margin.Top, 1);
         Assert.Equal(24, transcript.ColumnHostControl.Margin.Left, 1);
-        Assert.True(transcript.ColumnHostControl.Margin.Bottom >= 130);
+        // The composer publishes its measured height (spec 042); the padding is that height + 1.25rem.
+        var composerHeight = shell.ComposerView.MeasuredHeight;
+        Assert.True(composerHeight > 80, $"composer height {composerHeight}");
+        Assert.Equal(composerHeight + 20, transcript.ColumnHostControl.Margin.Bottom, 1);
 
         var row = transcript.Rows["m_2"];
         row.Measure(new Size(transcript.ContentWidth, double.PositiveInfinity));

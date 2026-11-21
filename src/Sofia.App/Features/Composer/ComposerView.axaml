@@ -1,0 +1,110 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:theme="using:Sofia.App.Theme"
+             xmlns:controls="using:Sofia.App.Controls"
+             x:Class="Sofia.App.Features.Composer.ComposerView"
+             ClipToBounds="False">
+
+  <!-- Composer, ported from ChatComposer.vue (spec 042). Geometry is the web's, resolved at the 16px base:
+       input box padding .4rem .4rem .4rem .6rem (6.4/6.4/6.4/9.6) with r14 and the #43434B border, buttons 34x34 r10,
+       send pill 34px r10 with the 24px caret and its 28% ink divider, attachment chip max-width 16rem with a 24x24 r5
+       thumb, hint row 11px with a .9rem metrics gap and the 120x4 r999 context bar.
+       The web's `backdrop-filter: blur(14px)` has no Avalonia equivalent: the translucent fill + top hairline live in
+       the shell's `composer-band` (039's documented deviation). Popovers, palettes and the attachment strip are built
+       in code-behind so one pass keeps their order, counts and tones in sync with the view model. -->
+
+
+  <Grid x:Name="Root" RowDefinitions="Auto,Auto,Auto" ClipToBounds="False">
+    <!-- attachment + reference strips -->
+    <StackPanel x:Name="StripHost" Grid.Row="0" Spacing="8" Margin="0,0,0,8" ClipToBounds="False">
+      <WrapPanel x:Name="AttachStrip" Orientation="Horizontal" ItemSpacing="6.4" LineSpacing="6.4" IsVisible="False" />
+      <WrapPanel x:Name="RefStrip" Orientation="Horizontal" ItemSpacing="6.4" LineSpacing="6.4" IsVisible="False" />
+    </StackPanel>
+
+    <!-- input box: translucent surface-2 at 72%, 1px #43434B, r14, focus ring 0 0 0 3 rgba(169,116,79,.16) -->
+    <Border x:Name="InputBox"
+            Grid.Row="1"
+            Padding="9.6,6.4,6.4,6.4"
+            CornerRadius="14"
+            BorderThickness="1"
+            ClipToBounds="False"
+            Background="#B8242428"
+            BorderBrush="{DynamicResource BrushBorderStrong}">
+      <Border.Transitions>
+        <Transitions>
+          <BrushTransition Property="BorderBrush" Duration="{x:Static theme:MotionTokens.Reveal}" Easing="{StaticResource EaseStandard}" />
+          <BoxShadowsTransition Property="BoxShadow" Duration="{x:Static theme:MotionTokens.Reveal}" Easing="{StaticResource EaseStandard}" />
+        </Transitions>
+      </Border.Transitions>
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="6.4" VerticalAlignment="Bottom">
+        <Button x:Name="AttachButton"
+                Grid.Column="0"
+                Theme="{DynamicResource ComposerIconButton}"
+                ToolTip.Tip="Attach files">
+          <controls:SofiaIcon Glyph="paperclip" Size="17" />
+        </Button>
+
+        <TextBox x:Name="Input"
+                 Grid.Column="1"
+                 AcceptsReturn="True"
+                 TextWrapping="Wrap"
+                 MinHeight="37"
+                 MaxHeight="220"
+                 VerticalAlignment="Bottom"
+                 VerticalContentAlignment="Top"
+                 Padding="0,7.2,0,7.2"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 FontSize="{DynamicResource FontSizeMd2}"
+                 Foreground="{DynamicResource BrushText}"
+                 CaretBrush="{DynamicResource BrushPrimary}"
+                 SelectionBrush="{DynamicResource BrushPrimarySoftStrong}"
+                 SelectionForegroundBrush="{DynamicResource BrushText}" />
+
+        <Button x:Name="StopButton"
+                Grid.Column="2"
+                IsVisible="False"
+                ToolTip.Tip="Stop generating"
+                Background="{DynamicResource BrushPrimarySoftStrong}"
+                Foreground="{DynamicResource BrushPrimary}"
+                Width="34"
+                Height="34"
+                Padding="0"
+                CornerRadius="10"
+                BorderThickness="0"
+                VerticalAlignment="Bottom"
+                HorizontalContentAlignment="Center"
+                VerticalContentAlignment="Center">
+          <controls:SofiaIcon Glyph="stop" Size="17.6" Foreground="{DynamicResource BrushPrimary}" />
+        </Button>
+
+        <!-- send pill: 34px r10, primary fill, 38% while idle; split with the 24px caret while a run is active -->
+        <Border x:Name="SendSplit"
+                Grid.Column="3"
+                Height="34"
+                CornerRadius="10"
+                Background="{DynamicResource BrushPrimary}"
+                VerticalAlignment="Bottom">
+          <StackPanel Orientation="Horizontal" Height="34">
+            <Button x:Name="SendButton" Theme="{DynamicResource ComposerSendHalf}" ToolTip.Tip="Send message">
+              <controls:SofiaIcon x:Name="SendGlyph" Glyph="send" Size="16" Foreground="{DynamicResource BrushPrimaryInk}" />
+            </Button>
+            <Border x:Name="ModeDivider" Width="1" IsVisible="False" Background="#47281C14" />
+            <Button x:Name="ModeButton" IsVisible="False" Theme="{DynamicResource ComposerModeHalf}" ToolTip.Tip="Follow-up mode">
+              <controls:SofiaIcon Glyph="chevronUp" Size="12" Foreground="{DynamicResource BrushPrimaryInk}" />
+            </Button>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <!-- hint row: metrics left, branch + chips right -->
+    <Grid x:Name="HintRow" Grid.Row="2" Margin="0,4.8,0,0" ColumnDefinitions="*,Auto">
+      <StackPanel x:Name="MetricsRow" Grid.Column="0" Orientation="Horizontal" Spacing="14.4" VerticalAlignment="Center" />
+      <StackPanel x:Name="ChipsRow" Grid.Column="1" Orientation="Horizontal" Spacing="4.8" VerticalAlignment="Center" />
+    </Grid>
+
+    <!-- popovers, palettes and the context legend: canvas children so they never change the band's measured height -->
+    <Canvas x:Name="PopupLayer" Grid.RowSpan="3" ClipToBounds="False" />
+  </Grid>
+</UserControl>

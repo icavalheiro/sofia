@@ -39,7 +39,6 @@ public partial class ShellView : UserControl
 
     private ShellViewModel? _vm;
     private readonly PanelAnimator _panelAnimator;
-    private SofiaPopover? _modelPopover;
 
     public ShellView()
     {
@@ -48,10 +47,17 @@ public partial class ShellView : UserControl
         LoadArt();
         SidebarPane.UseOverlayHost(OverlayHost);
         TranscriptPane.UseOverlayHost(OverlayHost);
-        ComposerBand.SizeChanged += (_, _) => TranscriptPane.SetComposerHeight(ComposerBand.Bounds.Height);
+        // The composer publishes its measured height (attachment strip + growing textarea + hint row change it);
+        // the transcript reserves that many DIPs at the bottom so the last row is never covered.
+        ComposerPane.HeightChanged += height => TranscriptPane.SetComposerHeight(height);
+        ComposerBand.SizeChanged += (_, _) =>
+        {
+            if (ComposerPane.MeasuredHeight > 0) TranscriptPane.SetComposerHeight(ComposerPane.MeasuredHeight);
+        };
         Root.AddHandler(KeyDownEvent, OnGlobalKeyDown, RoutingStrategies.Tunnel);
         Root.AddHandler(PointerPressedEvent, OnGlobalPointerPressed, RoutingStrategies.Tunnel);
         WireButtons();
+        WireComposerShortcuts();
         MotionService.Current.Attach(_panelAnimator);
     }
 
@@ -69,6 +75,9 @@ public partial class ShellView : UserControl
 
     public Border Composer => ComposerBand;
 
+    /// <summary>The composer (spec 042): input, strips, chips, palettes and the popup layer.</summary>
+    public Features.Composer.ComposerView ComposerView => ComposerPane;
+
     public Border RightPanel => RightPanelHost;
 
     /// <summary>Binds a view model: fixture data or a live backend, depending on the head.</summary>
@@ -78,7 +87,12 @@ public partial class ShellView : UserControl
         DataContext = viewModel;
         SidebarPane.Attach(viewModel.Sidebar);
         TranscriptPane.Attach(viewModel.Transcript);
-        if (viewModel.Connection.Backend is { } backend) TranscriptPane.Attachments.UrlResolver = backend.AttachmentUrl;
+        ComposerPane.Attach(viewModel.Composer);
+        if (viewModel.Connection.Backend is { } backend)
+        {
+            TranscriptPane.Attachments.UrlResolver = backend.AttachmentUrl;
+            viewModel.Composer.SetBackend(backend);
+        }
         TranscriptPane.SessionOpenRequested += sessionId => _ = viewModel.OpenSessionAsync(sessionId);
         SidebarPane.SessionOpened += request =>
         {
@@ -93,6 +107,7 @@ public partial class ShellView : UserControl
             _vm.RightPanelOpen = !_vm.RightPanelOpen;
             _panelAnimator.SetOpen(_vm.RightPanelOpen, animate: true);
         };
+        SidebarPane.ComposerFocusRequested += ComposerPane.FocusInput;
         ApplyAppearance();
         Rebuild();
         viewModel.PropertyChanged += (_, _) => Rebuild();
@@ -127,11 +142,17 @@ public partial class ShellView : UserControl
     }
 
     /// <summary>
-    /// One key route for the whole window: Escape closes the sidebar's transient surfaces first, then the shared
-    /// shortcut table runs (Ctrl+K/O, Ctrl+N, Ctrl+Shift+E, Alt+↑/↓, Ctrl+\, Ctrl+,).
+    /// One key route for the whole window: Escape closes the composer's palettes/popovers first, then the sidebar's and
+    /// the transcript's transient surfaces, then the shared shortcut table runs (Ctrl+K/O, Ctrl+N, Ctrl+Shift+E,
+    /// Alt+â†‘/â†“, Ctrl+\, Ctrl+, and the composer's Ctrl+L/M/B/P/Shift+A/.).
     /// </summary>
     private void OnGlobalKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && ComposerPane.HandleEscape())
+        {
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Escape && SidebarPane.HandleEscape())
         {
             e.Handled = true;
@@ -145,12 +166,30 @@ public partial class ShellView : UserControl
         ShortcutService.Current.TryHandle(e);
     }
 
-    /// <summary>Clicking outside the sidebar closes its quick prompt and workspace menu (web document mousedown).</summary>
+    /// <summary>
+    /// Clicking outside the sidebar closes its quick prompt and workspace menu (web document mousedown); a click that
+    /// lands outside the composer closes its chip popovers and the pinned context legend.
+    /// </summary>
     private void OnGlobalPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (e.Source is not Visual source) return;
+        if (!IsInside(source, ComposerPane)) ComposerPane.CloseTransient();
         if (IsInside(source, SidebarPane)) return;
         SidebarPane.CloseTransient();
+    }
+
+    /// <summary>The composer's shortcut ids (web <c>useShortcut</c> rows) routed through the shared registry.</summary>
+    private void WireComposerShortcuts()
+    {
+        ShortcutService.Current.Register("composer.focus", ComposerPane.FocusInput);
+        ShortcutService.Current.Register("agent.pick", () => ComposerPane.ViewModel?.OpenMenu(Features.Composer.ComposerMenu.Agent));
+        ShortcutService.Current.Register("model.pick", () => ComposerPane.ViewModel?.OpenMenu(Features.Composer.ComposerMenu.Model));
+        ShortcutService.Current.Register("permission.pick", () => ComposerPane.ViewModel?.OpenMenu(Features.Composer.ComposerMenu.Permission));
+        ShortcutService.Current.Register("reasoning.pick", () => ComposerPane.ViewModel?.OpenMenu(Features.Composer.ComposerMenu.Reasoning));
+        ShortcutService.Current.Register("session.stop", () =>
+        {
+            if (ComposerPane.ViewModel is { IsReplying: true } composer) _ = composer.StopAsync();
+        });
     }
 
     private static bool IsInside(object? source, Visual container)
@@ -214,10 +253,9 @@ public partial class ShellView : UserControl
     {
         if (_vm is null) return;
         BuildHeader();
-        BuildComposer();
         BuildRightPanel();
         TaskPanelHost.IsVisible = _vm.TasksOpen;
-        TranscriptPane.SetComposerHeight(ComposerBand.Bounds.Height > 0 ? ComposerBand.Bounds.Height : 130);
+        TranscriptPane.SetComposerHeight(ComposerPane.MeasuredHeight > 0 ? ComposerPane.MeasuredHeight : 130);
     }
 
     private void BuildHeader()
@@ -254,150 +292,6 @@ public partial class ShellView : UserControl
             pill.Children.Add(icon);
             pill.Children.Add(StatusText);
         }
-    }
-
-    private void BuildComposer()
-    {
-        ComposerInner.Children.Clear();
-        if (_vm is null) return;
-
-        var box = new Border
-        {
-            Background = Brush("BrushSurface"),
-            BorderBrush = Brush("BrushBorder"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(14),
-            Padding = new Thickness(10, 9, 10, 8),
-            BoxShadow = BoxShadow("ShadowSm"),
-        };
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto") };
-
-        var input = new TextBox
-        {
-            PlaceholderText = Localization.T("shell.draft"),
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            MinHeight = 44,
-            MaxHeight = 180,
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(2, 4, 2, 4),
-            FontSize = FontSizeOf("FontSizeMd2"),
-            Foreground = Brush("BrushText"),
-            CaretBrush = Brush("BrushPrimary"),
-            SelectionBrush = Brush("BrushPrimarySoftStrong"),
-        };
-        Grid.SetRow(input, 0);
-        grid.Children.Add(input);
-
-        var toolbar = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        var chips = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        chips.Children.Add(Chip("bot", "build", openModel: false));
-        var modelChip = Chip("cpu", ShortModel(), openModel: true);
-        modelChip.Name = "ModelChip";
-        chips.Children.Add(modelChip);
-        chips.Children.Add(Chip("shield", "Ask", openModel: false));
-        chips.Children.Add(Chip("sparkles", "Medium", openModel: false));
-        Grid.SetColumn(chips, 0);
-        toolbar.Children.Add(chips);
-
-        var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
-        right.Children.Add(new SofiaIcon { Glyph = "clock", Size = 13, Foreground = Brush("BrushTextFaint") });
-        right.Children.Add(new TextBlock { Text = "8.1s", Classes = { "mono", "faint" }, FontSize = FontSizeOf("FontSizeXs") });
-        right.Children.Add(new TextBlock { Text = "21.5k", Classes = { "mono", "faint" }, FontSize = FontSizeOf("FontSizeXs") });
-        right.Children.Add(new SofiaMeter
-        {
-            Value = _vm.ContextFill,
-            Segments = 10,
-            Width = 82,
-            BarHeight = 5,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        var send = new Button
-        {
-            Theme = ThemeFor("SendButton"),
-            Content = new SofiaIcon { Glyph = "send", Size = 17, Foreground = Brush("BrushPrimaryInk") },
-        };
-        send.Click += (_, _) => SoundService.Current.Play(SoundKey.Send);
-        right.Children.Add(send);
-        Grid.SetColumn(right, 1);
-        toolbar.Children.Add(right);
-
-        Grid.SetRow(toolbar, 1);
-        toolbar.Margin = new Thickness(0, 6, 0, 0);
-        grid.Children.Add(toolbar);
-        box.Child = grid;
-        ComposerInner.Children.Add(box);
-    }
-
-    private Button Chip(string icon, string text, bool openModel)
-    {
-        var label = Caption(text, 12, "BrushTextMuted");
-        label.MaxWidth = 140;
-        label.Classes.Add("truncate");
-        label.VerticalAlignment = VerticalAlignment.Center;
-        var content = Row(
-            new SofiaIcon { Glyph = icon, Size = 13, Foreground = Brush("BrushTextMuted") },
-            label,
-            new SofiaIcon { Glyph = "chevronUp", Size = 11, Foreground = Brush("BrushTextFaint") });
-        var chip = new Button { Theme = ThemeFor("ChipButton"), Content = content };
-        chip.Click += (_, _) =>
-        {
-            SoundService.Current.Play(SoundKey.Select);
-            if (openModel) ToggleModelPopover(chip);
-        };
-        return chip;
-    }
-
-    private void ToggleModelPopover(Control anchor)
-    {
-        if (_modelPopover is null)
-        {
-            var list = new StackPanel { Spacing = 2, MinWidth = 230 };
-            foreach (var (name, detail) in new[]
-                     {
-                         ("unsloth/nvidia-nemotron-3.5-bolt", "local - 131k ctx"),
-                         ("claude-sonnet-4.5", "anthropic - 200k ctx"),
-                         ("gpt-5.1-codex", "openai - 400k ctx"),
-                     })
-            {
-                var item = new Button
-                {
-                    Theme = ThemeFor("RowButton"),
-                    Content = new StackPanel
-                    {
-                        Spacing = 1,
-                        Children =
-                        {
-                            Caption(name, 12, "BrushText"),
-                            Caption(detail, 11, "BrushTextFaint"),
-                        },
-                    },
-                };
-                list.Children.Add(item);
-            }
-            var menu = new Border
-            {
-                Background = Brush("BrushSurface2"),
-                BorderBrush = Brush("BrushBorder"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(6),
-                BoxShadow = BoxShadow("ShadowMenu"),
-                Child = list,
-            };
-            _modelPopover = new SofiaPopover { Content = menu, MinWidth = 240 };
-            _modelPopover.ZIndex = OverlayLayer.MenuHigh;
-            Overlays.Children.Add(_modelPopover);
-            Overlays.IsHitTestVisible = true;
-        }
-
-        _modelPopover.IsOpen = !_modelPopover.IsOpen;
-        if (!_modelPopover.IsOpen) return;
-
-        var point = anchor.TranslatePoint(new Point(0, anchor.Bounds.Height + 8), Root) ?? default;
-        Canvas.SetLeft(_modelPopover, point.X);
-        Canvas.SetTop(_modelPopover, Math.Max(8, point.Y - 150));
     }
 
     private void BuildRightPanel()
@@ -492,29 +386,10 @@ public partial class ShellView : UserControl
         return new Bitmap(stream);
     }
 
-    private string ShortModel()
-    {
-        var id = _vm?.Workspaces.SelectMany(w => w.Conversations ?? []).FirstOrDefault(s => s.Id == _vm.ActiveSessionId)?.ModelId;
-        if (string.IsNullOrEmpty(id)) return "nemotron-bolt";
-        var name = id.Split('/').Last();
-        return name.Length > 18 ? name[..17] + "..." : name;
-    }
-
-    private static ControlTheme? ThemeFor(string key) =>
-        Application.Current?.TryFindResource(key, out var value) == true ? value as ControlTheme : null;
-
     private static IBrush Brush(string key) =>
         Application.Current?.TryFindResource(key, out var value) == true && value is IBrush brush
             ? brush
             : Brushes.Transparent;
-
-    private static BoxShadows BoxShadow(string key) =>
-        Application.Current?.TryFindResource(key, out var value) == true && value is BoxShadows shadows
-            ? shadows
-            : default;
-
-    private static double FontSizeOf(string key) =>
-        Application.Current?.TryFindResource(key, out var value) == true && value is double size ? size : 14;
 
     private static TextBlock Caption(string text, double size, string brush) => new()
     {
@@ -532,7 +407,7 @@ public partial class ShellView : UserControl
     }
 
     /// <summary>
-    /// Motion contract #19: the right panel opens width 0â†’300 (.24s), slides translateX 40â†’0 (.24s) and fades 0â†’1
+    /// Motion contract #19: the right panel opens width 0Ã¢â€ â€™300 (.24s), slides translateX 40Ã¢â€ â€™0 (.24s) and fades 0Ã¢â€ â€™1
     /// (.18s). Driven by the shared clock so the frame harness can capture it stop-motion.
     /// </summary>
     private sealed class PanelAnimator(ColumnDefinition column, Control content) : IMotionParticipant
