@@ -38,6 +38,10 @@ public class SofiaIcon : Decorator, IMotionParticipant
     public static readonly StyledProperty<bool> RobotProperty =
         AvaloniaProperty.Register<SofiaIcon, bool>(nameof(Robot));
 
+    /// <summary>Spin period in milliseconds; 0 uses the standard .9s icon spin (motion #8, the retry glyph uses 1.8s).</summary>
+    public static readonly StyledProperty<double> SpinMsProperty =
+        AvaloniaProperty.Register<SofiaIcon, double>(nameof(SpinMs));
+
     /// <summary>Inherited like CSS <c>currentColor</c>, so a parent Foreground colours the glyph.</summary>
     public static readonly StyledProperty<IBrush?> ForegroundProperty =
         TextElement.ForegroundProperty.AddOwner<SofiaIcon>();
@@ -86,6 +90,13 @@ public class SofiaIcon : Decorator, IMotionParticipant
     {
         get => GetValue(RobotProperty);
         set => SetValue(RobotProperty, value);
+    }
+
+    /// <summary>Spin period in milliseconds (0 = the .9s icon spin).</summary>
+    public double SpinMs
+    {
+        get => GetValue(SpinMsProperty);
+        set => SetValue(SpinMsProperty, value);
     }
 
     public IBrush? Foreground
@@ -141,6 +152,10 @@ public class SofiaIcon : Decorator, IMotionParticipant
             }
             InvalidateVisual();
         }
+        else if (change.Property == SpinMsProperty)
+        {
+            if (Spin) TickMotion(MotionService.Current.NowMs);
+        }
         else if (change.Property == ForegroundProperty)
         {
             if (_spinner is not null) _spinner[!ForegroundProperty] = this[!ForegroundProperty];
@@ -155,7 +170,8 @@ public class SofiaIcon : Decorator, IMotionParticipant
     public void TickMotion(double nowMs)
     {
         if (_spinner is not null || !Spin) return;
-        var phase = nowMs % MotionTokens.IconSpin / MotionTokens.IconSpin;
+        var duration = SpinMs > 0 ? SpinMs : MotionTokens.IconSpin;
+        var phase = nowMs % duration / duration;
         _angle = phase * 360;
         InvalidateVisual();
     }

@@ -20,7 +20,9 @@ public class ScreenshotTests
     public ScreenshotTests()
     {
         ScreenshotHarness.FrameHook = () => AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        MotionService.Current.ResetParticipants();
         MotionService.Current.EnableManualClock(0);
+        MotionService.Current.ReducedMotion = false;
         HeadOptions.Current.Screenshot = null;
     }
 
@@ -62,7 +64,7 @@ public class ScreenshotTests
         Assert.Equal(0, shell.Frame.ColumnDefinitions[2].Width.Value);
 
         // Transcript and composer columns are capped at 1232px and centred.
-        Assert.Equal(1232, shell.FindControl<Grid>("TranscriptInner")!.MaxWidth);
+        Assert.Equal(1232, shell.Transcript.ColumnHostControl.MaxWidth);
         Assert.Equal(1232, shell.FindControl<Grid>("ComposerInner")!.MaxWidth);
 
         // Header band padding .7rem 1.5rem .55rem and composer band .45rem 1.5rem .55rem at the 16px base.
@@ -305,6 +307,53 @@ public class ScreenshotTests
                 window.ShellView.Attach(viewModel);
                 break;
         }
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
+        return window;
+    }
+
+    [AvaloniaFact]
+    public void Transcript_states_render_at_1080p_2k_and_4k()
+    {
+        var sizes = new (string Name, int Width, int Height, double Scale)[]
+        {
+            ("1080p", 1920, 1080, 1.0),
+            ("2k", 2560, 1440, 1.333),
+            ("4k", 3840, 2160, 2.0),
+        };
+        foreach (var state in new[] { "idle", "streaming", "permission", "questions", "diff", "lightbox" })
+        {
+            var window = OpenTranscript(state);
+            foreach (var (name, width, height, scale) in sizes)
+            {
+                MotionService.Current.Seek(0);
+                var path = Evidence.File($"041-{state}-{name}.png");
+                ScreenshotHarness.Capture(window, path, width, height, scale);
+                Assert.True(new FileInfo(path).Length > 60_000, path);
+            }
+            window.Close();
+        }
+
+        // The remaining transcript states are extra evidence at the base size.
+        foreach (var state in new[] { "markdown", "compaction", "retry", "queued", "waiting" })
+        {
+            var window = OpenTranscript(state);
+            MotionService.Current.Seek(0);
+            var path = Evidence.File($"041-{state}.png");
+            ScreenshotHarness.Capture(window, path, 1920, 1080, 1);
+            Assert.True(new FileInfo(path).Length > 60_000, path);
+            window.Close();
+        }
+    }
+
+    private static MainWindow OpenTranscript(string state)
+    {
+        var window = new MainWindow(fixture: true);
+        window.Show();
+        Dispatcher.UIThread.RunJobs(DispatcherPriority.Loaded);
+        window.ViewModel.LoadTranscriptState(state);
+        window.ShellView.Attach(window.ViewModel);
+        if (state == "lightbox") window.ShellView.Transcript.PreviewLightbox("m_1");
         AvaloniaHeadlessPlatform.ForceRenderTimerTick();
         Dispatcher.UIThread.RunJobs();
         return window;

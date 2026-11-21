@@ -35,6 +35,9 @@ public sealed class ShellViewModel : ObservableObject
             Status = StatusFor(request.SessionId);
             OpenSessionRequested?.Invoke(request);
         };
+        Store.Applied += Transcript.Apply;
+        Store.DeltaFlushed += Transcript.AppendDelta;
+        Transcript.Actions.OpenSession = OpenSessionAsync;
         if (fixture) LoadFixture();
         Localization.Changed += () => OnPropertyChanged(nameof(Language));
     }
@@ -50,6 +53,9 @@ public sealed class ShellViewModel : ObservableObject
     public SidebarStore SidebarStore { get; }
 
     public SidebarViewModel Sidebar { get; }
+
+    /// <summary>The open conversation's transcript (spec 041).</summary>
+    public Features.Transcript.TranscriptViewModel Transcript { get; } = new();
 
     public ThemeService Theme => ThemeService.Current;
 
@@ -131,15 +137,53 @@ public sealed class ShellViewModel : ObservableObject
         SyncFromSidebar();
         ContextFill = 0.42;
         OnPropertyChanged(nameof(ContextFill));
+        if (empty) Transcript.Detach();
+        else LoadTranscriptState("idle");
     }
 
-    /// <summary>Loads the live workspace tree once a backend is ready.</summary>
+    /// <summary>
+    /// Loads one deterministic transcript fixture (screenshot gate): idle, streaming, permission, questions, diff,
+    /// lightbox, markdown, compaction, retry, queued or waiting.
+    /// </summary>
+    public void LoadTranscriptState(string state)
+    {
+        var sessionId = ActiveSessionId.Length > 0 ? ActiveSessionId : "s_1";
+        var fixture = Fixture.Transcript(state, sessionId);
+        Transcript.Load(fixture.Messages, sessionId, fixture.Status, fixture.Queued);
+        Transcript.Actions.Backend = null;
+        ContextFill = 0.42;
+        OnPropertyChanged(nameof(ContextFill));
+    }
+
+    /// <summary>Loads the live workspace tree once a backend is ready, then the open conversation's transcript.</summary>
     public async Task LoadAsync(ISofiaBackend backend, CancellationToken ct = default)
     {
         await SidebarStore.LoadAsync(backend, ct);
         ActiveSessionId = SidebarStore.ActiveSessionId;
         ActiveWorkspaceId = SidebarStore.ActiveWorkspaceId;
         SyncFromSidebar();
+        Transcript.Actions.Backend = backend;
+        Transcript.Actions.OpenSession = OpenSessionAsync;
+        await Transcript.LoadSessionAsync(backend, ActiveSessionId, ct);
+    }
+
+    /// <summary>Switches the open conversation and loads its transcript (sidebar row, search hit, subagent link, branch).</summary>
+    public async Task OpenSessionAsync(string sessionId)
+    {
+        if (string.IsNullOrEmpty(sessionId)) return;
+        ActiveSessionId = sessionId;
+        ActiveWorkspaceId = Store.Workspaces.FirstOrDefault(w => (w.Conversations ?? []).Any(s => s.Id == sessionId))?.Id
+                            ?? ActiveWorkspaceId;
+        Status = StatusFor(sessionId);
+        OnPropertyChanged(nameof(ActiveSessionTitle));
+        if (Connection.Backend is { } backend)
+        {
+            await Transcript.LoadSessionAsync(backend, sessionId);
+        }
+        else
+        {
+            LoadTranscriptState("idle");
+        }
     }
 
     /// <summary>Mirrors the sidebar slice into the shell header state after every change.</summary>
@@ -155,6 +199,7 @@ public sealed class ShellViewModel : ObservableObject
             ActiveWorkspaceId = SidebarStore.ActiveWorkspaceId;
         }
         Status = StatusFor(ActiveSessionId);
+        Transcript.SetStatus(Status is "done" ? "idle" : Status);
         OnPropertyChanged(nameof(ActiveSessionTitle));
         OnPropertyChanged(nameof(ActiveWorkspaceName));
         OnPropertyChanged(nameof(ActiveWorkspacePath));

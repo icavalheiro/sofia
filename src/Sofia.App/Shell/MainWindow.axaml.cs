@@ -45,14 +45,27 @@ public partial class MainWindow : Window
             ScreenshotHarness.Apply(screenshot);
             Shell.Attach(_viewModel);
             ApplySidebarState(screenshot);
+            ApplyTranscriptState(screenshot);
             Shell.Attach(_viewModel);
+            var frameActionApplied = false;
             ScreenshotHarness.FrameBegin = () =>
             {
                 if (screenshot.HoverSession is { } row) Shell.Sidebar.HoverConversation(row);
+                // Fold/hover/carousel animations must start at clock 0 exactly once (the sizes loop calls this again).
+                if (frameActionApplied) return;
+                frameActionApplied = true;
+                ApplyTranscriptFrame(screenshot);
             };
             ScreenshotHarness.Run(this, screenshot);
             ScreenshotHarness.FrameBegin = null;
+            Shell.Transcript.CloseOverlays();
             Close();
+            // The desktop head is a one-shot capture: shut the lifetime down so the CLI process exits (a live
+            // dispatcher timer in the store would otherwise keep the window's dispatcher alive).
+            if (Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime lifetime)
+            {
+                lifetime.Shutdown();
+            }
             return;
         }
 
@@ -111,6 +124,40 @@ public partial class MainWindow : Window
                     }
                 }
                 _viewModel.SidebarStore.Rebuild();
+                break;
+        }
+    }
+
+    /// <summary>Loads the 041 transcript fixture state (and opens the lightbox for the lightbox state).</summary>
+    private void ApplyTranscriptState(ScreenshotRequest screenshot)
+    {
+        if (screenshot.SidebarState == "empty")
+        {
+            _viewModel.Transcript.Detach();
+            return;
+        }
+        _viewModel.LoadTranscriptState(screenshot.TranscriptState);
+        Shell.Attach(_viewModel);
+        if (screenshot.TranscriptState == "lightbox")
+        {
+            Shell.Transcript.PreviewLightbox("m_1");
+        }
+    }
+
+    /// <summary>Starts the requested transcript animation at frame 0 (fold, hover, carousel).</summary>
+    private void ApplyTranscriptFrame(ScreenshotRequest screenshot)
+    {
+        var messageId = screenshot.HoverMessage ?? "m_2";
+        switch (screenshot.TranscriptFrame)
+        {
+            case "hover":
+                Shell.Transcript.HoverMessage(messageId);
+                break;
+            case "fold":
+                Shell.Transcript.PreviewToggleFold(messageId, 0);
+                break;
+            case "carousel":
+                Shell.Transcript.PreviewCarouselStep(messageId, 1);
                 break;
         }
     }

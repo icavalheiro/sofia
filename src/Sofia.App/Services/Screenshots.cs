@@ -70,6 +70,15 @@ public sealed class ScreenshotRequest
     /// <summary>Conversation row whose hover pill is revealed before the frames (040 motion #3).</summary>
     public string? HoverSession { get; set; }
 
+    /// <summary>Transcript fixture state (041): idle, streaming, permission, questions, diff, lightbox, markdown, compaction, retry, queued, waiting.</summary>
+    public string TranscriptState { get; set; } = "idle";
+
+    /// <summary>Transcript animation to start at frame 0: hover, fold, carousel, pulse, retry or spinner.</summary>
+    public string? TranscriptFrame { get; set; }
+
+    /// <summary>Message whose actions/fold/carousel the frame harness drives (defaults to the transcript's last reply).</summary>
+    public string? HoverMessage { get; set; }
+
     /// <summary>All three logical sizes in one run; individual width/height/scale override it.</summary>
     public bool AllSizes { get; set; }
 
@@ -125,6 +134,15 @@ public sealed class ScreenshotRequest
                     break;
                 case "--hover-row":
                     request.HoverSession = Next();
+                    break;
+                case "--transcript-state":
+                    request.TranscriptState = Next() ?? request.TranscriptState;
+                    break;
+                case "--transcript-frame":
+                    request.TranscriptFrame = Next();
+                    break;
+                case "--hover-message":
+                    request.HoverMessage = Next();
                     break;
                 case "--all-sizes":
                     request.AllSizes = true;

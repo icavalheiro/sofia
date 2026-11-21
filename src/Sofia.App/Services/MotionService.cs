@@ -54,6 +54,12 @@ public sealed class MotionService
 
     public void Detach(IMotionParticipant participant) => _participants.Remove(participant);
 
+    /// <summary>
+    /// Drops every participant. The headless tests share one clock, and a closed headless window does not always raise
+    /// <c>DetachedFromVisualTree</c>, so a leaked control would otherwise be ticked from another test's thread.
+    /// </summary>
+    public void ResetParticipants() => _participants.Clear();
+
     /// <summary>Switches to the deterministic clock used by the frame-sequence harness.</summary>
     public void EnableManualClock(double startMs = 0)
     {

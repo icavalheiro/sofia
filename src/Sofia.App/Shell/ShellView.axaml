@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="using:Sofia.App.Controls"
              xmlns:sidebar="using:Sofia.App.Features.Sidebar"
+             xmlns:transcript="using:Sofia.App.Features.Transcript"
              x:Class="Sofia.App.Shell.ShellView">
 
   <!-- Shell frame copied from App.vue: sidebar (288 normal / 236 compact) | main column | right panel (300, collapsible).
@@ -60,9 +61,7 @@
         <Border Background="{DynamicResource BrushBg}" />
         <Border x:Name="WallpaperLayer" IsHitTestVisible="False" />
         <Border x:Name="GrainLayer" IsHitTestVisible="False" />
-        <ScrollViewer x:Name="TranscriptScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-          <Grid x:Name="TranscriptInner" MaxWidth="1232" Margin="24,20,24,150" />
-        </ScrollViewer>
+        <transcript:TranscriptView x:Name="TranscriptPane" />
 
         <Border x:Name="ComposerBand"
                 VerticalAlignment="Bottom"

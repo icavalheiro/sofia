@@ -9,7 +9,7 @@ lands (044).
 
 | Project | Target | Owns |
 | --- | --- | --- |
-| `src/Sofia.App` | `net10.0` class library | `App.axaml`, `Theme/`, `Controls/`, `Features/Sidebar/`, `Shell/`, `Services/`, `Assets/`. References `Sofia.Client` + `Sofia.Contracts` only, so the WASM head can use it (no SQLite, Playwright, SoundFlow). |
+| `src/Sofia.App` | `net10.0` class library | `App.axaml`, `Theme/`, `Controls/`, `Features/Sidebar/`, `Features/Transcript/`, `Shell/`, `Services/`, `Assets/`. References `Sofia.Client` + `Sofia.Contracts` only, so the WASM head can use it (no SQLite, Playwright, SoundFlow). |
 | `src/Sofia.App.Desktop` | `net10.0` `WinExe` | `Program.cs` (flags, font options), `SoundFlowSoundPlayer`, `DesktopBackendResolver` (HTTP → in-process Core). References Core and `Sofia.Client.InProc`. |
 | `src/Sofia.App.Browser` | `net10.0-browser1.0` | WASM boot smoke. Static host, HTTP backend and WebAudio sounds land in 044. |
 | `src/Sofia.App.Tests` | `net10.0` | `Avalonia.Headless.XUnit` + `Avalonia.Skia`: token/motion/control tests and the screenshot + frame harness. |
@@ -96,6 +96,72 @@ Evidence (all in `.specs/spec_assets/`): `040-web-1080p/2k/4k.png` (Vue referenc
 harness browser could not launch), `040-mixed|empty|search-1080p/2k/4k.png`, `040-settings.png`, `040-delete.png`,
 `040-motion-conversation-frame-*.png` (1.4s), `040-motion-workspace-frame-*.png` (1.1s) and
 `040-hover-frame-0/75/150.png`.
+
+## Transcript (plan 041)
+
+`Features/Transcript/` is the Vue `ChatMessages.vue` + `ChatMessageItem.vue` + `MarkdownText.vue` port:
+`TranscriptView.axaml` (+ code-behind) is the scroll host and builds one `MessageRow` per transcript entry;
+`TranscriptViewModel` owns the loaded messages, the 70-message window, the queued follow-ups, the session status and
+the composer-height padding; `MessageViewModel` is the row projection (text, reasoning, tool cards, the whole card
+family, attachments, cache warning, action state); `ToolCardViewModel` + `UnifiedDiff` render tool calls and their
+diffs; `CardViewModels/` holds one small view model per card (reasoning, summary, knowledge, context, retry, error,
+compaction, permission, question + question set); `Markdown/` holds the parser, the block model, the renderer and the
+prose control; `TranscriptActions` is the `ISofiaBackend` mutation surface; `AttachmentLoader`, `Lightbox`,
+`QuestionCarousel`, `CarouselStage` and `HoverReveal` are the media/overlay/animation pieces.
+
+Feature map (every row of the inventory is implemented; see the deviations table for the visual gaps):
+
+| Area | Behaviour |
+| --- | --- |
+| Scroll host | 1232px column centred in the main area, padding `1.25rem 1.5rem` with the bottom `composer height + 1.25rem`; the shell publishes the measured composer height (`SetComposerHeight`). Auto-follow only while parked at the bottom (`ScrollViewer` distance ≤ 4px), released on an upward scroll that is not a truncation clamp; a new user/pending row re-engages it. |
+| Window | Above 70 messages the newest 70 stay rendered, plus every user prompt and the first reply, with a centred `(...)` gap (`Earlier messages hidden to keep the chat light ({count})` tooltip). |
+| Scroll seam | `TranscriptView.ScrollToMessage(id)` — the sidebar's search hit and `ShellView.PendingScrollMessageId` use it; a subagent tool link raises `SessionOpenRequested`. |
+| Row | `flex` geometry: gap 12, padding 12/0, 32px avatar r10 (borderStrong + primary-soft + `logo-31`), meta 12px (author 600, model/time faint), user rows reversed with the meta group right-aligned, bubble `#242428` border r14 padding `.6rem .85rem` up to `min(952px, 82%)`, assistant prose 104ch at 15px/1.6. |
+| Markdown | Markdig (GFM + breaks): headings 1.25/1.15/1.05em at 650, `.7em` collapsed block gap, lists `1.5em`, inline code mono `.85em` on surface-2, code blocks 13px/1.55 on the canvas colour with horizontal scroll, muted 3px blockquote, bordered table cells (header surface-2), 1px `hr`, raw HTML as literal text, `$…$` literal, images as alt text, links http(s)/mailto only. The parsed block model is cached (LRU, 96 entries) and a streamed row re-renders at most once per 80ms. |
+| Streaming | `message.delta` is coalesced per `(messageId, field)` by `HarnessStore` (33ms flush) and appended to text or reasoning; `message.updated` replaces the row while keeping the user's fold/pick state. Reasoning is live-open while the model is still thinking and folds when the answer starts. |
+| Tool cards | Header fold, mono name, status pill (Success/Running/Error), duration, summary, subagent link (+ model + blocking/background), input/output/error blocks (`max-height:200px`, 10px uppercase labels), image gallery, and the +green/−red diff of `edit`/`write`/`apply_patch` (`UnifiedDiff`). |
+| Cards | Reasoning (beige, `Reasoning · mode`), compaction notice (pulse, expandable summary), conversation summary, knowledge (view/hide/delete via `DELETE /api/knowledge/{id}`), context updates (collapsed), retry notice (1.8s spin), error banner, prompt-cache warning with the diagnosis prompt. |
+| Permission | Warn card until resolved (`POST /api/sessions/{id}/permissions/{requestId}`, once/always/reject from the labels), then a neutral card with the chosen decision. |
+| Questions | Single card (single/multi + free text) and the multi-question carousel (one page per question + review, nothing sent before the review confirm; `POST /api/sessions/{id}/questions/{formId}`); picks live in a draft store keyed by form id. |
+| Attachments | 240×180 r10 thumbnails (and file chips), click opens the z200 lightbox (`rgba(0,0,0,.88)`, 42px circular close, download pill) on the shell overlay ladder; media loads through `ISofiaBackend.AttachmentUrl` (token included). |
+| Actions | Copy source, Branch out, Retry (failed rows, confirmation modal) or Revert (armed on the first click, 2.6s window), revealed on row hover. |
+
+Geometry (web px, rem resolved at the current root size through `TranscriptUi.Rem`):
+
+| Element | Values |
+| --- | --- |
+| Row | padding 12/0, gap 12, avatar 32 r10, meta 12 with `.3rem` bottom gap, card radius 10, card padding 8/10.4, card gap 8. |
+| Prose | 15/1.6, 104ch (`15px × .5 × 104 ≈ 780`), user bubble padding 9.6/13.6, radius 14, `min(952, 82%)`. |
+| Cards | 74ch cap (`≈555`), reasoning padding 8.8/12, notice/blocking labels 10px/600/`.06em`, tool body blocks `max-height 200`, diff `max-height 260` at `.78rem`. |
+| Permission/question | padding 9.6/11.2, radius 10, option buttons padding 4.8/9.6 r8, primary fill for the chosen option, review chips `> answer`. |
+| Lightbox | full viewport, image inset 48, close 42 r21 at 20/20, download pill bottom 24. |
+
+Seams owned by later specs:
+
+- `TranscriptActions.AnswerQuestionAsync`/`ReplyPermissionAsync` are the only question/permission writes; 042's composer
+  uses the same `ISofiaBackend` methods.
+- Revert restores a user prompt into the composer on the web; here the composer hook lands with 042 (the transcript
+  reloads through the server events in the meantime).
+- The retry confirmation lives on the transcript's overlay host; 043's settings/modal ladder must keep z2100 for it.
+
+Deviations from the web (deliberate, evidence in `.specs/spec_assets/041-*`):
+
+| Web | App |
+| --- | --- |
+| Inline `code` chips with 1px border + 5px radius | Mono `.85em` run with the surface-2 background only: Avalonia mis-measures a wrapped line that hosts an `InlineUIContainer` (the first capture showed the overflow overlapping the next block). Links stay runs with the accent underline and are opened by a character-range hit test on the paragraph. |
+| KaTeX math | `$…$` literal text (same fallback the web uses for invalid math). |
+| Relative/`//host` links | Not navigable: a desktop has no base URL, so only absolute http(s)/mailto URLs become links (the web keeps relative refs). |
+| Arbitrary text selection in the prose | Message-level Copy action (the minimum the spec allows): inline link hit-testing replaces a selectable text block. |
+| Report card (`message.report`) | Not reachable: `report` exists only in the Vue types; the server never emits it. Deferred with the client-only card. |
+| Web `message.delta` applied per token | Coalesced per `(message, field)` on a 33ms flush (the same batching the store already did for text). |
+| `(...)` gap is a non-interactive note | Kept non-interactive (the web has no expander; the tooltip carries the count). |
+| Solid/dashed inline borders on question inputs | Avalonia `TextBox` draws its own frame; the free-text field uses a solid borderStrong frame instead of the web's dashed rest state. |
+
+Evidence (`.specs/spec_assets/`): `041-web-1080p/2k/4k.png` and `041-web-top-1080p/2k/4k.png` (Vue reference, live
+session), `041-idle|streaming|permission|questions|diff|lightbox-1080p/2k/4k.png` (app, three sizes),
+`041-markdown|compaction|retry|queued|waiting.png` (extra states), `041-fold.frames/`, `041-hover.frames/`,
+`041-pulse.frames/`, `041-retry-spin.frames/`, `041-carousel.frames/` and `041-spinner.frames/` (stop-motion at the
+motion-contract timestamps).
 
 ## Theme and tokens
 

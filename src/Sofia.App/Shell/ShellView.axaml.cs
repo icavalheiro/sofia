@@ -47,6 +47,8 @@ public partial class ShellView : UserControl
         _panelAnimator = new PanelAnimator(Root.ColumnDefinitions[2], RightPanelInner);
         LoadArt();
         SidebarPane.UseOverlayHost(OverlayHost);
+        TranscriptPane.UseOverlayHost(OverlayHost);
+        ComposerBand.SizeChanged += (_, _) => TranscriptPane.SetComposerHeight(ComposerBand.Bounds.Height);
         Root.AddHandler(KeyDownEvent, OnGlobalKeyDown, RoutingStrategies.Tunnel);
         Root.AddHandler(PointerPressedEvent, OnGlobalPointerPressed, RoutingStrategies.Tunnel);
         WireButtons();
@@ -62,6 +64,9 @@ public partial class ShellView : UserControl
 
     public Features.Sidebar.SidebarView Sidebar => SidebarPane;
 
+    /// <summary>The transcript host (spec 041): rows, scrolling and its overlays.</summary>
+    public Features.Transcript.TranscriptView Transcript => TranscriptPane;
+
     public Border Composer => ComposerBand;
 
     public Border RightPanel => RightPanelHost;
@@ -72,12 +77,15 @@ public partial class ShellView : UserControl
         _vm = viewModel;
         DataContext = viewModel;
         SidebarPane.Attach(viewModel.Sidebar);
+        TranscriptPane.Attach(viewModel.Transcript);
+        if (viewModel.Connection.Backend is { } backend) TranscriptPane.Attachments.UrlResolver = backend.AttachmentUrl;
+        TranscriptPane.SessionOpenRequested += sessionId => _ = viewModel.OpenSessionAsync(sessionId);
         SidebarPane.SessionOpened += request =>
         {
-            // The sidebar opened a conversation (or a search hit). The scroll target is kept for 041: the transcript
-            // owns rendering, this shell only records the seam and lets the header follow the selection.
+            // The sidebar opened a conversation (or a search hit): the transcript loads it and scrolls to the hit.
             PendingScrollMessageId = request.ScrollToMessage ? request.MessageId : null;
             ApplyAppearance();
+            _ = OpenSessionAsync(request.SessionId);
         };
         SidebarPane.PanelToggleRequested += () =>
         {
@@ -95,6 +103,29 @@ public partial class ShellView : UserControl
     /// <summary>Message a search hit asked the transcript to scroll to; consumed by spec 041.</summary>
     public string? PendingScrollMessageId { get; private set; }
 
+    /// <summary>Opens one conversation: the transcript reloads over the backend (or the fixture) and scrolls to a hit.</summary>
+    private async Task OpenSessionAsync(string sessionId)
+    {
+        if (_vm is null) return;
+        try
+        {
+            await _vm.OpenSessionAsync(sessionId);
+        }
+        catch (Exception ex)
+        {
+            _vm.Transcript.SetStatus("error");
+            Console.Error.WriteLine("open session failed: " + ex.Message);
+            return;
+        }
+        TranscriptPane.Attach(_vm.Transcript);
+        if (_vm.Connection.Backend is { } backend) TranscriptPane.Attachments.UrlResolver = backend.AttachmentUrl;
+        if (PendingScrollMessageId is { } messageId)
+        {
+            TranscriptPane.ScrollToMessage(messageId);
+            PendingScrollMessageId = null;
+        }
+    }
+
     /// <summary>
     /// One key route for the whole window: Escape closes the sidebar's transient surfaces first, then the shared
     /// shortcut table runs (Ctrl+K/O, Ctrl+N, Ctrl+Shift+E, Alt+↑/↓, Ctrl+\, Ctrl+,).
@@ -102,6 +133,11 @@ public partial class ShellView : UserControl
     private void OnGlobalKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape && SidebarPane.HandleEscape())
+        {
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && TranscriptPane.HandleEscape())
         {
             e.Handled = true;
             return;
@@ -178,10 +214,10 @@ public partial class ShellView : UserControl
     {
         if (_vm is null) return;
         BuildHeader();
-        BuildTranscript();
         BuildComposer();
         BuildRightPanel();
         TaskPanelHost.IsVisible = _vm.TasksOpen;
+        TranscriptPane.SetComposerHeight(ComposerBand.Bounds.Height > 0 ? ComposerBand.Bounds.Height : 130);
     }
 
     private void BuildHeader()
@@ -218,63 +254,6 @@ public partial class ShellView : UserControl
             pill.Children.Add(icon);
             pill.Children.Add(StatusText);
         }
-    }
-
-    private void BuildTranscript()
-    {
-        TranscriptInner.Children.Clear();
-        var stack = new StackPanel
-        {
-            Spacing = 6,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            MinHeight = 360,
-            MaxWidth = 520,
-            Margin = new Thickness(0, 40, 0, 0),
-        };
-        var logo = new Border
-        {
-            Width = 88,
-            Height = 88,
-            CornerRadius = new CornerRadius(24),
-            ClipToBounds = true,
-            BorderBrush = Brush("BrushBorderStrong"),
-            BorderThickness = new Thickness(1),
-            BoxShadow = BoxShadows.Parse("0 0 0 6 #29A9744F, 0 18 40 0 #66000000"),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 10),
-            Child = new Image { Source = Load("avares://Sofia.App/Assets/Logos/logo-128.png"), Stretch = Stretch.UniformToFill },
-        };
-        stack.Children.Add(logo);
-
-        var title = Caption(Localization.T("shell.emptyTitle"), 22, "BrushText");
-        title.FontWeight = FontWeight.SemiBold;
-        title.HorizontalAlignment = HorizontalAlignment.Center;
-        stack.Children.Add(title);
-
-        var body = Caption(Localization.T("shell.emptyBody"), 15, "BrushTextMuted");
-        body.HorizontalAlignment = HorizontalAlignment.Center;
-        body.TextAlignment = TextAlignment.Center;
-        body.MaxWidth = 460;
-        stack.Children.Add(body);
-
-        var working = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 14, 0, 0),
-        };
-        working.Children.Add(new SofiaIcon { Glyph = "loader", Size = 25.6, Foreground = Brush("BrushPrimary") });
-        working.Children.Add(new TextBlock
-        {
-            Text = "unsloth/nvidia-nemotron-3.5-bolt-e4b",
-            Classes = { "mono", "faint" },
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        stack.Children.Add(working);
-
-        TranscriptInner.Children.Add(stack);
     }
 
     private void BuildComposer()

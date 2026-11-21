@@ -39,22 +39,24 @@ public class ServiceTests
     }
 
     [AvaloniaFact]
-    public void Store_coalesces_message_deltas_per_message()
+    public void Store_coalesces_message_deltas_per_message_and_field()
     {
         var store = new HarnessStore();
-        var flushed = new List<(string Id, string Text)>();
-        store.DeltaFlushed += (id, text) => flushed.Add((id, text));
+        var flushed = new List<(string Id, string Field, string Text)>();
+        store.DeltaFlushed += (id, field, text) => flushed.Add((id, field, text));
 
         foreach (var chunk in new[] { "Hel", "lo", " there" })
         {
             store.Apply(Delta("msg_1", chunk));
         }
-        Assert.Single(store.PendingDeltas);
-        Assert.Equal("Hello there", store.PendingDeltas["msg_1"]);
+        store.Apply(Delta("msg_1", "thinking", "reasoning"));
+        Assert.Equal(2, store.PendingDeltas.Count);
+        Assert.Equal("Hello there", store.PendingDeltas[("msg_1", "text")]);
+        Assert.Equal("thinking", store.PendingDeltas[("msg_1", "reasoning")]);
 
         store.FlushDeltas();
         Assert.Empty(store.PendingDeltas);
-        Assert.Equal([("msg_1", "Hello there")], flushed);
+        Assert.Equal([("msg_1", "text", "Hello there"), ("msg_1", "reasoning", "thinking")], flushed);
 
         // A completed message supersedes the pending text.
         store.Apply(Delta("msg_2", "partial"));
@@ -151,11 +153,11 @@ public class ServiceTests
         sound.Enabled = true;
     }
 
-    private static SofiaEventDto Delta(string messageId, string text) => new(
+    private static SofiaEventDto Delta(string messageId, string text, string field = "text") => new(
         EventTypes.MessageDelta,
         "s_1",
         "ws_1",
-        JsonSerializer.SerializeToElement(new { messageId, field = "text", delta = text }));
+        JsonSerializer.SerializeToElement(new { messageId, field, delta = text }));
 
     private sealed class FakeSoundPlayer : ISoundPlayer
     {

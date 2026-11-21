@@ -1,0 +1,20 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Sofia.App.Features.Transcript.TranscriptView">
+
+  <!-- Transcript scroll host (web ChatMessages.vue): the content column is capped at 1232px, centred, and padded
+       1.25rem 1.5rem with the bottom padding derived from the measured composer height (the composer overlays the
+       transcript, so the last row must never end under it). The canvas, wallpaper tile and grain are painted by the
+       shell panel behind this host (spec 039), which is why the surface here is transparent. -->
+  <Panel x:Name="Root">
+    <ScrollViewer x:Name="Scroller"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+      <Grid x:Name="ColumnHost"
+            MaxWidth="1232"
+            Margin="24,20,24,150">
+        <StackPanel x:Name="Content" />
+      </Grid>
+    </ScrollViewer>
+  </Panel>
+</UserControl>

@@ -152,7 +152,7 @@ public sealed class HarnessStore : ObservableObject
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    private readonly Dictionary<string, string> _pendingDeltas = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string MessageId, string Field), string> _pendingDeltas = new();
     private readonly DispatcherTimer _deltaTimer;
     private JsonElement? _models;
     private string _activeSessionId = "";
@@ -172,8 +172,12 @@ public sealed class HarnessStore : ObservableObject
     /// <summary>Session id → status (<c>working</c>, <c>waiting</c>, <c>permission</c>, <c>question</c>, <c>error</c>…).</summary>
     public Dictionary<string, string> Statuses { get; } = new(StringComparer.Ordinal);
 
-    /// <summary>Streamed text accumulated per message id, not yet consumed by the transcript (spec 041).</summary>
-    public IReadOnlyDictionary<string, string> PendingDeltas => _pendingDeltas;
+    /// <summary>
+    /// Streamed text accumulated per (message id, field), not yet consumed by the transcript. The server emits
+    /// <c>message.delta</c> with <c>field: text | reasoning</c>; the web appends both directly, this store batches them
+    /// for one repaint per frame batch.
+    /// </summary>
+    public IReadOnlyDictionary<(string MessageId, string Field), string> PendingDeltas => _pendingDeltas;
 
     public string ActiveSessionId
     {
@@ -190,8 +194,8 @@ public sealed class HarnessStore : ObservableObject
     /// <summary>Total events applied; the harness asserts coalescing kept the repaint count low.</summary>
     public int AppliedEvents => _unreadEvents;
 
-    /// <summary>Raised when coalesced deltas are flushed (transcript appends the text).</summary>
-    public event Action<string, string>? DeltaFlushed;
+    /// <summary>Raised when coalesced deltas are flushed (the transcript appends <c>field</c> text to the message).</summary>
+    public event Action<string, string, string>? DeltaFlushed;
 
     /// <summary>Raised after one domain event has been applied to the cache (the sidebar slice listens for it).</summary>
     public event Action<SofiaEventDto>? Applied;
@@ -271,7 +275,9 @@ public sealed class HarnessStore : ObservableObject
                 var messageId = Str(evt.Data, "messageId");
                 var delta = Str(evt.Data, "delta");
                 if (messageId is null || delta is null) break;
-                _pendingDeltas[messageId] = _pendingDeltas.TryGetValue(messageId, out var text) ? text + delta : delta;
+                var field = Str(evt.Data, "field") ?? "text";
+                var key = (messageId, field);
+                _pendingDeltas[key] = _pendingDeltas.TryGetValue(key, out var text) ? text + delta : delta;
                 break;
             }
 
@@ -280,20 +286,20 @@ public sealed class HarnessStore : ObservableObject
             case EventTypes.MessageDeleted:
             {
                 var messageId = Str(evt.Data, "id");
-                if (messageId is not null) _pendingDeltas.Remove(messageId);
+                if (messageId is not null) RemovePending(messageId);
                 break;
             }
         }
         Applied?.Invoke(evt);
     }
 
-    /// <summary>Emits and clears the coalesced text of every streaming message.</summary>
+    /// <summary>Emits and clears the coalesced text of every streaming message/field.</summary>
     public void FlushDeltas()
     {
         if (_pendingDeltas.Count == 0) return;
         var flushed = _pendingDeltas.ToArray();
         _pendingDeltas.Clear();
-        foreach (var (messageId, text) in flushed) DeltaFlushed?.Invoke(messageId, text);
+        foreach (var ((messageId, field), text) in flushed) DeltaFlushed?.Invoke(messageId, field, text);
     }
 
     /// <summary>Pumps the backend's event stream onto the UI thread until cancelled.</summary>
@@ -310,6 +316,12 @@ public sealed class HarnessStore : ObservableObject
         {
             // Session ended.
         }
+    }
+
+    /// <summary>Drops every coalesced delta of one message (a full snapshot supersedes them).</summary>
+    private void RemovePending(string messageId)
+    {
+        foreach (var key in _pendingDeltas.Keys.Where(k => k.MessageId == messageId).ToList()) _pendingDeltas.Remove(key);
     }
 
     private void UpsertWorkspace(WorkspaceView? workspace)
