@@ -165,7 +165,7 @@ public static class ScreenshotHarness
         var temp = path + "." + Guid.NewGuid().ToString("N")[..8] + ".tmp";
         try
         {
-            bitmap.Save(temp);
+            bitmap.Save(temp, new PngBitmapEncoderOptions());
             for (var attempt = 0; ; attempt++)
             {
                 try

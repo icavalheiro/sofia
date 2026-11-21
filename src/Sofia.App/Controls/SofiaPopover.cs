@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
 using Avalonia.Media;
@@ -27,9 +27,6 @@ public class SofiaPopover : Panel
 
     public static readonly StyledProperty<object?> ContentProperty =
         AvaloniaProperty.Register<SofiaPopover, object?>(nameof(Content));
-
-    public static readonly StyledProperty<double> MinWidthProperty =
-        AvaloniaProperty.Register<SofiaPopover, double>(nameof(MinWidth), 220);
 
     private readonly Border _surface = new();
     private readonly ContentPresenter _presenter = new();
@@ -70,24 +67,17 @@ public class SofiaPopover : Panel
         set => SetValue(ContentProperty, value);
     }
 
-    public double MinWidth
-    {
-        get => GetValue(MinWidthProperty);
-        set => SetValue(MinWidthProperty, value);
-    }
-
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
         if (change.Property == IsOpenProperty || change.Property == PlacementProperty) UpdateChrome();
         if (change.Property == ContentProperty) _presenter.Content = Content;
-        if (change.Property == MinWidthProperty) _surface.MinWidth = MinWidth;
     }
 
     private void UpdateChrome()
     {
         IsVisible = IsOpen;
-        MinWidth = MinWidth;
+
         _surface.MinWidth = MinWidth;
         VerticalAlignment = Placement == PopoverPlacement.Top
             ? Avalonia.Layout.VerticalAlignment.Top

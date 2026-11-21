@@ -23,6 +23,12 @@ dotnet run --project src/Sofia.App.Desktop -- --fixture
 Without `--fixture` the desktop head probes `http://127.0.0.1:5199`; if nothing answers it takes the `~/.sofia`
 lock and runs the engine in-process, and otherwise shows the connect gate.
 
+The shell follows `App.vue`/`AppSidebar.vue`: brand header (logo, name, gear), the primary **New chat** and
+secondary **New workspace** actions, the past-session search entry with its `Ctrl+K` badge (the local filter is a
+scaffold placeholder; 040 wires the API-backed results panel), `Workspaces`/`Chats` section labels, and an empty
+sidebar footer like the web. The workspace tree, status badges and conversation rows come from fixture data in
+`--fixture` mode and from `HarnessStore` against a live backend.
+
 ## Theme and tokens
 
 | File | Contents |
@@ -32,7 +38,7 @@ lock and runs the engine in-process, and otherwise shows the connect gate.
 | `Theme/Shadows.axaml` | `ShadowSm`, `ShadowMenu`, `ShadowModal`, `ShadowPanel`, `ShadowHero`, `ShadowOverlay`. |
 | `Theme/Motion.axaml` | Every duration in milliseconds (`MsHover`, `MsSteam`, …) and the CSS easings (`EaseStandard` = `cubic-bezier(.25,.1,.25,1)`, `EaseInOut`, `EaseLinear`). |
 | `Theme/Icons.axaml` | 65 generated Lucide `StreamGeometry` resources, `Icon.<semantic name>`. |
-| `Theme/ControlThemes.axaml` | `ActionButton`, `IconButton`, `RowButton`, `SendButton`, `ChipButton`. |
+| `Theme/ControlThemes.axaml` | `ActionButton`, `PrimaryButton`, `IconButton`, `RowButton`, `SendButton`, `ChipButton`. |
 | `Theme/Controls.axaml` | App-wide styles: text classes (`.eyebrow`, `.mono`, `.truncate`, `.muted`, `.faint`, `.heading`), `.input` (surface-2 well, primary focus ring with the 3px soft halo), `.sidebar-row` (+`.active`), `.hairline`, `.card`, `.composer-band`, scrollbars (10px track, 3px inset thumb, border-strong → text-faint on hover). |
 
 **Never hardcode a size, colour or duration.** Colours come from `Brush*`/`Color*`, type and rem-based spacing

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Sofia.App.Services;
@@ -37,7 +37,7 @@ public sealed class DesktopBackendResolver : IBackendResolver, IDisposable
         catch (Exception ex)
         {
             log($"no server on {DefaultUrl} ({ex.GetType().Name})");
-            await _http.DisposeAsync();
+            if (_http is not null) await _http.DisposeAsync();
             _http = null;
         }
 

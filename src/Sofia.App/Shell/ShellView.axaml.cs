@@ -128,6 +128,7 @@ public partial class ShellView : UserControl
     private void Rebuild()
     {
         if (_vm is null) return;
+        ApplyLocalization();
         BuildSidebar();
         BuildHeader();
         BuildTranscript();
@@ -137,33 +138,54 @@ public partial class ShellView : UserControl
         TaskPanelHost.IsVisible = _vm.TasksOpen;
     }
 
+    private void ApplyLocalization()
+    {
+        NewChatLabel.Text = Localization.T("shell.newChat");
+        AddWorkspaceLabel.Text = Localization.T("shell.newWorkspace");
+        SearchLabel.Text = Localization.T("shell.search");
+        SearchBox.PlaceholderText = Localization.T("shell.searchPlaceholder");
+    }
+
     private void BuildSidebar()
     {
         SidebarTree.Children.Clear();
         if (_vm is null) return;
 
-        foreach (var workspace in _vm.Workspaces)
-        {
-            SidebarTree.Children.Add(BuildWorkspaceRow(workspace));
-            if (!workspace.Expanded) continue;
-            foreach (var session in Order(workspace.Conversations)) SidebarTree.Children.Add(BuildSessionRow(session));
-            SidebarTree.Children.Add(new Border { Height = 6 });
-        }
+        var query = SearchBox.Text?.Trim() ?? "";
+        _ = query;
+        var chats = _vm.Workspaces.Where(w => w.Kind == "chat").ToList();
+        var folders = _vm.Workspaces.Where(w => w.Kind != "chat").ToList();
 
-        var addButton = new Button
+        AddSectionLabel(Localization.T("shell.workspaces"));
+        foreach (var workspace in folders) AddWorkspaceBlock(workspace);
+
+        if (chats.Count > 0)
         {
-            Theme = ThemeFor("ActionButton"),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(2, 2, 0, 0),
-            Content = Row(
-                new SofiaIcon { Glyph = "plus", Size = 14, Foreground = Brush("BrushTextMuted") },
-                Caption(Localization.T("shell.newChat"), 12, "BrushTextMuted")),
-        };
-        addButton.Click += (_, _) =>
+            AddSectionLabel(Localization.T("shell.chats"));
+            foreach (var workspace in chats) AddWorkspaceBlock(workspace);
+        }
+    }
+
+    private void AddWorkspaceBlock(WorkspaceView workspace)
+    {
+        SidebarTree.Children.Add(BuildWorkspaceRow(workspace));
+        if (!workspace.Expanded) return;
+        var query = SearchBox.Text?.Trim() ?? "";
+        foreach (var session in Order(workspace.Conversations))
         {
-            SoundService.Current.Play(SoundKey.Click);
-        };
-        SidebarTree.Children.Add(addButton);
+            if (query.Length > 0 && !session.Title.Contains(query, StringComparison.OrdinalIgnoreCase)) continue;
+            SidebarTree.Children.Add(BuildSessionRow(session));
+        }
+    }
+
+    private void AddSectionLabel(string text)
+    {
+        SidebarTree.Children.Add(new TextBlock
+        {
+            Text = text,
+            Classes = { "eyebrow" },
+            Margin = new Thickness(6, 8, 0, 4),
+        });
     }
 
     private Control BuildWorkspaceRow(WorkspaceView workspace)
@@ -401,7 +423,7 @@ public partial class ShellView : UserControl
 
         var input = new TextBox
         {
-            Watermark = Localization.T("shell.draft"),
+            PlaceholderText = Localization.T("shell.draft"),
             AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap,
             MinHeight = 44,
@@ -567,36 +589,39 @@ public partial class ShellView : UserControl
         }
     }
 
-    private void BuildFooter()
-    {
-        SidebarFooter.Children.Clear();
-        var subagent = new Border
-        {
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(6, 4),
-            Background = Brush("BrushSurface2"),
-        };
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-        var robot = new SofiaIcon { Glyph = "loader", Size = 16, Robot = true, Foreground = Brush("BrushPrimary") };
-        robot.VerticalAlignment = VerticalAlignment.Center;
-        robot.Margin = new Thickness(0, 0, 8, 0);
-        row.Children.Add(robot);
-        var text = Caption("1 subagent - explorer", 11, "BrushTextMuted");
-        text.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(text, 1);
-        row.Children.Add(text);
-        var version = Caption("0.5.16", 10, "BrushTextFaint");
-        Grid.SetColumn(version, 2);
-        row.Children.Add(version);
-        subagent.Child = row;
-        SidebarFooter.Children.Add(subagent);
-    }
+    /// <summary>The web's sidebar footer is empty; keep the slot so 040 can park the version/status there.</summary>
+    private void BuildFooter() => SidebarFooter.Children.Clear();
 
     // --- helpers -------------------------------------------------------------------------------------------
 
     private void WireButtons()
     {
         SettingsButton.Click += (_, _) => SoundService.Current.Play(SoundKey.Click);
+        NewChatButton.Click += (_, _) =>
+        {
+            SoundService.Current.Play(SoundKey.Select);
+            if (_vm is null) return;
+            var first = _vm.Workspaces.FirstOrDefault();
+            if (first?.Conversations is { Count: > 0 })
+            {
+                _vm.ActiveWorkspaceId = first.Id;
+                _vm.ActiveSessionId = first.Conversations[0].Id;
+            }
+            Rebuild();
+        };
+        AddWorkspaceButton.Click += (_, _) => SoundService.Current.Play(SoundKey.Click);
+        SearchToggle.Click += (_, _) =>
+        {
+            SoundService.Current.Play(SoundKey.Click);
+            SearchBox.IsVisible = !SearchBox.IsVisible;
+            if (SearchBox.IsVisible) SearchBox.Focus();
+            else
+            {
+                SearchBox.Text = "";
+                BuildSidebar();
+            }
+        };
+        SearchBox.TextChanged += (_, _) => BuildSidebar();
         ChangesButton.Click += (_, _) =>
         {
             if (_vm is null) return;
