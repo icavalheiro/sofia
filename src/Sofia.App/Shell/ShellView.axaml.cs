@@ -1,11 +1,14 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Sofia.App.Controls;
 using Sofia.App.Services;
 using Sofia.App.Theme;
@@ -43,6 +46,9 @@ public partial class ShellView : UserControl
         InitializeComponent();
         _panelAnimator = new PanelAnimator(Root.ColumnDefinitions[2], RightPanelInner);
         LoadArt();
+        SidebarPane.UseOverlayHost(OverlayHost);
+        Root.AddHandler(KeyDownEvent, OnGlobalKeyDown, RoutingStrategies.Tunnel);
+        Root.AddHandler(PointerPressedEvent, OnGlobalPointerPressed, RoutingStrategies.Tunnel);
         WireButtons();
         MotionService.Current.Attach(_panelAnimator);
     }
@@ -54,7 +60,7 @@ public partial class ShellView : UserControl
 
     public Panel Overlays => OverlayHost;
 
-    public StackPanel Tree => SidebarTree;
+    public Features.Sidebar.SidebarView Sidebar => SidebarPane;
 
     public Border Composer => ComposerBand;
 
@@ -65,11 +71,61 @@ public partial class ShellView : UserControl
     {
         _vm = viewModel;
         DataContext = viewModel;
+        SidebarPane.Attach(viewModel.Sidebar);
+        SidebarPane.SessionOpened += request =>
+        {
+            // The sidebar opened a conversation (or a search hit). The scroll target is kept for 041: the transcript
+            // owns rendering, this shell only records the seam and lets the header follow the selection.
+            PendingScrollMessageId = request.ScrollToMessage ? request.MessageId : null;
+            ApplyAppearance();
+        };
+        SidebarPane.PanelToggleRequested += () =>
+        {
+            if (_vm is null) return;
+            _vm.RightPanelOpen = !_vm.RightPanelOpen;
+            _panelAnimator.SetOpen(_vm.RightPanelOpen, animate: true);
+        };
         ApplyAppearance();
         Rebuild();
         viewModel.PropertyChanged += (_, _) => Rebuild();
         viewModel.Theme.PropertyChanged += (_, _) => ApplyAppearance();
         Localization.Changed += Rebuild;
+    }
+
+    /// <summary>Message a search hit asked the transcript to scroll to; consumed by spec 041.</summary>
+    public string? PendingScrollMessageId { get; private set; }
+
+    /// <summary>
+    /// One key route for the whole window: Escape closes the sidebar's transient surfaces first, then the shared
+    /// shortcut table runs (Ctrl+K/O, Ctrl+N, Ctrl+Shift+E, Alt+↑/↓, Ctrl+\, Ctrl+,).
+    /// </summary>
+    private void OnGlobalKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && SidebarPane.HandleEscape())
+        {
+            e.Handled = true;
+            return;
+        }
+        ShortcutService.Current.TryHandle(e);
+    }
+
+    /// <summary>Clicking outside the sidebar closes its quick prompt and workspace menu (web document mousedown).</summary>
+    private void OnGlobalPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.Source is not Visual source) return;
+        if (IsInside(source, SidebarPane)) return;
+        SidebarPane.CloseTransient();
+    }
+
+    private static bool IsInside(object? source, Visual container)
+    {
+        var visual = source as Visual;
+        while (visual is not null)
+        {
+            if (ReferenceEquals(visual, container)) return true;
+            visual = visual.GetVisualParent();
+        }
+        return false;
     }
 
     /// <summary>Shows the connect screen (no backend yet) with the given connection state.</summary>
@@ -105,14 +161,7 @@ public partial class ShellView : UserControl
     {
         var theme = ThemeService.Current;
         Root.ColumnDefinitions[0].Width = new GridLength(theme.SidebarWidth);
-        if (theme.CompactSidebar)
-        {
-            BrandRow.Margin = new Thickness(theme.SidebarWidth > 0 ? 10 : 16, 12, 10, 8);
-        }
-        else
-        {
-            BrandRow.Margin = new Thickness(16, 14, 12, 10);
-        }
+        SidebarPane.RefreshAppearance();
 
         if (!_panelAnimator.IsOpen && !_vm!.RightPanelOpen)
         {
@@ -128,188 +177,11 @@ public partial class ShellView : UserControl
     private void Rebuild()
     {
         if (_vm is null) return;
-        ApplyLocalization();
-        BuildSidebar();
         BuildHeader();
         BuildTranscript();
         BuildComposer();
         BuildRightPanel();
-        BuildFooter();
         TaskPanelHost.IsVisible = _vm.TasksOpen;
-    }
-
-    private void ApplyLocalization()
-    {
-        NewChatLabel.Text = Localization.T("shell.newChat");
-        AddWorkspaceLabel.Text = Localization.T("shell.newWorkspace");
-        SearchLabel.Text = Localization.T("shell.search");
-        SearchBox.PlaceholderText = Localization.T("shell.searchPlaceholder");
-    }
-
-    private void BuildSidebar()
-    {
-        SidebarTree.Children.Clear();
-        if (_vm is null) return;
-
-        var query = SearchBox.Text?.Trim() ?? "";
-        _ = query;
-        var chats = _vm.Workspaces.Where(w => w.Kind == "chat").ToList();
-        var folders = _vm.Workspaces.Where(w => w.Kind != "chat").ToList();
-
-        AddSectionLabel(Localization.T("shell.workspaces"));
-        foreach (var workspace in folders) AddWorkspaceBlock(workspace);
-
-        if (chats.Count > 0)
-        {
-            AddSectionLabel(Localization.T("shell.chats"));
-            foreach (var workspace in chats) AddWorkspaceBlock(workspace);
-        }
-    }
-
-    private void AddWorkspaceBlock(WorkspaceView workspace)
-    {
-        SidebarTree.Children.Add(BuildWorkspaceRow(workspace));
-        if (!workspace.Expanded) return;
-        var query = SearchBox.Text?.Trim() ?? "";
-        foreach (var session in Order(workspace.Conversations))
-        {
-            if (query.Length > 0 && !session.Title.Contains(query, StringComparison.OrdinalIgnoreCase)) continue;
-            SidebarTree.Children.Add(BuildSessionRow(session));
-        }
-    }
-
-    private void AddSectionLabel(string text)
-    {
-        SidebarTree.Children.Add(new TextBlock
-        {
-            Text = text,
-            Classes = { "eyebrow" },
-            Margin = new Thickness(6, 8, 0, 4),
-        });
-    }
-
-    private Control BuildWorkspaceRow(WorkspaceView workspace)
-    {
-        var working = (workspace.Conversations ?? []).Any(s => IsRunning(_vm!.Statuses.GetValueOrDefault(s.Id)));
-        var row = new WorkingRowBorder
-        {
-            Kind = WorkingRowKind.Workspace,
-            IsWorking = working,
-            RowSurface = Brush("BrushSurface"),
-            RowBackground = working ? Brush("BrushPrimarySoft") : Brushes.Transparent,
-            RowCornerRadius = new CornerRadius(10),
-        };
-
-        var grid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
-            Height = 26,
-        };
-        var icon = new SofiaIcon
-        {
-            Glyph = workspace.Icon,
-            Size = 15,
-            Foreground = Brush(working ? "BrushPrimary" : "BrushTextMuted"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(2, 0, 8, 0),
-        };
-        grid.Children.Add(icon);
-        var label = Caption(workspace.Name, 13, working ? "BrushText" : "BrushTextMuted");
-        label.FontWeight = FontWeight.SemiBold;
-        label.Classes.Add("truncate");
-        label.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(label, 1);
-        grid.Children.Add(label);
-        var chevron = new SofiaIcon
-        {
-            Glyph = workspace.Expanded ? "chevronDown" : "chevronRight",
-            Size = 13,
-            Foreground = Brush("BrushTextFaint"),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        Grid.SetColumn(chevron, 2);
-        grid.Children.Add(chevron);
-
-        var button = new Button
-        {
-            Theme = ThemeFor("RowButton"),
-            Content = grid,
-            Padding = new Thickness(_vm!.Theme.CompactSidebar ? 4 : 7, 3),
-        };
-        button.Click += (_, _) =>
-        {
-            workspace.Expanded = !workspace.Expanded;
-            _vm.ActiveWorkspaceId = workspace.Id;
-            SoundService.Current.Play(SoundKey.Select);
-            Rebuild();
-        };
-        row.Content = button;
-        return row;
-    }
-
-    private Control BuildSessionRow(Session session)
-    {
-        var status = _vm!.Statuses.GetValueOrDefault(session.Id, "idle");
-        var running = IsRunning(status);
-        var active = session.Id == _vm.ActiveSessionId;
-        var row = new WorkingRowBorder
-        {
-            Kind = WorkingRowKind.Conversation,
-            IsWorking = running,
-            RowSurface = Brush("BrushSurface"),
-            RowBackground = active ? Brush("BrushPrimarySoft") : Brushes.Transparent,
-            RowCornerRadius = new CornerRadius(9),
-        };
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Height = 22 };
-        Control leading = status switch
-        {
-            "working" => new SofiaIcon { Glyph = "loader", Size = 15, Foreground = Brush("BrushPrimary") },
-            "waiting" => new SofiaIcon { Glyph = "loader", Size = 14, Paused = true, Foreground = Brush("BrushTextMuted") },
-            "permission" => new SofiaIcon { Glyph = "shield", Size = 14, Foreground = Brush("BrushWarn") },
-            "question" => new SofiaIcon { Glyph = "help", Size = 14, Foreground = Brush("BrushInfo") },
-            "error" => new SofiaIcon { Glyph = "alert", Size = 14, Foreground = Brush("BrushErr") },
-            _ => new SofiaIcon { Glyph = "chat", Size = 14, Foreground = Brush(active ? "BrushPrimary" : "BrushTextFaint") },
-        };
-        leading.VerticalAlignment = VerticalAlignment.Center;
-        leading.Margin = new Thickness(2, 0, 8, 0);
-        grid.Children.Add(leading);
-
-        var label = Caption(session.Title, 13, active ? "BrushText" : "BrushTextMuted");
-        label.Classes.Add("truncate");
-        label.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(label, 1);
-        grid.Children.Add(label);
-
-        var pin = new SofiaIcon
-        {
-            Glyph = session.Pinned ? "pin" : "unpin",
-            Size = 12,
-            Foreground = Brush(session.Pinned ? "BrushTextMuted" : "BrushTextFaint"),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        // Motion #3: the unpin affordance reveals on row hover (.15s); pinned rows keep it visible.
-        pin.Classes.Add(session.Pinned ? "row-pin" : "row-reveal");
-        Grid.SetColumn(pin, 2);
-        grid.Children.Add(pin);
-
-        var button = new Button
-        {
-            Theme = ThemeFor("RowButton"),
-            Content = grid,
-            Padding = new Thickness(_vm.Theme.CompactSidebar ? 4 : 7, 2),
-        };
-        button.Classes.Add("row-button");
-        button.Click += (_, _) =>
-        {
-            _vm.ActiveSessionId = session.Id;
-            _vm.ActiveWorkspaceId = session.WorkspaceId;
-            _vm.Status = status;
-            SoundService.Current.Play(SoundKey.Select);
-            Rebuild();
-        };
-        row.Content = button;
-        return row;
     }
 
     private void BuildHeader()
@@ -589,39 +461,10 @@ public partial class ShellView : UserControl
         }
     }
 
-    /// <summary>The web's sidebar footer is empty; keep the slot so 040 can park the version/status there.</summary>
-    private void BuildFooter() => SidebarFooter.Children.Clear();
-
     // --- helpers -------------------------------------------------------------------------------------------
 
     private void WireButtons()
     {
-        SettingsButton.Click += (_, _) => SoundService.Current.Play(SoundKey.Click);
-        NewChatButton.Click += (_, _) =>
-        {
-            SoundService.Current.Play(SoundKey.Select);
-            if (_vm is null) return;
-            var first = _vm.Workspaces.FirstOrDefault();
-            if (first?.Conversations is { Count: > 0 })
-            {
-                _vm.ActiveWorkspaceId = first.Id;
-                _vm.ActiveSessionId = first.Conversations[0].Id;
-            }
-            Rebuild();
-        };
-        AddWorkspaceButton.Click += (_, _) => SoundService.Current.Play(SoundKey.Click);
-        SearchToggle.Click += (_, _) =>
-        {
-            SoundService.Current.Play(SoundKey.Click);
-            SearchBox.IsVisible = !SearchBox.IsVisible;
-            if (SearchBox.IsVisible) SearchBox.Focus();
-            else
-            {
-                SearchBox.Text = "";
-                BuildSidebar();
-            }
-        };
-        SearchBox.TextChanged += (_, _) => BuildSidebar();
         ChangesButton.Click += (_, _) =>
         {
             if (_vm is null) return;
@@ -647,7 +490,6 @@ public partial class ShellView : UserControl
 
     private void LoadArt()
     {
-        BrandLogo.Source = Load("avares://Sofia.App/Assets/Logos/logo-42.png");
         WallpaperLayer.Background = new ImageBrush(Load("avares://Sofia.App/Assets/Wallpaper/chat-wallpaper.png"))
         {
             TileMode = TileMode.Tile,
@@ -670,17 +512,6 @@ public partial class ShellView : UserControl
         using var stream = Avalonia.Platform.AssetLoader.Open(new Uri(uri));
         return new Bitmap(stream);
     }
-
-    private static IEnumerable<Session> Order(List<Session>? sessions)
-    {
-        if (sessions is null) return [];
-        return sessions
-            .Where(s => !s.Archived)
-            .OrderByDescending(s => s.Pinned)
-            .ThenByDescending(s => s.UpdatedAt);
-    }
-
-    private static bool IsRunning(string? status) => status is "working" or "waiting";
 
     private string ShortModel()
     {

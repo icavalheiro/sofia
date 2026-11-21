@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using Avalonia.Controls;
 using Sofia.App.Services;
 
@@ -44,7 +44,14 @@ public partial class MainWindow : Window
             await Task.Delay(250);
             ScreenshotHarness.Apply(screenshot);
             Shell.Attach(_viewModel);
+            ApplySidebarState(screenshot);
+            Shell.Attach(_viewModel);
+            ScreenshotHarness.FrameBegin = () =>
+            {
+                if (screenshot.HoverSession is { } row) Shell.Sidebar.HoverConversation(row);
+            };
             ScreenshotHarness.Run(this, screenshot);
+            ScreenshotHarness.FrameBegin = null;
             Close();
             return;
         }
@@ -75,6 +82,37 @@ public partial class MainWindow : Window
         _listen?.Cancel();
         _listen = new CancellationTokenSource();
         _ = _viewModel.Store.ListenAsync(_viewModel.Connection.Backend, _listen.Token);
+    }
+
+    /// <summary>Fixture state for the 040 screenshot gate: empty account, collapsed working row or open quick prompt.</summary>
+    private void ApplySidebarState(ScreenshotRequest screenshot)
+    {
+        switch (screenshot.SidebarState)
+        {
+            case "empty":
+                _viewModel.LoadFixture(empty: true);
+                break;
+            case "search":
+                _viewModel.Sidebar.PreviewSearch("working", Fixture.SearchHits());
+                break;
+            case "settings":
+                Shell.Sidebar.PreviewSettingsMenu(_viewModel.SidebarStore.Workspaces.FirstOrDefault()?.Id ?? "");
+                break;
+            case "delete":
+                Shell.Sidebar.PreviewDelete(_viewModel.SidebarStore.Workspaces.FirstOrDefault()?.Id ?? "");
+                break;
+            case "working":
+                foreach (var workspace in _viewModel.Store.Workspaces)
+                {
+                    if ((workspace.Conversations ?? []).Any(s =>
+                            _viewModel.SidebarStore.Badges.GetValueOrDefault(s.Id) is "working" or "waiting"))
+                    {
+                        workspace.Expanded = false;
+                    }
+                }
+                _viewModel.SidebarStore.Rebuild();
+                break;
+        }
     }
 
     private void PersistGeometry()

@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="using:Sofia.App.Controls"
+             xmlns:sidebar="using:Sofia.App.Features.Sidebar"
              x:Class="Sofia.App.Shell.ShellView">
 
   <!-- Shell frame copied from App.vue: sidebar (288 normal / 236 compact) | main column | right panel (300, collapsible).
@@ -15,68 +16,7 @@
     </Grid.ColumnDefinitions>
 
     <!-- ============================= sidebar ============================= -->
-    <Border x:Name="Sidebar"
-            Grid.Column="0"
-            Background="{DynamicResource BrushSurface}"
-            BorderBrush="{DynamicResource BrushBorder}"
-            BorderThickness="0,0,1,0">
-      <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="16,14,12,10" x:Name="BrandRow">
-          <Border Grid.Column="0"
-                  Width="40"
-                  Height="40"
-                  CornerRadius="12"
-                  ClipToBounds="True"
-                  BorderBrush="{DynamicResource BrushBorderStrong}"
-                  BorderThickness="1">
-            <Image x:Name="BrandLogo" Stretch="UniformToFill" />
-          </Border>
-          <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center" Spacing="1">
-            <TextBlock Text="Sofia" FontSize="{DynamicResource FontSizeLg}" FontWeight="SemiBold" />
-            <TextBlock x:Name="BrandSubtitle" Classes="eyebrow" Text="HARNESS" />
-          </StackPanel>
-          <Button Grid.Column="2" x:Name="SettingsButton" Theme="{StaticResource IconButton}" ToolTip.Tip="Settings">
-            <controls:SofiaIcon Glyph="gear" Size="17" />
-          </Button>
-        </Grid>
-
-        <!-- Actions row: New chat (primary) + Workspace (secondary), as AppSidebar.vue. -->
-        <Grid Grid.Row="1" ColumnDefinitions="*,*" Margin="12,0,12,8" ColumnSpacing="6">
-          <Button x:Name="NewChatButton" Grid.Column="0" Theme="{StaticResource PrimaryButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <controls:SofiaIcon Glyph="chat" Size="15" Foreground="{DynamicResource BrushPrimaryInk}" />
-              <TextBlock x:Name="NewChatLabel" Text="New chat" FontSize="{DynamicResource FontSizeSm}" Foreground="{DynamicResource BrushPrimaryInk}" />
-            </StackPanel>
-          </Button>
-          <Button x:Name="AddWorkspaceButton" Grid.Column="1" Theme="{StaticResource ActionButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <controls:SofiaIcon Glyph="plus" Size="15" Foreground="{DynamicResource BrushText}" />
-              <TextBlock x:Name="AddWorkspaceLabel" Text="Workspace" FontSize="{DynamicResource FontSizeSm}" />
-            </StackPanel>
-          </Button>
-        </Grid>
-
-        <!-- Past-session search entry (Ctrl+K); the API-backed results panel is 040. -->
-        <StackPanel Grid.Row="2" Margin="12,0,12,6" Spacing="6">
-          <Button x:Name="SearchToggle" Theme="{StaticResource ActionButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Padding="8,5">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-              <controls:SofiaIcon Grid.Column="0" Glyph="search" Size="14" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="1" x:Name="SearchLabel" Text="Search" FontSize="{DynamicResource FontSizeSm}" Foreground="{DynamicResource BrushTextMuted}" Margin="7,0,0,0" VerticalAlignment="Center" />
-              <Border Grid.Column="2" CornerRadius="4" Background="{DynamicResource BrushSurface3}" Padding="4,1">
-                <TextBlock x:Name="SearchHint" Text="Ctrl+K" Classes="mono" FontSize="{DynamicResource FontSizeXs}" Foreground="{DynamicResource BrushTextFaint}" />
-              </Border>
-            </Grid>
-          </Button>
-          <TextBox x:Name="SearchBox" Classes="input" IsVisible="False" PlaceholderText="Search conversations" FontSize="{DynamicResource FontSizeSm}" Padding="8,5" />
-        </StackPanel>
-
-        <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Padding="0">
-          <StackPanel x:Name="SidebarTree" Margin="8,0,8,8" Spacing="1" />
-        </ScrollViewer>
-
-        <StackPanel Grid.Row="4" x:Name="SidebarFooter" Margin="12,6,12,10" Spacing="6" />
-      </Grid>
-    </Border>
+    <sidebar:SidebarView x:Name="SidebarPane" Grid.Column="0" />
 
     <!-- ============================== main =============================== -->
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
@@ -182,6 +122,3 @@
     <Border x:Name="GateHost" Grid.ColumnSpan="3" IsVisible="False" Background="{DynamicResource BrushBg}" />
   </Grid>
 </UserControl>
-
-
-

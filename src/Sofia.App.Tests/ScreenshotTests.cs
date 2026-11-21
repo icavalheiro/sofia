@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
+using Sofia.App.Controls;
 using Sofia.App.Services;
 using Sofia.App.Shell;
 using Sofia.App.Theme;
@@ -162,6 +163,151 @@ public class ScreenshotTests
         Assert.True(MotionService.Current.ReducedMotion);
         MotionService.Current.ReducedMotion = false;
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Sidebar_states_render_at_1080p_2k_and_4k()
+    {
+        var sizes = new (string Name, int Width, int Height, double Scale)[]
+        {
+            ("1080p", 1920, 1080, 1.0),
+            ("2k", 2560, 1440, 1.333),
+            ("4k", 3840, 2160, 2.0),
+        };
+        foreach (var state in new[] { "mixed", "empty", "search", "working" })
+        {
+            var window = OpenSidebar(state);
+            foreach (var (name, width, height, scale) in sizes)
+            {
+                var path = Evidence.File($"040-{state}-{name}.png");
+                ScreenshotHarness.Capture(window, path, width, height, scale);
+                Assert.True(new FileInfo(path).Length > 40_000, path);
+            }
+            window.Close();
+        }
+
+        // The two modal surfaces get their own 1080p evidence.
+        var settings = OpenSidebar("settings");
+        ScreenshotHarness.Capture(settings, Evidence.File("040-settings.png"), 1920, 1080, 1);
+        Assert.True(settings.ShellView.Sidebar.IsSettingsMenuOpen);
+        settings.Close();
+
+        var delete = OpenSidebar("delete");
+        ScreenshotHarness.Capture(delete, Evidence.File("040-delete.png"), 1920, 1080, 1);
+        delete.Close();
+    }
+
+    [AvaloniaFact]
+    public void Sidebar_working_border_and_hover_pill_are_stop_motion()
+    {
+        var conversation = OpenSidebar("mixed");
+        var sidebar = conversation.ShellView.Sidebar;
+        var row = sidebar.WorkingRows.First(r => r.Kind == WorkingRowKind.Conversation);
+
+        // Conversation sweep: 1.4s linear, one full turn.
+        foreach (var ms in new[] { 0d, 350, 700, 1050, 1400 })
+        {
+            MotionService.Current.Seek(ms);
+            var path = Evidence.File($"040-motion-conversation-frame-{(int)ms}.png");
+            ScreenshotHarness.Capture(conversation, path, 1920, 1080, 1);
+            Assert.True(File.Exists(path));
+        }
+        MotionService.Current.Seek(350);
+        Assert.InRange(row.SweepAngle, 89, 91);
+        MotionService.Current.Seek(1400);
+        Assert.InRange(row.SweepAngle, 0, 0.01);
+        conversation.Close();
+
+        // Workspace sweep: 1.1s linear, captured on a collapsed working workspace.
+        var workspace = OpenSidebar("working");
+        var workspaceSidebar = workspace.ShellView.Sidebar;
+        var ring = workspaceSidebar.WorkingRows.First(r => r.Kind == WorkingRowKind.Workspace);
+        foreach (var ms in new[] { 0d, 275, 550, 825, 1100 })
+        {
+            MotionService.Current.Seek(ms);
+            var path = Evidence.File($"040-motion-workspace-frame-{(int)ms}.png");
+            ScreenshotHarness.Capture(workspace, path, 1920, 1080, 1);
+            Assert.True(File.Exists(path));
+        }
+        MotionService.Current.Seek(550);
+        Assert.InRange(ring.SweepAngle, 179, 181);
+        workspace.Close();
+
+        // Hover pill: .15s fade, captured at 0 / 75 / 150ms.
+        var hover = OpenSidebar("mixed");
+        var hoverSidebar = hover.ShellView.Sidebar;
+        MotionService.Current.Seek(0);
+        Assert.True(hoverSidebar.HoverConversation("s_2"));
+        var opacities = new List<double>();
+        foreach (var ms in new[] { 0d, 75, 150 })
+        {
+            MotionService.Current.Seek(ms);
+            opacities.Add(hoverSidebar.RevealOpacity("s_2"));
+            var path = Evidence.File($"040-hover-frame-{(int)ms}.png");
+            ScreenshotHarness.Capture(hover, path, 1920, 1080, 1);
+            Assert.True(File.Exists(path));
+        }
+        Assert.Equal(0, opacities[0], 2);
+        Assert.InRange(opacities[1], 0.75, 0.85); // cubic-bezier(.25,.1,.25,1) at 50%
+        Assert.Equal(1, opacities[2], 2);
+        hover.Close();
+    }
+
+    [AvaloniaFact]
+    public void Sidebar_rows_follow_the_web_geometry()
+    {
+        var window = OpenSidebar("mixed");
+        var shell = window.ShellView;
+        shell.Measure(new Size(1920, 1080));
+        shell.Arrange(new Rect(0, 0, 1920, 1080));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(288, shell.Frame.ColumnDefinitions[0].Width.Value);
+        Assert.Equal(288, shell.Sidebar.Bounds.Width);
+        Assert.False(shell.Sidebar.SearchPanel.IsVisible);
+        Assert.Contains(shell.Sidebar.TreeHost.Children, c => c is Border);
+        Assert.NotEmpty(shell.Sidebar.WorkingRows);
+        window.Close();
+    }
+
+    private static MainWindow OpenSidebar(string state)
+    {
+        var window = new MainWindow(fixture: true);
+        window.Show();
+        Dispatcher.UIThread.RunJobs(DispatcherPriority.Loaded);
+        var viewModel = window.ViewModel;
+        switch (state)
+        {
+            case "empty":
+                viewModel.LoadFixture(empty: true);
+                window.ShellView.Attach(viewModel);
+                break;
+            case "search":
+                viewModel.Sidebar.PreviewSearch("working", Fixture.SearchHits());
+                window.ShellView.Attach(viewModel);
+                break;
+            case "settings":
+                window.ShellView.Sidebar.PreviewSettingsMenu("ws_sofia");
+                break;
+            case "delete":
+                window.ShellView.Sidebar.PreviewDelete("ws_sofia");
+                break;
+            case "working":
+                foreach (var workspace in viewModel.Store.Workspaces)
+                {
+                    if ((workspace.Conversations ?? []).Any(c =>
+                            viewModel.SidebarStore.Badges.GetValueOrDefault(c.Id) is "working" or "waiting"))
+                    {
+                        workspace.Expanded = false;
+                    }
+                }
+                viewModel.SidebarStore.Rebuild();
+                window.ShellView.Attach(viewModel);
+                break;
+        }
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
+        return window;
     }
 
     private static MainWindow OpenShell()

@@ -9,7 +9,7 @@ lands (044).
 
 | Project | Target | Owns |
 | --- | --- | --- |
-| `src/Sofia.App` | `net10.0` class library | `App.axaml`, `Theme/`, `Controls/`, `Shell/`, `Services/`, `Assets/`. References `Sofia.Client` + `Sofia.Contracts` only, so the WASM head can use it (no SQLite, Playwright, SoundFlow). |
+| `src/Sofia.App` | `net10.0` class library | `App.axaml`, `Theme/`, `Controls/`, `Features/Sidebar/`, `Shell/`, `Services/`, `Assets/`. References `Sofia.Client` + `Sofia.Contracts` only, so the WASM head can use it (no SQLite, Playwright, SoundFlow). |
 | `src/Sofia.App.Desktop` | `net10.0` `WinExe` | `Program.cs` (flags, font options), `SoundFlowSoundPlayer`, `DesktopBackendResolver` (HTTP → in-process Core). References Core and `Sofia.Client.InProc`. |
 | `src/Sofia.App.Browser` | `net10.0-browser1.0` | WASM boot smoke. Static host, HTTP backend and WebAudio sounds land in 044. |
 | `src/Sofia.App.Tests` | `net10.0` | `Avalonia.Headless.XUnit` + `Avalonia.Skia`: token/motion/control tests and the screenshot + frame harness. |
@@ -27,7 +27,75 @@ The shell follows `App.vue`/`AppSidebar.vue`: brand header (logo, name, gear), t
 secondary **New workspace** actions, the past-session search entry with its `Ctrl+K` badge (the local filter is a
 scaffold placeholder; 040 wires the API-backed results panel), `Workspaces`/`Chats` section labels, and an empty
 sidebar footer like the web. The workspace tree, status badges and conversation rows come from fixture data in
-`--fixture` mode and from `HarnessStore` against a live backend.
+`--fixture` mode and from `HarnessStore` against a live backend. Plan 040 replaces the scaffold rows with
+`Features/Sidebar/` (see below).
+
+## Sidebar (plan 040)
+
+`Features/Sidebar/` is the Vue `AppSidebar.vue` port: `SidebarView.axaml` + code-behind build every row,
+`SidebarViewModel` owns the component-ref state (search query, add form, inline rename, open archive folder, open
+settings menu, pending delete), `SidebarStore` is the slice over `ISofiaBackend` and `WorkspaceRowViewModel` /
+`ConversationRowViewModel` are the row projections. `HarnessStore` stays the event cache (workspace tree, raw
+statuses, models, coalesced deltas); the sidebar listens to its `Applied` event, applies its own rules and raises
+`Changed` for one full rebuild.
+
+Feature map (every row of the inventory is implemented; deferred items are in the deviations table):
+
+| Area | Behaviour |
+| --- | --- |
+| Brand | 40px logo with the `0 0 0 3 rgba(169,116,79,.16)` ring, 17px/650 wordmark, 12px `local harness` tag, 32px gear (opens the settings dialog in 043). |
+| Actions | `New chat` (primary) and `New workspace` (secondary), 2-column grid, click sounds. New workspace opens the folder picker on desktop and keeps the typed-path form as the browser-head fallback. |
+| Quick prompt | Toggle + `Ctrl+K`, 180ms debounce, `GET /api/search` (`includeArchived`/`includeSubagents`, limit 30), highlighted spans, ↑/↓/Enter/Escape, outside click closes. Enter opens the session and stores the scroll target for 041. |
+| Sections | `Workspaces` then `Chats` (split rule + new-group button), expansion persisted through `PATCH /api/workspaces/{id}` (`expanded`). An empty account gets the auto `Quick chats` group. |
+| Workspace row | Caret, status badge **replacing** the icon (18px tinted), name 14px/550, count pill; the count cross-fades into `+`/gear on hover. Collapsed working workspaces get the 1.1s sweep. |
+| Conversation row | Pinned first, then `Order`, then recency (server order); title truncation; subagents nested by depth × 14px and shown only while running/active; status badge 16px; 1.4s sweep while working; hover pill with pin/unpin, archive, delete. |
+| Inline rename | Clicking the already-open conversation swaps the title for a TextBox; Enter/blur commits, Escape cancels, edits persist with the web's 400ms debounce. |
+| Archive folder | `Archived` sub-folder with count, nested rows, restore and delete actions; deleting a conversation or the archived list goes through the `z2100` confirmation modal. |
+| Delete modal | Full-window `rgba(0,0,0,.45)` scrim, `min(400px,100%)` panel, 14px radius, 16px padding, Cancel/Delete, focus on the destructive button. |
+| Reorder | In-window pointer drag (4px threshold, `0 ±2px` primary drop indicator); workspaces only inside their section, conversations only inside their pinned group; optimistic order then `PUT /api/workspaces/order` / `PUT …/sessions/order`. |
+| Workspace settings | 264px in-window menu: live name field (400ms debounce), the **24** `WORKSPACE_ICON_CHOICES` icons, model list from `GET /api/models` (enabled only, current pick kept), worktrees and remove. |
+| Worktrees | `GET/POST/DELETE /api/worktrees`; list with branch tooltip, switch (opens/creates the workspace at that directory), create field, dirty-tree `force` retry, remove also drops the stale workspace. |
+| Shortcuts | `search` Ctrl+K, `workspace.add` Ctrl+O, `session.new` Ctrl+N, `session.archive` Ctrl+Shift+E, `session.prev/next` Alt+↑/↓ and `panel.toggle` Ctrl+\ via `Services/Shortcuts.cs`; click/select sounds follow the web's mapping. |
+
+Geometry (web px at the 16px base):
+
+| Element | Values |
+| --- | --- |
+| Column | 288 normal / 236 compact, `BrushSurface`, right 1px `BrushBorder`. |
+| Brand | padding 16/10.4, 40×40 r12 logo, 12px gap, 17px/650 name, 12px tag, 32×32 r9 gear. |
+| Actions | `12,12,12,8`, 2 columns, 8px gap, 9px radius, 7.2px vertical padding, 13px/550 text. |
+| Search | field `12,0,12,4`; overlay `left/right 12`, `top = field bottom + 4`, r10, surface-2, `0 12 32` shadow, results `max-height: min(50vh,420px)`. |
+| Section label | 11px/600, `.08em`, uppercase, faint; split variant `border-top` + 12px margin. |
+| Workspace row | padding 6.4/8 (compact 3.2), r8, name 14px/550, count 11px on surface-3, actions 22×22. |
+| Conversation rows | container `margin 2 0 4 22`, `padding-left 8`, 1px left border; row padding 5.6/8 (compact 3.2), r8, title 13px, status 16px, actions pill r999 surface-3 `0 1 3 rgba(0,0,0,.25)`, buttons 20×20, trail `right 4`. |
+| Rings | 1.5px conic ring over a primary-soft row; workspace `transparent 0–58% → primary 78% → #fff 90% → detail 96% → transparent`, 1.1s; conversation `transparent → primary 60° → detail 120° → transparent 180°`, 1.4s; both linear/infinite and paused off-screen. Row padding shrinks by the ring width so the ring never changes row height. |
+
+Seams owned by later specs:
+
+- `SidebarStore.OpenSessionRequested` → `ShellView.PendingScrollMessageId` (041 transcript) — search hits and archive
+  rows open through it.
+- `SidebarView.ComposerFocusRequested` (New chat / Ctrl+N → 041 composer), `ShellSettingsRequested` (gear / Ctrl+,
+  → 043 settings), `PanelToggleRequested` (Ctrl+\ → the shell's right panel).
+- `WorkingRowBorder` and `MotionService` stay the only animation owners; the hover reveal is a clock-driven
+  participant (`RowReveal`) so the frame harness can stop-motion it.
+
+Deviations from the web (deliberate):
+
+| Web | App |
+| --- | --- |
+| HTML5 drag-and-drop with OS drag images | In-window pointer drag (same 4px threshold, drop indicator and commit rules); Linux has no OS drag image and the internal reorder does not need one. |
+| Hover trail `.12s` CSS transition | Clock-driven `.15s` fade (motion contract #3); the frame harness seeks 0/75/150ms and the 50% stop is the same cubic-bezier value. |
+| Teleported 400px delete modal and fixed settings menu | Both live on the shell's in-window overlay ladder (`z2100` / `z60`), never as OS popups. |
+| Search snippet `<mark>` | TextBlock runs with a primary-soft `Background` (Avalonia `TextElement.Background`); inline wrapping is identical. |
+| 66 workspace icon keys | 24 keys — the actual `WORKSPACE_ICON_CHOICES` list in `types.ts`; the spec's 66 was a miscount. |
+| All sidebar labels localized | Primary labels reuse `Localization`; the secondary copy (tooltips, "Archived", worktree notes) is English until 043 lands the full key set. |
+| Archived folder "delete all" action | Only single-conversation delete (with the same confirmation); the bulk variant is deferred. |
+| Virtualised long lists (risk noted in 040) | One measured pass per rebuild; rows are constant height, so a `VirtualizingStackPanel` can slot in without moving geometry. Not needed for the current tree sizes. |
+
+Evidence (all in `.specs/spec_assets/`): `040-web-1080p/2k/4k.png` (Vue reference captured with Playwright because the
+harness browser could not launch), `040-mixed|empty|search-1080p/2k/4k.png`, `040-settings.png`, `040-delete.png`,
+`040-motion-conversation-frame-*.png` (1.4s), `040-motion-workspace-frame-*.png` (1.1s) and
+`040-hover-frame-0/75/150.png`.
 
 ## Theme and tokens
 

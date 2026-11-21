@@ -1,4 +1,5 @@
 using Sofia.Contracts.Domain;
+using Sofia.App.Features.Sidebar;
 
 namespace Sofia.App.Shell;
 
@@ -69,6 +70,35 @@ public static class Fixture
         ["s_5"] = "permission",
         ["s_7"] = "question",
     };
+
+    /// <summary>Fixed quick-prompt hits for the search overlay screenshots (the real rows come from <c>/api/search</c>).</summary>
+    public static List<SearchHitRow> SearchHits() =>
+    [
+        new()
+        {
+            Key = "s_3:msg_1",
+            SessionId = "s_3",
+            Title = "Working border motion parity",
+            Snippet = "the conic sweep must advance at the same angular speed as the web",
+            Highlights = [(21, 6)],
+        },
+        new()
+        {
+            Key = "s_1:msg_2",
+            SessionId = "s_1",
+            Title = "Avalonia shell scaffold",
+            Snippet = "sidebar rows, working border and the shared motion clock",
+            Highlights = [(0, 7), (35, 6)],
+        },
+        new()
+        {
+            Key = "s_2:msg_3",
+            SessionId = "s_2",
+            Title = "Design tokens + Lucide icon port",
+            Snippet = "every duration comes from Motion.axaml, never a literal",
+            Highlights = [(17, 8)],
+        },
+    ];
 
     private static Session Session(string id, string workspaceId, string title, int minutes, bool pinned = false) => new()
     {

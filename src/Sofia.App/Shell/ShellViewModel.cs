@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Sofia.App.Features.Sidebar;
 using Sofia.Client;
 using Sofia.Contracts.Domain;
 using Sofia.App.Services;
@@ -24,13 +25,31 @@ public sealed class ShellViewModel : ObservableObject
     public ShellViewModel(bool fixture = false)
     {
         IsFixture = fixture;
+        SidebarStore = new SidebarStore(Store);
+        Sidebar = new SidebarViewModel(SidebarStore);
+        SidebarStore.Changed += SyncFromSidebar;
+        SidebarStore.OpenSessionRequested += request =>
+        {
+            ActiveSessionId = request.SessionId;
+            ActiveWorkspaceId = SidebarStore.ActiveWorkspaceId;
+            Status = StatusFor(request.SessionId);
+            OpenSessionRequested?.Invoke(request);
+        };
         if (fixture) LoadFixture();
         Localization.Changed += () => OnPropertyChanged(nameof(Language));
     }
 
+    /// <summary>Raised when a sidebar row opens a conversation (the transcript scroll seam belongs to 041).</summary>
+    public event Action<SessionOpenRequest>? OpenSessionRequested;
+
     public BackendConnection Connection { get; } = new();
 
     public HarnessStore Store { get; } = new();
+
+    /// <summary>The sidebar slice: workspace tree, statuses, ordering and every mutation the sidebar performs.</summary>
+    public SidebarStore SidebarStore { get; }
+
+    public SidebarViewModel Sidebar { get; }
 
     public ThemeService Theme => ThemeService.Current;
 
@@ -94,25 +113,22 @@ public sealed class ShellViewModel : ObservableObject
     }
 
     public string ActiveSessionTitle =>
-        Workspaces.SelectMany(w => w.Conversations ?? [])
+        Store.Workspaces.SelectMany(w => w.Conversations ?? [])
             .FirstOrDefault(s => s.Id == ActiveSessionId)?.Title ?? "Sofia";
 
     public string ActiveWorkspaceName =>
-        Workspaces.FirstOrDefault(w => w.Id == ActiveWorkspaceId)?.Name ?? "";
+        Store.Workspaces.FirstOrDefault(w => w.Id == ActiveWorkspaceId)?.Name ?? "";
 
     public string ActiveWorkspacePath =>
-        Workspaces.FirstOrDefault(w => w.Id == ActiveWorkspaceId)?.Path ?? "";
+        Store.Workspaces.FirstOrDefault(w => w.Id == ActiveWorkspaceId)?.Path ?? "";
 
     /// <summary>Context window usage of the active session, 0..1 (the composer meter).</summary>
     public double ContextFill { get; private set; } = 0.42;
 
-    public void LoadFixture()
+    public void LoadFixture(bool empty = false)
     {
-        Workspaces.Clear();
-        foreach (var workspace in Fixture.Workspaces()) Workspaces.Add(workspace);
-        Statuses.Clear();
-        foreach (var (id, status) in Fixture.Statuses()) Statuses[id] = status;
-        Status = Statuses.GetValueOrDefault(ActiveSessionId, "idle");
+        SidebarStore.Seed(empty ? [] : Fixture.Workspaces(), empty ? new Dictionary<string, string>() : Fixture.Statuses());
+        SyncFromSidebar();
         ContextFill = 0.42;
         OnPropertyChanged(nameof(ContextFill));
     }
@@ -120,20 +136,34 @@ public sealed class ShellViewModel : ObservableObject
     /// <summary>Loads the live workspace tree once a backend is ready.</summary>
     public async Task LoadAsync(ISofiaBackend backend, CancellationToken ct = default)
     {
-        await Store.LoadAsync(backend, ct);
-        Workspaces.Clear();
-        foreach (var workspace in Store.Workspaces) Workspaces.Add(workspace);
-        Statuses.Clear();
-        foreach (var (id, status) in Store.Statuses) Statuses[id] = status;
+        await SidebarStore.LoadAsync(backend, ct);
+        ActiveSessionId = SidebarStore.ActiveSessionId;
+        ActiveWorkspaceId = SidebarStore.ActiveWorkspaceId;
+        SyncFromSidebar();
+    }
 
-        if (Workspaces.FirstOrDefault() is { } first)
+    /// <summary>Mirrors the sidebar slice into the shell header state after every change.</summary>
+    private void SyncFromSidebar()
+    {
+        Workspaces.Clear();
+        foreach (var workspace in SidebarStore.Workspaces) Workspaces.Add(workspace.Workspace);
+        Statuses.Clear();
+        foreach (var (id, status) in SidebarStore.Badges) Statuses[id] = status;
+        if (SidebarStore.ActiveSessionId.Length > 0)
         {
-            ActiveWorkspaceId = first.Id;
-            ActiveSessionId = first.Conversations?.FirstOrDefault()?.Id ?? "";
+            ActiveSessionId = SidebarStore.ActiveSessionId;
+            ActiveWorkspaceId = SidebarStore.ActiveWorkspaceId;
         }
-        Status = Statuses.GetValueOrDefault(ActiveSessionId, "idle");
+        Status = StatusFor(ActiveSessionId);
         OnPropertyChanged(nameof(ActiveSessionTitle));
         OnPropertyChanged(nameof(ActiveWorkspaceName));
         OnPropertyChanged(nameof(ActiveWorkspacePath));
+    }
+
+    private string StatusFor(string sessionId)
+    {
+        if (SidebarStore.Badges.TryGetValue(sessionId, out var badge)) return badge == "done" ? "idle" : badge;
+        var session = Store.Workspaces.SelectMany(w => w.Conversations ?? []).FirstOrDefault(s => s.Id == sessionId);
+        return session?.Status ?? "idle";
     }
 }

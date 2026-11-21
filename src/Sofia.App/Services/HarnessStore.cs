@@ -193,6 +193,9 @@ public sealed class HarnessStore : ObservableObject
     /// <summary>Raised when coalesced deltas are flushed (transcript appends the text).</summary>
     public event Action<string, string>? DeltaFlushed;
 
+    /// <summary>Raised after one domain event has been applied to the cache (the sidebar slice listens for it).</summary>
+    public event Action<SofiaEventDto>? Applied;
+
     public async Task LoadAsync(ISofiaBackend backend, CancellationToken ct = default)
     {
         var workspaces = await backend.ListWorkspacesAsync(ct);
@@ -281,6 +284,7 @@ public sealed class HarnessStore : ObservableObject
                 break;
             }
         }
+        Applied?.Invoke(evt);
     }
 
     /// <summary>Emits and clears the coalesced text of every streaming message.</summary>
@@ -314,7 +318,17 @@ public sealed class HarnessStore : ObservableObject
         for (var i = 0; i < Workspaces.Count; i++)
         {
             if (Workspaces[i].Id != workspace.Id) continue;
-            Workspaces[i] = workspace;
+            // workspace.updated carries no conversations (the event is small); merge the scalar fields into the
+            // cached tree instead of dropping the rows the sidebar is rendering.
+            var existing = Workspaces[i];
+            existing.Name = workspace.Name;
+            existing.Path = workspace.Path;
+            existing.Kind = workspace.Kind;
+            existing.Icon = workspace.Icon;
+            existing.ModelId = workspace.ModelId;
+            existing.Expanded = workspace.Expanded;
+            existing.Order = workspace.Order;
+            if (workspace.Conversations is not null) existing.Conversations = workspace.Conversations;
             return;
         }
         Workspaces.Add(workspace);

@@ -126,6 +126,24 @@
     <Setter Property="Opacity" Value="1" />
   </Style>
 
+  <!-- Sidebar row reveal (motion #3): the hover action pill, the count pill and the pin marker start hidden and are
+       faded by the row's clock-driven reveal (SidebarView.RowReveal), so the frame harness can capture 0/75/150ms. -->
+  <Style Selector="Grid.conv-trail">
+    <Setter Property="Opacity" Value="0" />
+  </Style>
+  <Style Selector="Border.conv-actions">
+    <Setter Property="Opacity" Value="0" />
+  </Style>
+  <Style Selector="StackPanel.ws-actions">
+    <Setter Property="Opacity" Value="0" />
+  </Style>
+  <Style Selector="Border.sidebar-row.archived">
+    <Setter Property="Opacity" Value="0.72" />
+  </Style>
+  <Style Selector="Border.sidebar-row.archived:pointerover">
+    <Setter Property="Opacity" Value="1" />
+  </Style>
+
   <!-- Hairline separators (1px, border at 55% like the web's color-mix). -->
   <Style Selector="Border.hairline">
     <Setter Property="Height" Value="1" />

@@ -64,6 +64,12 @@ public sealed class ScreenshotRequest
 
     public bool ReducedMotion { get; set; }
 
+    /// <summary>Sidebar state for the 040 evidence: <c>mixed</c> (default), <c>empty</c>, <c>working</c> or <c>search</c>.</summary>
+    public string SidebarState { get; set; } = "mixed";
+
+    /// <summary>Conversation row whose hover pill is revealed before the frames (040 motion #3).</summary>
+    public string? HoverSession { get; set; }
+
     /// <summary>All three logical sizes in one run; individual width/height/scale override it.</summary>
     public bool AllSizes { get; set; }
 
@@ -114,6 +120,12 @@ public sealed class ScreenshotRequest
                 case "--reduced-motion":
                     request.ReducedMotion = true;
                     break;
+                case "--sidebar-state":
+                    request.SidebarState = Next() ?? request.SidebarState;
+                    break;
+                case "--hover-row":
+                    request.HoverSession = Next();
+                    break;
                 case "--all-sizes":
                     request.AllSizes = true;
                     break;
@@ -132,6 +144,9 @@ public static class ScreenshotHarness
 {
     /// <summary>Called before every capture; the headless tests force a render timer tick here.</summary>
     public static Action? FrameHook { get; set; }
+
+    /// <summary>Called once after the manual clock is reset to 0, before the first frame of a batch (starts a reveal).</summary>
+    public static Action? FrameBegin { get; set; }
 
     /// <summary>Applies appearance overrides so one run can capture accent/font variations.</summary>
     public static void Apply(ScreenshotRequest request)
@@ -216,6 +231,7 @@ public static class ScreenshotHarness
                 : Path.Combine(request.OutputDirectory, $"{baseName}-{name}.png");
             MotionService.Current.EnableManualClock();
             MotionService.Current.Seek(0);
+            FrameBegin?.Invoke();
             Capture(top, file, width, height, scale);
             written.Add(file);
 
