@@ -30,6 +30,15 @@ public sealed class HeadOptions
     /// </summary>
     public bool HostActions { get; set; } = true;
 
+    /// <summary>
+    /// Reduced-motion preference when the platform cannot be asked directly (the browser reads
+    /// <c>matchMedia('(prefers-reduced-motion: reduce)')</c> before starting Avalonia). Null means the OS detector runs.
+    /// </summary>
+    public bool? ReducedMotionOverride { get; set; }
+
+    /// <summary>Server URL the connect gate starts with when the head knows one (browser: the page origin).</summary>
+    public string? DefaultServerUrl { get; set; }
+
     /// <summary>Screenshot/frame harness request parsed from the command line, or null for a normal run.</summary>
     public ScreenshotRequest? Screenshot { get; set; }
 }

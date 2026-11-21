@@ -11,7 +11,7 @@ lands (044).
 | --- | --- | --- |
 | `src/Sofia.App` | `net10.0` class library | `App.axaml`, `Theme/`, `Controls/`, `Features/Sidebar/`, `Features/Transcript/`, `Features/Composer/`, `Features/Header/`, `Features/Settings/`, `Features/Panels/`, `Localization/`, `Shell/`, `Services/`, `Assets/`. References `Sofia.Client` + `Sofia.Contracts` only, so the WASM head can use it (no SQLite, Playwright, SoundFlow). |
 | `src/Sofia.App.Desktop` | `net10.0` `WinExe` | `Program.cs` (flags, font options), `SoundFlowSoundPlayer`, `DesktopBackendResolver` (HTTP → in-process Core). References Core and `Sofia.Client.InProc`. |
-| `src/Sofia.App.Browser` | `net10.0-browser1.0` | WASM boot smoke. Static host, HTTP backend and WebAudio sounds land in 044. |
+| `src/Sofia.App.Browser` | `net10.0-browser1.0` | WASM head: `Program.cs` (browser startup + rendering-mode fallback), `Interop/` (`BrowserInterop` `[JSImport]`s, `localStorage` state, WebAudio player), `BrowserBackendResolver`, `wwwroot/index.html` + `main.js`. Publishes `<out>/wwwroot` for `Sofia.Server` (see "Browser (WASM) head"). |
 | `src/Sofia.App.Tests` | `net10.0` | `Avalonia.Headless.XUnit` + `Avalonia.Skia`: token/motion/control tests and the screenshot + frame harness. |
 
 Run the app (fixture data, no server):
@@ -447,6 +447,44 @@ dotnet test src/Sofia.App.Tests
 sequence, `039-panel-frame-*.png` the right-panel opening, and `039-app-accent-beige-font-lg.png` /
 `039-app-compact-font-sm.png` the appearance switches. Specs 040–043 reuse the same harness for their parity
 evidence.
+
+## Browser (WASM) head (plan 044)
+
+`src/Sofia.App.Browser` renders the same `Sofia.App` in a browser over `HttpSofiaBackend` (REST + SignalR against the
+server that served the bundle). `Sofia.Server` serves the published `wwwroot`, and `/api`, `/hubs` and the SPA
+fallback keep working behind `AccessMiddleware`.
+
+```bash
+# Build the servable UI (needs the wasm-tools workload: dotnet workload install wasm-tools)
+dotnet publish src/Sofia.App.Browser -c Release -r browser-wasm -o out/browser   # -> out/browser/wwwroot
+# Serve it (the server also finds bin/Release/.../browser-wasm/AppBundle of this checkout during dotnet run)
+Sofia__UiPath=out/browser/wwwroot dotnet run --project src/Sofia.Server
+```
+
+What the head installs:
+
+| Concern | Implementation |
+| --- | --- |
+| Startup | `StartBrowserAppAsync("out", RenderingMode = [WebGL2, WebGL1, Software2D])`; `index.html` mounts `#out`, `main.js` registers the `sofia` module and runs the entry point. Never assumes a GPU: headless Chrome without WebGL falls back to Software2D. |
+| Transport | `BrowserBackendResolver` probes the page origin first, then the connection stored under `sofia.connection` in `localStorage`; `HttpSofiaBackend` sends the paired `access_token` on REST and SignalR negotiate/WebSocket. |
+| Pairing | A non-loopback page gets `401` on `/api/workspaces`; the resolver raises `PairingRequiredException`, the gate shows the pairing section, `POST /api/pair/connect` redeems the code, the token is persisted and the resolver re-runs. |
+| Local state | `BrowserLocalStateStorage` keeps the desktop `state.json` document under one `localStorage` key (`sofia.localState.v1`): drafts, delivery mode, chips, panel/task flags, shortcuts, language and the connection survive a reload. |
+| Sounds | The six pre-rendered WAVs are played with WebAudio (`AudioContext` + `GainNode`) at the gain `SoundService` computed with the web's `(volume/100)^1.6*0.9` curve. |
+| Reduced motion | `matchMedia('(prefers-reduced-motion: reduce)')` is read before Avalonia starts (`HeadOptions.ReducedMotionOverride`) and a `change` listener calls `BrowserInterop.OnReducedMotionChanged` (`[JSExport]`) into `MotionService.ReducedMotion`. |
+| Host-only actions | `HeadOptions.HostActions = false`: the right panel hides open-folder/VS Code/terminal, and the sidebar skips the folder picker (a workspace is a typed server path). |
+| Files and clipboard | Avalonia's browser platform already implements `TopLevel.StorageProvider` and `Clipboard`, so attachments, export downloads and copy actions keep using the shared code (no extra interop). |
+| Fonts | `Avalonia.Fonts.Inter` is embedded and becomes the default family; the desktop keeps the platform stack (Segoe UI / SF Pro / Cantarell). Glyph shapes differ, metrics keep the 288/1232/300 geometry. |
+
+Build notes (hard-won, keep them):
+
+- `Sofia.App`, `Sofia.Client` and `Sofia.Contracts` are rooted whole (`TrimmerRootAssembly`); the shared UI binds and
+  serializes by reflection and full trimming otherwise drops members it looks up by name.
+- `Json.Create()` assigns an explicit `DefaultJsonTypeInfoResolver`; the WASM SDK bakes the reflection default off.
+  Do **not** turn the switch on with `RuntimeHostConfigurationOption`/`Trim=true`: it breaks the compiled-XAML
+  generic vtable (`XamlIlContext.Context<T>`) in the Mono interpreter.
+- The servable tree is generated into `<publish>/wwwroot` (`WasmAppDir` follows `PublishDir`); the publish folder is
+  **not** a web root on its own (framework files land flattened next to intermediate assemblies).
+- First load is ~25 MB (framework + SkiaSharp + HarfBuzz + ICU): multi-MB, like any CanvasKit/.NET WASM app.
 
 ## Deviations from the web (documented, deliberate)
 

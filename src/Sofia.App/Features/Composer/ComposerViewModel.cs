@@ -56,7 +56,7 @@ public sealed class ComposerViewModel : ObservableObject
     ];
 
     private const string DefaultAgentId = "build";
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = Sofia.Contracts.Infrastructure.Json.Create();
 
     private readonly HarnessStore? _store;
     private readonly ComposerDraftStore _drafts;
@@ -1016,7 +1016,7 @@ public sealed class ComposerViewModel : ObservableObject
             _models.Add(new ComposerModel(
                 id,
                 Str(model, "label") ?? id,
-                string.Join(" · ", parts),
+                string.Join(" Â· ", parts),
                 Str(model, "providerIcon") ?? "cpu",
                 local ? "local" : null));
         }

@@ -5,39 +5,132 @@ using Sofia.Contracts.Infrastructure;
 namespace Sofia.App.Services;
 
 /// <summary>
+/// Where <see cref="LocalState"/> keeps its JSON blob. The desktop head writes an app-data file; the browser head
+/// (spec 044) stores the very same document under one <c>localStorage</c> key. Implementations must never throw into
+/// the UI: local state is a nicety.
+/// </summary>
+public interface ILocalStateStorage
+{
+    /// <summary>Returns the stored document, or null when there is none (or it cannot be read).</summary>
+    string? Read();
+
+    /// <summary>Replaces the stored document.</summary>
+    void Write(string json);
+}
+
+/// <summary>
+/// Atomic app-data file storage (temp file + move). A corrupt document is renamed to
+/// <c>state.corrupt-&lt;timestamp&gt;.json</c> and reported through <see cref="LocalState.RecoveredFromCorruption"/>.
+/// </summary>
+public sealed class FileLocalStateStorage : ILocalStateStorage
+{
+    public FileLocalStateStorage(string path) => FilePath = path;
+
+    public string FilePath { get; }
+
+    public string? Read()
+    {
+        try
+        {
+            if (!File.Exists(FilePath)) return null;
+            return File.ReadAllText(FilePath);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public void Write(string json)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(FilePath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+            var temp = FilePath + ".tmp";
+            File.WriteAllText(temp, json);
+            File.Move(temp, FilePath, overwrite: true);
+        }
+        catch
+        {
+            // State is a nicety: a read-only or locked file must never break the UI.
+        }
+    }
+
+    /// <summary>Moves an unparseable document aside so the next start begins empty.</summary>
+    public void Quarantine()
+    {
+        try
+        {
+            var backup = Path.Combine(
+                Path.GetDirectoryName(FilePath) ?? ".",
+                $"state.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
+            if (File.Exists(FilePath)) File.Move(FilePath, backup, overwrite: true);
+        }
+        catch
+        {
+            // Nothing else to do: the in-memory state is already empty.
+        }
+    }
+}
+
+/// <summary>
 /// Local UI state that the web keeps in <c>localStorage</c>: connection, per-conversation drafts, delivery mode, chip
 /// choices, panel and task-panel flags/positions and shortcut overrides. The keys keep the web's exact names
-/// (<c>sofia.rightPanel.openBySession</c>, …) so the two UIs stay interchangeable while both exist, and so the browser
-/// head can swap this file for <c>localStorage</c> in spec 044 without touching call sites.
+/// (<c>sofia.rightPanel.openBySession</c>, …) so the desktop file and the browser's <c>localStorage</c> entry stay
+/// interchangeable.
 /// </summary>
 /// <remarks>
-/// Writes are debounced and atomic (temp file + move). A corrupt file is renamed to
-/// <c>state.corrupt-&lt;timestamp&gt;.json</c> and the store starts empty instead of blocking startup.
+/// Writes are debounced (250 ms) and handed to the head's <see cref="ILocalStateStorage"/>. The desktop default is an
+/// atomic JSON file; the browser head installs a <c>localStorage</c> store before the Avalonia app starts.
 /// </remarks>
 public sealed class LocalState
 {
     private static readonly TimeSpan FlushDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly Dictionary<string, JsonElement> _values = new(StringComparer.Ordinal);
+    private ILocalStateStorage _storage;
     private DispatcherTimer? _flushTimer;
+    private static LocalState? _current;
 
     public LocalState(string? path = null)
+        : this(new FileLocalStateStorage(path ?? Path.Combine(DefaultDirectory, "state.json")))
     {
-        FilePath = path ?? Path.Combine(DefaultDirectory, "state.json");
+    }
+
+    public LocalState(ILocalStateStorage storage)
+    {
+        _storage = storage;
         Load();
     }
 
-    public static LocalState Current { get; } = new();
+    /// <summary>
+    /// Replaces the default file storage (the browser head points this at <c>localStorage</c>). Must be set before the
+    /// first access to <see cref="Current"/>, or call <see cref="UseStorage"/> on the live instance.
+    /// </summary>
+    public static Func<ILocalStateStorage>? StorageFactory { get; set; }
+
+    /// <summary>The process-wide instance, created on first use with <see cref="StorageFactory"/> or the app-data file.</summary>
+    public static LocalState Current => _current ??= new LocalState(StorageFactory?.Invoke()
+        ?? new FileLocalStateStorage(Path.Combine(DefaultDirectory, "state.json")));
 
     public static string DefaultDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Sofia");
 
-    public string FilePath { get; }
+    /// <summary>File backing the desktop store, or an empty string when the head keeps state elsewhere.</summary>
+    public string FilePath => (_storage as FileLocalStateStorage)?.FilePath ?? "";
 
-    /// <summary>True when the previous file could not be parsed and was moved aside.</summary>
+    /// <summary>True when the previous document could not be parsed and was moved aside.</summary>
     public bool RecoveredFromCorruption { get; private set; }
 
     public IReadOnlyDictionary<string, JsonElement> Values => _values;
+
+    /// <summary>Swaps the backing store and reloads the in-memory document from it (used by the browser head).</summary>
+    public void UseStorage(ILocalStateStorage storage)
+    {
+        _storage = storage;
+        Load();
+    }
 
     // --- the keys the shell consumes (the web's localStorage names) ---------------------------------------
 
@@ -110,28 +203,16 @@ public sealed class LocalState
     {
         _flushTimer?.Stop();
         _flushTimer = null;
-        try
-        {
-            var directory = Path.GetDirectoryName(FilePath);
-            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-            var temp = FilePath + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(_values, Json.Options));
-            File.Move(temp, FilePath, overwrite: true);
-        }
-        catch
-        {
-            // State is a nicety: a read-only or locked file must never break the UI.
-        }
+        _storage.Write(JsonSerializer.Serialize(_values, Json.Options));
     }
 
     public void Load()
     {
         _values.Clear();
-        if (!File.Exists(FilePath)) return;
+        var text = _storage.Read();
+        if (string.IsNullOrWhiteSpace(text)) return;
         try
         {
-            var text = File.ReadAllText(FilePath);
-            if (string.IsNullOrWhiteSpace(text)) return;
             var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(text, Json.Options);
             if (parsed is null) return;
             foreach (var (key, value) in parsed) _values[key] = value;
@@ -139,17 +220,7 @@ public sealed class LocalState
         catch
         {
             RecoveredFromCorruption = true;
-            try
-            {
-                var backup = Path.Combine(
-                    Path.GetDirectoryName(FilePath) ?? ".",
-                    $"state.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
-                File.Move(FilePath, backup, overwrite: true);
-            }
-            catch
-            {
-                // Nothing else to do: the in-memory state is already empty.
-            }
+            (_storage as FileLocalStateStorage)?.Quarantine();
             _values.Clear();
         }
     }

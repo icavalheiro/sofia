@@ -22,12 +22,21 @@ var options = builder.Configuration.GetSection("Sofia").Get<SofiaOptions>() ?? n
 if (string.IsNullOrWhiteSpace(options.DataDir)) options.DataDir = SofiaOptions.DefaultDataDir();
 if (string.IsNullOrWhiteSpace(options.UiPath))
 {
-    var candidates = new[]
+    // UI hosts, in order: the published bundle (next to the executable or the content root), the Avalonia browser
+    // publish output of this checkout (so `dotnet run` serves the native UI without a copy step), then — until the
+    // cutover step of spec 044 — the Vue dist.
+    var browserBundle = new[]
     {
+        Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "Sofia.App.Browser", "bin", "Release", "net10.0-browser1.0", "browser-wasm", "AppBundle")),
+        Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "Sofia.App.Browser", "bin", "Debug", "net10.0-browser1.0", "browser-wasm", "AppBundle")),
+    };
+    string[] candidates =
+    [
         Path.Combine(AppContext.BaseDirectory, "wwwroot"),
         Path.Combine(builder.Environment.ContentRootPath, "wwwroot"),
+        .. browserBundle,
         Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "Sofia.UI", "dist")),
-    };
+    ];
     options.UiPath = candidates.FirstOrDefault(p => File.Exists(Path.Combine(p, "index.html"))) ?? "";
 }
 options.EnsureDirectories();
@@ -75,7 +84,13 @@ if (options.UiPath.Length > 0)
 {
     var files = new PhysicalFileProvider(options.UiPath);
     app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = files });
-    app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
+    // The .NET WASM runtime is served from _framework/: .wasm needs the MIME type the streaming instantiation expects.
+    var contentTypes = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+    contentTypes.Mappings[".wasm"] = "application/wasm";
+    contentTypes.Mappings[".dat"] = "application/octet-stream";
+    contentTypes.Mappings[".webcil"] = "application/octet-stream";
+    contentTypes.Mappings[".symbols"] = "application/octet-stream";
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = files, ContentTypeProvider = contentTypes });
 }
 
 app.MapSessionApi();

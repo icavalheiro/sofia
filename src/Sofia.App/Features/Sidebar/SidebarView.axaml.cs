@@ -280,8 +280,10 @@ public partial class SidebarView : UserControl
     private async Task PickFolderAsync()
     {
         if (_vm is null) return;
+        // Host-only action: the browser head types the server path instead (spec 044).
+        if (!HeadOptions.Current.HostActions) return;
         var top = TopLevel.GetTopLevel(this);
-        if (top?.StorageProvider is not { CanPickFolder: true } storage) return; // browser head: typed path
+        if (top?.StorageProvider is not { CanPickFolder: true } storage) return; // no picker: typed path
         var folders = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
             Title = "Add a workspace folder",

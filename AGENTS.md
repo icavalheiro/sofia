@@ -70,18 +70,22 @@ single-click installer remains future work.
 - Native UI: `src/Sofia.App` (Avalonia 12.1.6, `net10.0`, AXAML, CompiledBindings):
   `Theme/` (tokens, type scale, Lucide `Icons.axaml`, motion timings, control themes),
   `Controls/` (SofiaIcon, CoffeeSpinner, WorkingRowBorder, CollapsiblePanel, SofiaPopover,
-  ToggleSwitch, SofiaMeter), `Shell/` (MainWindow, ShellView, BackendGate), `Services/`
+  ToggleSwitch, SofiaMeter), `Shell/` (MainWindow, ShellHost, ShellView, BackendGate), `Services/`
   (ThemeService, MotionService, SoundService, LocalState, HarnessStore, ScreenshotHarness)
   and `Assets/` (logos, wallpaper tile, six pre-rendered WAVs). Heads:
   `src/Sofia.App.Desktop` (Avalonia.Desktop + SoundFlow + backend resolver) and
-  `src/Sofia.App.Browser` (`net10.0-browser1.0` boot smoke, completed in 044). Keep the
-  shared project free of Core/SQLite/SoundFlow; tests are headless (`Sofia.App.Tests`).
+  `src/Sofia.App.Browser` (`net10.0-browser1.0` WASM head: `BrowserInterop` + `localStorage` state +
+  WebAudio + page-origin/pairing resolver; publishes a `wwwroot` `Sofia.Server` can serve — see
+  `docs/app_ui.md`). Keep the shared project free of Core/SQLite/SoundFlow; tests are headless (`Sofia.App.Tests`).
 - UI: Vue 3.5 + Vite + TypeScript, Mantine Vue (`@mantine-vue/core`),
   `@microsoft/signalr`. Backend client in `src/Sofia.UI/src/services/sofia.ts`,
   shared shapes in `src/Sofia.UI/src/types.ts`, store in
   `src/Sofia.UI/src/composables/useHarness.ts`, connect panel in
   `src/Sofia.UI/src/components/BackendGate.vue`. Vite proxies `/api` and
   `/hubs` to the server (`SOFIA_SERVER_URL` overrides the target).
+- Plan 044 status: `Sofia.App.Browser` builds, is served by `Sofia.Server` at `/` and pairs a remote
+  browser (evidence in the spec); the Vue cutover (delete `src/Sofia.UI`, drop npm from CI, Docker,
+  release and dependabot) stays blocked on the full feature-map + animation parity gate.
 - Grey canvas, brown accent (`#a9744f`), beige detail on reasoning blocks.
   Theme: `src/Sofia.UI/src/styles/theme.ts` + `src/Sofia.UI/src/styles/global.css`.
 - Vue Vapor is **not enabled** (Mantine Vue is virtual-DOM, Vapor still RC).
@@ -95,7 +99,8 @@ single-click installer remains future work.
 ```bash
 dotnet build Sofia.slnx
 dotnet test Sofia.slnx
-dotnet run --project src/Sofia.Server     # http://127.0.0.1:5199, serves src/Sofia.UI/dist when built
+dotnet run --project src/Sofia.Server     # http://127.0.0.1:5199, serves the Avalonia browser bundle when built, else src/Sofia.UI/dist
+dotnet publish src/Sofia.App.Browser -c Release -r browser-wasm -o out/browser   # -> out/browser/wwwroot (needs wasm-tools)
 dotnet run --project src/Sofia.App.Desktop -- --fixture   # native shell with deterministic fixture data
 dotnet run --project src/Sofia.App.Desktop -- --fixture --screenshot 039 --all-sizes --out-dir .specs/spec_assets
 dotnet test src/Sofia.App.Tests           # headless token/control/motion/screenshot gate

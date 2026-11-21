@@ -13,12 +13,14 @@ public enum BackendPhase
     Idle,
     Probing,
     Ready,
+    /// <summary>A server answered but wants a paired token: the gate shows the pairing section.</summary>
+    Pairing,
     Failed,
 }
 
 /// <summary>
-/// Platform-specific backend discovery. The desktop head resolves it as: data-directory lock available → in-process
-/// Sofia.Core; else a server answering on <c>127.0.0.1:5199</c> → HTTP; else nothing (the gate stays visible). The
+/// Platform-specific backend discovery. The desktop head resolves it as: data-directory lock available â†’ in-process
+/// Sofia.Core; else a server answering on <c>127.0.0.1:5199</c> â†’ HTTP; else nothing (the gate stays visible). The
 /// browser head always resolves HTTP (spec 044).
 /// </summary>
 public interface IBackendResolver
@@ -30,15 +32,27 @@ public interface IBackendResolver
 }
 
 /// <summary>
+/// A server answered but requires a paired token (a non-loopback client without one). The resolver hands the gate an
+/// unauthenticated backend for the same URL so <c>PairAsync</c> can redeem the code, plus the URL to display.
+/// </summary>
+public sealed class PairingRequiredException(string serverUrl, ISofiaBackend pairingBackend, string message) : Exception(message)
+{
+    public string ServerUrl { get; } = serverUrl;
+
+    /// <summary>Backend without a token: only <c>POST /api/pair/connect</c> works through it.</summary>
+    public ISofiaBackend PairingBackend { get; } = pairingBackend;
+}
+
+/// <summary>
 /// Connection state behind <c>BackendGate</c>: probe phase, the resolved backend, the probe log and the pairing call.
-/// Nothing here touches the network itself — the head's <see cref="IBackendResolver"/> does.
+/// Nothing here touches the network itself â€” the head's <see cref="IBackendResolver"/> does.
 /// </summary>
 public sealed class BackendConnection : ObservableObject
 {
     private BackendPhase _phase = BackendPhase.Idle;
     private ISofiaBackend? _backend;
     private string? _lastError;
-    private string _serverUrl = "http://127.0.0.1:5199";
+    private string _serverUrl = HeadOptions.Current.DefaultServerUrl ?? "http://127.0.0.1:5199";
     private string? _accessToken;
 
     public BackendPhase Phase
@@ -100,6 +114,15 @@ public sealed class BackendConnection : ObservableObject
         {
             Phase = BackendPhase.Idle;
         }
+        catch (PairingRequiredException ex)
+        {
+            // The server is there but the browser/remote client has no paired token yet.
+            Backend = ex.PairingBackend;
+            ServerUrl = ex.ServerUrl;
+            Phase = BackendPhase.Pairing;
+            LastError = ex.Message;
+            Append("pairing required");
+        }
         catch (Exception ex)
         {
             Phase = BackendPhase.Failed;
@@ -121,7 +144,7 @@ public sealed class BackendConnection : ObservableObject
     public async Task<bool> PairAsync(string code, CancellationToken ct = default)
     {
         if (Backend is null) return false;
-        Append("pairing…");
+        Append("pairingâ€¦");
         var token = await Backend.PairAsync(code, ct);
         if (string.IsNullOrEmpty(token))
         {
@@ -129,10 +152,17 @@ public sealed class BackendConnection : ObservableObject
             return false;
         }
         AccessToken = token;
-        LocalState.Current.Set(LocalState.ConnectionKey, new { ServerUrl, AccessToken = token });
+        PersistConnection();
         Append("paired");
         return true;
     }
+
+    /// <summary>
+    /// Stores the server URL and token the gate is showing (<c>sofia.connection</c>). The browser resolver reads it on
+    /// the next probe, so a manual token or a pairing code survives a reload.
+    /// </summary>
+    public void PersistConnection() =>
+        LocalState.Current.Set(LocalState.ConnectionKey, new { ServerUrl, AccessToken });
 
     private void Append(string line)
     {
@@ -150,7 +180,7 @@ public sealed class BackendConnection : ObservableObject
 /// </summary>
 public sealed class HarnessStore : ObservableObject
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = Sofia.Contracts.Infrastructure.Json.Create();
 
     private readonly Dictionary<(string MessageId, string Field), string> _pendingDeltas = new();
     private readonly DispatcherTimer _deltaTimer;
@@ -169,7 +199,7 @@ public sealed class HarnessStore : ObservableObject
     /// <summary>Sessions currently running/waiting, straight from the backend snapshot.</summary>
     public ObservableCollection<Session> LiveSessions { get; } = [];
 
-    /// <summary>Session id → status (<c>working</c>, <c>waiting</c>, <c>permission</c>, <c>question</c>, <c>error</c>…).</summary>
+    /// <summary>Session id â†’ status (<c>working</c>, <c>waiting</c>, <c>permission</c>, <c>question</c>, <c>error</c>â€¦).</summary>
     public Dictionary<string, string> Statuses { get; } = new(StringComparer.Ordinal);
 
     /// <summary>

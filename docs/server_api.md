@@ -16,9 +16,13 @@ transports cannot drift.
   `--urls` or the `SOFIA_URLS` environment variable.
 - JSON is camelCase. Timestamps are ISO-8601 UTC strings.
 - Errors: non-2xx with `{ "error": "human readable message" }`.
-- The server serves the built UI (`src/Sofia.UI/dist`) at `/` when present. In
-  dev, Vite proxies `/api` and `/hubs` to the server, so the UI always uses
-  same-origin relative URLs unless the user connects to another server.
+- UI hosting (plan 044): the server serves the first folder that has an `index.html` among
+  `<exe>/wwwroot`, `<contentRoot>/wwwroot`, this checkout's Avalonia browser bundle
+  (`src/Sofia.App.Browser/bin/<cfg>/net10.0-browser1.0/browser-wasm/AppBundle`) and — until the Vue
+  cutover — `src/Sofia.UI/dist`. `Sofia:UiPath` overrides the choice. Only `/api` and `/hubs` are
+  guarded: the bundle is public, while a non-loopback browser must pair and send the token on REST and
+  on SignalR negotiate. `.wasm`/`.dat` are served with the MIME types the WASM loader expects, and the
+  fallback serves `index.html` for client routes.
 - Message ordering (`Seq`) is allocated in the database, so two processes may
   write one `~/.sofia`; `<dataDir>/sofia.lock` records who owns the directory
   (advisory for the server).

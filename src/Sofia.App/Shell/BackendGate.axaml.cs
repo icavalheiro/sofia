@@ -30,6 +30,13 @@ public partial class BackendGate : UserControl
         {
             SoundService.Current.Play(SoundKey.Click);
             if (_connection is not null) _connection.Log.Add("retrying...");
+            // A manually typed URL/token wins over the stored connection on the next probe.
+            if (_connection is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(UrlBox.Text)) _connection.ServerUrl = UrlBox.Text!.Trim();
+                _connection.AccessToken = string.IsNullOrWhiteSpace(TokenBox.Text) ? null : TokenBox.Text!.Trim();
+                _connection.PersistConnection();
+            }
             if (_retry is not null) await _retry();
         };
         PairButton.Click += async (_, _) =>
@@ -39,6 +46,11 @@ public partial class BackendGate : UserControl
             PairStatus.Text = "pairing...";
             var ok = await _connection.PairAsync(CodeBox.Text ?? "");
             PairStatus.Text = ok ? "paired" : "invalid or expired code";
+            if (ok && _retry is not null)
+            {
+                // The paired token is stored: re-resolve so every request carries it, then load the shell.
+                await _retry();
+            }
         };
     }
 
@@ -63,6 +75,7 @@ public partial class BackendGate : UserControl
         {
             BackendPhase.Probing => (Localization.T("gate.probing"), "BrushPrimary", false),
             BackendPhase.Ready => (Localization.T("gate.ready"), "BrushOk", true),
+            BackendPhase.Pairing => (Localization.T("gate.pairingRequired"), "BrushWarn", true),
             BackendPhase.Failed => (_connection.LastError ?? Localization.T("gate.failed"), "BrushErr", true),
             _ => (Localization.T("gate.title"), "BrushTextMuted", true),
         };
@@ -71,7 +84,7 @@ public partial class BackendGate : UserControl
         PhaseIcon.Foreground = Brush(color);
         PhaseIcon.Paused = paused;
         RetryButton.IsVisible = _connection.Phase == BackendPhase.Failed;
-        PairSection.IsVisible = _connection.Phase == BackendPhase.Ready;
+        PairSection.IsVisible = _connection.Phase is BackendPhase.Ready or BackendPhase.Pairing;
     }
 
     private void RefreshLog()

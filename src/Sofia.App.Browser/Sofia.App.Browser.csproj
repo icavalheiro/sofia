@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- WASM head. Boot smoke only for now (spec 039); publishing, the static host wiring and feature parity land in
-       spec 044. It references Sofia.App and Sofia.Client, never Sofia.Core (SQLite/Playwright would not build). -->
+  <!-- WASM head (spec 044): the shared Sofia.App rendered in a browser over HttpSofiaBackend, served by Sofia.Server
+       at /. It references Sofia.App and Sofia.Client, never Sofia.Core (SQLite/Playwright would not build here).
+       `dotnet publish -c Release -r browser-wasm` produces the AppBundle; the target below copies it to wwwroot so a
+       published server (and the Docker image) ships the UI the same way the Vue dist used to. -->
   <PropertyGroup>
     <TargetFramework>net10.0-browser1.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -11,15 +13,44 @@
     <Version>0.5.16</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <OutputType>Exe</OutputType>
+    <!-- The SDK copies these two into the app bundle root; index.html mounts Avalonia in #out, main.js registers the
+         `sofia` interop module and runs the entry point. -->
+    <WasmMainHTMLPath>wwwroot/index.html</WasmMainHTMLPath>
+    <WasmMainJSPath>wwwroot/main.js</WasmMainJSPath>
+    <!-- Sofia.App serializes its local state and wire payloads with System.Text.Json. The WASM SDK bakes the reflection
+         switch off, so Json.Create() assigns an explicit DefaultJsonTypeInfoResolver instead of enabling
+         System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault (that feature switch, applied through
+         RuntimeHostConfigurationOption/Trim=true, breaks the compiled-XAML generic vtable in the Mono interpreter). -->
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The shared UI serializes and binds by reflection (Json.Options, AXAML compiled bindings): root the three
+         assemblies whole so full trimming cannot remove the members the runtime looks up by name. -->
+    <TrimmerRootAssembly Include="Sofia.App" RootMode="all" />
+    <TrimmerRootAssembly Include="Sofia.Client" RootMode="all" />
+    <TrimmerRootAssembly Include="Sofia.Contracts" RootMode="all" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia.Browser" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.6" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Sofia.App\Sofia.App.csproj" />
     <ProjectReference Include="..\Sofia.Client\Sofia.Client.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The two boot files are deployed through WasmMainHTMLPath/WasmMainJSPath, not as content items. -->
+    <None Include="wwwroot\**" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+
+  <!-- A browser publish is not a directory layout you can serve: the framework files land flattened next to the
+       intermediate assemblies. Generate the servable tree (index.html + main.js + _framework/) straight into
+       <PublishDir>/wwwroot instead, which is the folder Sofia.Server serves. -->
+  <PropertyGroup Condition="'$(PublishDir)' != ''">
+    <WasmAppDir>$([MSBuild]::EnsureTrailingSlash('$(PublishDir)'))wwwroot\</WasmAppDir>
+  </PropertyGroup>
 
 </Project>

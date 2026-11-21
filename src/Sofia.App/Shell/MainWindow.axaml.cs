@@ -5,14 +5,12 @@ using Sofia.App.Services;
 namespace Sofia.App.Shell;
 
 /// <summary>
-/// Desktop window: owns the shell view model, resolves the backend (fixture or live), persists its geometry and runs the
-/// screenshot/frame harness when the head asked for it.
+/// Desktop window: wraps the head-agnostic <see cref="ShellHost"/>, persists its geometry and runs the
+/// screenshot/frame harness when the head asked for it. Backend bootstrap and the gate live in the host so the
+/// browser head behaves identically.
 /// </summary>
 public partial class MainWindow : Window
 {
-    private readonly ShellViewModel _viewModel;
-    private CancellationTokenSource? _listen;
-
     public MainWindow() : this(HeadOptions.Current.Fixture)
     {
     }
@@ -20,23 +18,20 @@ public partial class MainWindow : Window
     public MainWindow(bool fixture)
     {
         InitializeComponent();
-        _viewModel = new ShellViewModel(fixture);
-        LocalPreferences.Current.Apply();
-        _viewModel.Language = Localization.Current;
-        Shell.Attach(_viewModel);
-        _viewModel.RightPanelOpen = HeadOptions.Current.Screenshot?.RightPanel ?? false;
-        _viewModel.Theme.CompactSidebar = HeadOptions.Current.Screenshot?.CompactSidebar ?? false;
-        _viewModel.Theme.ApplyAll();
-        Shell.Attach(_viewModel);
-
+        // The host owns the shell view model, the shell frame and the backend bootstrap; building it in code (not in
+        // XAML) lets the caller choose fixture data before the view model is created.
+        Host = new ShellHost(fixture);
+        Content = Host;
         Opened += async (_, _) => await OnOpenedAsync();
         Closing += (_, _) => PersistGeometry();
         RestoreGeometry();
     }
 
-    public ShellView ShellView => Shell;
+    public ShellHost Host { get; }
 
-    public ShellViewModel ViewModel => _viewModel;
+    public ShellView ShellView => Host.Shell;
+
+    public ShellViewModel ViewModel => Host.ViewModel;
 
     private async Task OnOpenedAsync()
     {
@@ -45,30 +40,30 @@ public partial class MainWindow : Window
         {
             await Task.Delay(250);
             ScreenshotHarness.Apply(screenshot);
-            Shell.Attach(_viewModel);
+            Host.Shell.Attach(Host.ViewModel);
             ApplySidebarState(screenshot);
             ApplyTranscriptState(screenshot);
-            Shell.Attach(_viewModel);
+            Host.Shell.Attach(Host.ViewModel);
             ApplyComposerState(screenshot);
             ApplyPanelsAndSettings(screenshot);
             var frameActionApplied = false;
             var composerFrameApplied = false;
             ScreenshotHarness.FrameBegin = () =>
             {
-                if (screenshot.HoverSession is { } row) Shell.Sidebar.HoverConversation(row);
+                if (screenshot.HoverSession is { } row) Host.Shell.Sidebar.HoverConversation(row);
                 switch (screenshot.PanelFrame)
                 {
                     case "spin":
-                        Shell.Panel.PreviewSpinning(true);
+                        Host.Shell.Panel.PreviewSpinning(true);
                         break;
                     case "diff":
-                        Shell.Panel.PreviewDiff();
+                        Host.Shell.Panel.PreviewDiff();
                         break;
                 }
                 if (screenshot.PanelOpen)
                 {
-                    Shell.SetRightPanel(false, animate: false);
-                    Shell.SetRightPanel(true, animate: true);
+                    Host.Shell.SetRightPanel(false, animate: false);
+                    Host.Shell.SetRightPanel(true, animate: true);
                 }
                 if (!composerFrameApplied)
                 {
@@ -76,10 +71,10 @@ public partial class MainWindow : Window
                     switch (screenshot.ComposerFrame)
                     {
                         case "press":
-                            Shell.ComposerView.BeginPressFrame();
+                            Host.Shell.ComposerView.BeginPressFrame();
                             break;
                         case "chip":
-                            Shell.ComposerView.BeginChipHoverFrame();
+                            Host.Shell.ComposerView.BeginChipHoverFrame();
                             break;
                     }
                 }
@@ -90,7 +85,7 @@ public partial class MainWindow : Window
             };
             ScreenshotHarness.Run(this, screenshot);
             ScreenshotHarness.FrameBegin = null;
-            Shell.Transcript.CloseOverlays();
+            Host.Shell.Transcript.CloseOverlays();
             Close();
             // The desktop head is a one-shot capture: shut the lifetime down so the CLI process exits (a live
             // dispatcher timer in the store would otherwise keep the window's dispatcher alive).
@@ -100,62 +95,36 @@ public partial class MainWindow : Window
             }
             return;
         }
-
-        if (_viewModel.IsFixture) return;
-
-        var resolver = HeadOptions.Current.Resolver;
-        if (resolver is null)
-        {
-            Shell.ShowGate(_viewModel.Connection, () => ConnectAsync(resolver));
-            return;
-        }
-        await ConnectAsync(resolver);
-    }
-
-    private async Task ConnectAsync(IBackendResolver? resolver)
-    {
-        if (resolver is null) return;
-        Shell.ShowGate(_viewModel.Connection, () => ConnectAsync(resolver));
-        await _viewModel.Connection.ConnectAsync(resolver);
-        if (!_viewModel.Connection.IsReady || _viewModel.Connection.Backend is null) return;
-
-        Shell.HideGate();
-        await Task.Delay(120);
-        await _viewModel.LoadAsync(_viewModel.Connection.Backend);
-        Shell.Attach(_viewModel);
-
-        _listen?.Cancel();
-        _listen = new CancellationTokenSource();
-        _ = _viewModel.Store.ListenAsync(_viewModel.Connection.Backend, _listen.Token);
     }
 
     /// <summary>Fixture state for the 040 screenshot gate: empty account, collapsed working row or open quick prompt.</summary>
     private void ApplySidebarState(ScreenshotRequest screenshot)
     {
+        var viewModel = Host.ViewModel;
         switch (screenshot.SidebarState)
         {
             case "empty":
-                _viewModel.LoadFixture(empty: true);
+                viewModel.LoadFixture(empty: true);
                 break;
             case "search":
-                _viewModel.Sidebar.PreviewSearch("working", Fixture.SearchHits());
+                viewModel.Sidebar.PreviewSearch("working", Fixture.SearchHits());
                 break;
             case "settings":
-                Shell.Sidebar.PreviewSettingsMenu(_viewModel.SidebarStore.Workspaces.FirstOrDefault()?.Id ?? "");
+                Host.Shell.Sidebar.PreviewSettingsMenu(viewModel.SidebarStore.Workspaces.FirstOrDefault()?.Id ?? "");
                 break;
             case "delete":
-                Shell.Sidebar.PreviewDelete(_viewModel.SidebarStore.Workspaces.FirstOrDefault()?.Id ?? "");
+                Host.Shell.Sidebar.PreviewDelete(viewModel.SidebarStore.Workspaces.FirstOrDefault()?.Id ?? "");
                 break;
             case "working":
-                foreach (var workspace in _viewModel.Store.Workspaces)
+                foreach (var workspace in viewModel.Store.Workspaces)
                 {
                     if ((workspace.Conversations ?? []).Any(s =>
-                            _viewModel.SidebarStore.Badges.GetValueOrDefault(s.Id) is "working" or "waiting"))
+                            viewModel.SidebarStore.Badges.GetValueOrDefault(s.Id) is "working" or "waiting"))
                     {
                         workspace.Expanded = false;
                     }
                 }
-                _viewModel.SidebarStore.Rebuild();
+                viewModel.SidebarStore.Rebuild();
                 break;
         }
     }
@@ -165,14 +134,14 @@ public partial class MainWindow : Window
     {
         if (screenshot.SidebarState == "empty")
         {
-            _viewModel.Transcript.Detach();
+            Host.ViewModel.Transcript.Detach();
             return;
         }
-        _viewModel.LoadTranscriptState(screenshot.TranscriptState);
-        Shell.Attach(_viewModel);
+        Host.ViewModel.LoadTranscriptState(screenshot.TranscriptState);
+        Host.Shell.Attach(Host.ViewModel);
         if (screenshot.TranscriptState == "lightbox")
         {
-            Shell.Transcript.PreviewLightbox("m_1");
+            Host.Shell.Transcript.PreviewLightbox("m_1");
         }
     }
 
@@ -181,7 +150,7 @@ public partial class MainWindow : Window
     {
         if (screenshot.ComposerState is { Length: > 0 } state)
         {
-            Shell.ComposerView.ApplyPreviewState(state);
+            Host.Shell.ComposerView.ApplyPreviewState(state);
         }
     }
 
@@ -191,17 +160,18 @@ public partial class MainWindow : Window
     /// </summary>
     private void ApplyPanelsAndSettings(ScreenshotRequest screenshot)
     {
-        _viewModel.Language = screenshot.Locale;
+        var viewModel = Host.ViewModel;
+        viewModel.Language = screenshot.Locale;
 
         if (screenshot.HeaderStatus is { Length: > 0 } status)
         {
-            _viewModel.HeaderStatusOverride = status;
-            Shell.Header.Rebuild();
+            viewModel.HeaderStatusOverride = status;
+            Host.Shell.Header.Rebuild();
         }
 
         if (screenshot.SettingsTab is { Length: > 0 } tab)
         {
-            Shell.Settings.LoadFixture();
+            Host.Shell.Settings.LoadFixture();
             var target = tab switch
             {
                 "models" => Features.Settings.SettingsDialog.SettingsTab.Models,
@@ -212,7 +182,7 @@ public partial class MainWindow : Window
                 "appearance" => Features.Settings.SettingsDialog.SettingsTab.Appearance,
                 _ => Features.Settings.SettingsDialog.SettingsTab.General,
             };
-            Shell.OpenSettings(target);
+            Host.Shell.OpenSettings(target);
         }
 
         if (screenshot.PanelState is "changes" or "processes")
@@ -228,26 +198,26 @@ public partial class MainWindow : Window
                     new("p_3", "npm run typecheck", 51220, "exited", 0),
                 }
                 : new List<Features.Panels.PanelProcess>();
-            Shell.SetRightPanel(true, animate: false);
-            Shell.Panel.LoadFixture(changes, processes);
+            Host.Shell.SetRightPanel(true, animate: false);
+            Host.Shell.Panel.LoadFixture(changes, processes);
         }
 
-        if (screenshot.Diff) Shell.Panel.PreviewDiff(animate: false);
+        if (screenshot.Diff) Host.Shell.Panel.PreviewDiff(animate: false);
 
         if (screenshot.TaskCard)
         {
-            Shell.Tasks.LoadFixture(Fixture.Tasks());
-            _viewModel.TasksOpen = true;
-            Shell.Header.Rebuild();
+            Host.Shell.Tasks.LoadFixture(Fixture.Tasks());
+            viewModel.TasksOpen = true;
+            Host.Shell.Header.Rebuild();
         }
 
-        if (screenshot.Pairing) Shell.PreviewPairing();
+        if (screenshot.Pairing) Host.Shell.PreviewPairing();
 
-        if (screenshot.SettingsInstall) Shell.Settings.PreviewInstallConfirm("csharp");
+        if (screenshot.SettingsInstall) Host.Shell.Settings.PreviewInstallConfirm("csharp");
 
-        if (screenshot.SettingsScroll > 0 && Shell.Settings.IsOpen)
+        if (screenshot.SettingsScroll > 0 && Host.Shell.Settings.IsOpen)
         {
-            Shell.Settings.PreviewScroll(screenshot.SettingsScroll);
+            Host.Shell.Settings.PreviewScroll(screenshot.SettingsScroll);
         }
     }
 
@@ -258,13 +228,13 @@ public partial class MainWindow : Window
         switch (screenshot.TranscriptFrame)
         {
             case "hover":
-                Shell.Transcript.HoverMessage(messageId);
+                Host.Shell.Transcript.HoverMessage(messageId);
                 break;
             case "fold":
-                Shell.Transcript.PreviewToggleFold(messageId, 0);
+                Host.Shell.Transcript.PreviewToggleFold(messageId, 0);
                 break;
             case "carousel":
-                Shell.Transcript.PreviewCarouselStep(messageId, 1);
+                Host.Shell.Transcript.PreviewCarouselStep(messageId, 1);
                 break;
         }
     }
@@ -298,4 +268,3 @@ public partial class MainWindow : Window
         public int? Y { get; set; }
     }
 }
-

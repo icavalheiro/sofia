@@ -130,6 +130,19 @@ cd src/Sofia.UI && npm install && npm run build   # then open http://127.0.0.1:5
 cd src/Sofia.UI && npm run dev                    # http://localhost:5183
 ```
 
+Native browser UI (the Avalonia shell compiled to WebAssembly, plan 044). The server
+serves it from the bundle's `wwwroot`; while the Vue UI is still the default it takes
+the `dotnet run` candidate of this checkout, or an explicit `Sofia:UiPath`:
+
+```bash
+dotnet workload install wasm-tools                 # once, if the SDK asks for it
+dotnet publish src/Sofia.App.Browser -c Release -r browser-wasm -o out/browser
+Sofia__UiPath=out/browser/wwwroot dotnet run --project src/Sofia.Server
+```
+
+Remote (non-loopback) browsers ask for a pairing code: `curl -X POST
+http://127.0.0.1:5199/api/pair` on the machine running the server.
+
 Production: `dotnet publish src/Sofia.Server -c Release -o out` also builds
 Sofia.UI (`npm ci` when `node_modules` is missing, then `npm run build`) and
 ships it as `out/wwwroot`, so the published server serves the UI on the same

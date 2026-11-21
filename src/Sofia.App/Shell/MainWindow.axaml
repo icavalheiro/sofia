@@ -8,6 +8,4 @@
         MinWidth="960"
         MinHeight="600"
         Background="{DynamicResource BrushBg}"
-        WindowStartupLocation="CenterScreen">
-  <shell:ShellView x:Name="Shell" />
-</Window>
+        WindowStartupLocation="CenterScreen" />

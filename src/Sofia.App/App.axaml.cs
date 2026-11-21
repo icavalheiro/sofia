@@ -22,13 +22,18 @@ public partial class App : Application
         // Appearance first: ThemeService republishes the scaled type tokens the shell is laid out with.
         RestoreAppearance();
         ThemeService.Current.ApplyAll();
-        MotionService.Current.ReducedMotion = ReducedMotionDetector.Detect();
+        MotionService.Current.ReducedMotion = options.ReducedMotionOverride ?? ReducedMotionDetector.Detect();
         SoundService.Current.Use(options.SoundPlayer ?? new NullSoundPlayer());
         RestoreSound();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.MainWindow = new MainWindow(options.Fixture);
+        }
+        else if (ApplicationLifetime is ISingleViewApplicationLifetime singleView)
+        {
+            // Browser (WASM) head: the same shell host the desktop window wraps, mounted into the page's root element.
+            singleView.MainView = new ShellHost(options.Fixture);
         }
 
         base.OnFrameworkInitializationCompleted();

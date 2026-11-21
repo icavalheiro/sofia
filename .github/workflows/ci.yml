@@ -31,6 +31,20 @@ jobs:
       - name: Test Avalonia UI (headless render gate)
         run: dotnet test src/Sofia.App.Tests -c Release
 
+      # Plan 044: the WASM head must keep building until the Vue cutover; its publish is the
+      # artifact Sofia.Server serves when the parity gate passes.
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish Avalonia browser head
+        run: dotnet publish src/Sofia.App.Browser -c Release -r browser-wasm -o out/browser -p:UseSharedCompilation=false
+
+      - name: Assert browser bundle layout
+        run: |
+          test -f out/browser/wwwroot/index.html
+          test -f out/browser/wwwroot/main.js
+          test -f out/browser/wwwroot/_framework/dotnet.js
+
       - name: Typecheck and build UI
         working-directory: src/Sofia.UI
         run: |

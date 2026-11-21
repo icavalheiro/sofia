@@ -15,6 +15,9 @@ public static class Json
     public static JsonSerializerOptions Create()
     {
         var o = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        // Explicit rather than implicit: trimmed hosts (the WASM browser head) bake the reflection default off, and a
+        // resolver assigned here keeps every Json.Create()/Json.Options call site working with the same metadata.
+        o.TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver();
         Configure(o);
         return o;
     }
