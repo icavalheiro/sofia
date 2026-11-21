@@ -1,0 +1,55 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:Sofia.App.Controls"
+             x:Class="Sofia.App.Features.Panels.TaskListPanel">
+
+  <!-- TaskListPanel.vue: a floating 280px card (max-height 360) restricted to the chat viewspace, draggable by its head,
+       position persisted in local state. It opens instantly (no entry animation, like the web) and auto-opens when the
+       server pushes a non-empty tasks.updated for the open conversation. -->
+  <Border x:Name="Card"
+          Width="280"
+          MaxHeight="360"
+          Background="{DynamicResource BrushSurface}"
+          BorderBrush="{DynamicResource BrushBorderStrong}"
+          BorderThickness="1"
+          CornerRadius="12"
+          BoxShadow="0 16 40 0 #73000000"
+          ClipToBounds="True"
+          HorizontalAlignment="Left"
+          VerticalAlignment="Top">
+    <Grid RowDefinitions="Auto,*">
+      <Border x:Name="Head" Grid.Row="0" Background="{DynamicResource BrushSurface2}"
+              BorderBrush="{DynamicResource BrushBorder}" BorderThickness="0,0,0,1"
+              Padding="11.2,8.8" Cursor="SizeAll">
+        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="7.2">
+          <controls:SofiaIcon Glyph="list" Size="14.4" Foreground="{DynamicResource BrushTextMuted}" />
+          <TextBlock Grid.Column="1" x:Name="Title" FontSize="{DynamicResource FontSizeSm2}" FontWeight="SemiBold"
+                     Foreground="{DynamicResource BrushText}" VerticalAlignment="Center" />
+          <Border Grid.Column="2" x:Name="CountPill" IsVisible="False" CornerRadius="999" Padding="6.4,0.8"
+                  Background="{DynamicResource BrushPrimarySoft}" VerticalAlignment="Center">
+            <TextBlock x:Name="CountText" FontSize="{DynamicResource FontSizeXs}" FontWeight="SemiBold"
+                       Foreground="{DynamicResource BrushPrimary}" />
+          </Border>
+          <Button Grid.Column="4" x:Name="ClearButton" Theme="{StaticResource IconButton}" Width="22" Height="22"
+                  CornerRadius="6" IsVisible="False">
+            <StackPanel Orientation="Horizontal" Spacing="3.2">
+              <controls:SofiaIcon Glyph="trash" Size="12.8" />
+              <TextBlock x:Name="ClearCount" FontSize="{DynamicResource FontSizeXs}" FontWeight="SemiBold"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+        </Grid>
+      </Border>
+
+      <Button x:Name="CloseButton" Theme="{StaticResource IconButton}" Width="22" Height="22" CornerRadius="6"
+              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6.4,6.4,0">
+        <controls:SofiaIcon Glyph="x" Size="12.8" />
+      </Button>
+
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                    Padding="11.2,8,11.2,9.6">
+        <StackPanel x:Name="Items" Spacing="5.6" />
+      </ScrollViewer>
+    </Grid>
+  </Border>
+</UserControl>

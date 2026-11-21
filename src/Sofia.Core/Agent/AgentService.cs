@@ -39,7 +39,7 @@ public sealed class AgentService(RunServices services, CommandService commands, 
     }
 
     /// <summary>Applies per-prompt overrides (model, agent, modes) to the session.</summary>
-    public Session ApplySettings(Session session, string? modelId, string? agent, string? permissionMode, string? reasoningMode, string? title = null, bool? sandbox = null)
+    public Session ApplySettings(Session session, string? modelId, string? agent, string? permissionMode, string? reasoningMode, string? title = null, bool? sandbox = null, string? language = null)
     {
         var changed = false;
         if (!string.IsNullOrWhiteSpace(modelId) && modelId != session.ModelId)
@@ -77,6 +77,12 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         if (sandbox != session.Sandbox)
         {
             session.Sandbox = sandbox;
+            changed = true;
+        }
+        // UI language the user picked for this conversation (the app's six locales; sent with every prompt too).
+        if (!string.IsNullOrWhiteSpace(language) && language.Trim() != session.Language)
+        {
+            session.Language = language.Trim();
             changed = true;
         }
         session.SandboxEffective = SandboxPolicy.Resolve(Db.GetConfig(), Db.Workspaces.FindById(session.WorkspaceId), session) is not null;

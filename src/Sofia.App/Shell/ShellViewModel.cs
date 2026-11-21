@@ -63,6 +63,12 @@ public sealed class ShellViewModel : ObservableObject
 
     public ThemeService Theme => ThemeService.Current;
 
+    /// <summary>Raised after the settings dialog changed the accent, font size or compact sidebar.</summary>
+    public event Action? AppearanceChanged;
+
+    /// <summary>Asks the shell to re-apply the appearance tokens after a settings change.</summary>
+    public void RaiseAppearanceChanged() => AppearanceChanged?.Invoke();
+
     public SoundService Sound => SoundService.Current;
 
     /// <summary>True when the shell renders <see cref="Fixture"/> data instead of a backend (screenshots, tests).</summary>
@@ -121,6 +127,23 @@ public sealed class ShellViewModel : ObservableObject
         get => _status;
         set => SetProperty(ref _status, value);
     }
+
+    /// <summary>
+    /// Raw badge of the open conversation, including <c>done</c> (the header shows "last task finished"); unlike
+    /// <see cref="Status"/>, which folds <c>done</c> into <c>idle</c> for the composer and the transcript.
+    /// </summary>
+    public string HeaderStatus
+    {
+        get
+        {
+            if (HeaderStatusOverride is { Length: > 0 } forced) return forced;
+            if (SidebarStore.Badges.TryGetValue(ActiveSessionId, out var badge)) return badge;
+            return FindSession(ActiveSessionId)?.Status ?? "idle";
+        }
+    }
+
+    /// <summary>Screenshot/frame harness override of the status dot (spec 043 evidence).</summary>
+    public string? HeaderStatusOverride { get; set; }
 
     public string ActiveSessionTitle =>
         Store.Workspaces.SelectMany(w => w.Conversations ?? [])
@@ -211,6 +234,7 @@ public sealed class ShellViewModel : ObservableObject
             ActiveWorkspaceId = SidebarStore.ActiveWorkspaceId;
         }
         Status = StatusFor(ActiveSessionId);
+        OnPropertyChanged(nameof(HeaderStatus));
         Transcript.SetStatus(Status is "done" ? "idle" : Status);
         OnPropertyChanged(nameof(ActiveSessionTitle));
         OnPropertyChanged(nameof(ActiveWorkspaceName));

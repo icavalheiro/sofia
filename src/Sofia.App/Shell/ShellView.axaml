@@ -4,12 +4,14 @@
              xmlns:sidebar="using:Sofia.App.Features.Sidebar"
              xmlns:transcript="using:Sofia.App.Features.Transcript"
              xmlns:composer="using:Sofia.App.Features.Composer"
+             xmlns:header="using:Sofia.App.Features.Header"
+             xmlns:panels="using:Sofia.App.Features.Panels"
              x:Class="Sofia.App.Shell.ShellView">
 
-  <!-- Shell frame copied from App.vue: sidebar (288 normal / 236 compact) | main column | right panel (300, collapsible).
-       The transcript/composer column is capped at 1232px and centred, the composer overlays the transcript on a
-       translucent band, and every floating surface lives in OverlayHost on the web's z-index ladder. Layout numbers are
-       the web's rem values resolved at the 16px base. -->
+  <!-- Shell frame copied from App.vue: sidebar (288 normal / 236 compact) | main column (header, transcript, composer) |
+       right panel (300, collapsible). The transcript/composer column is capped at 1232px and centred, the composer
+       overlays the transcript on a translucent band, and every floating surface lives in OverlayHost on the web's
+       z-index ladder. Layout numbers are the web's rem values resolved at the 16px base. -->
   <Grid x:Name="Root" Background="{DynamicResource BrushBg}">
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="288" />
@@ -22,41 +24,7 @@
 
     <!-- ============================== main =============================== -->
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
-      <Border x:Name="HeaderBand"
-              Grid.Row="0"
-              Padding="24,11.2,24,8.8"
-              Background="{DynamicResource BrushBg}"
-              BorderBrush="{DynamicResource BrushBorderSoft}"
-              BorderThickness="0,0,0,1">
-        <Grid ColumnDefinitions="*,Auto">
-          <StackPanel Grid.Column="0" Spacing="2">
-            <TextBlock x:Name="HeaderTitle" Classes="truncate" FontSize="{DynamicResource FontSizeLg}" FontWeight="SemiBold" />
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <controls:SofiaIcon Glyph="folder" Size="12" Foreground="{DynamicResource BrushTextFaint}" VerticalAlignment="Center" />
-              <TextBlock x:Name="HeaderBreadcrumb" Classes="truncate faint" FontSize="{DynamicResource FontSizeSm}" />
-            </StackPanel>
-          </StackPanel>
-          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-            <Border x:Name="StatusPill"
-                    CornerRadius="999"
-                    Padding="9,3"
-                    Background="{DynamicResource BrushPrimarySoft}"
-                    VerticalAlignment="Center"
-                    Margin="0,0,6,0">
-              <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                <controls:SofiaIcon Glyph="loader" Size="14" Foreground="{DynamicResource BrushPrimary}" />
-                <TextBlock x:Name="StatusText" FontSize="{DynamicResource FontSizeSm}" Foreground="{DynamicResource BrushPrimary}" />
-              </StackPanel>
-            </Border>
-            <Button x:Name="ChangesButton" Theme="{StaticResource IconButton}" ToolTip.Tip="Changes">
-              <controls:SofiaIcon Glyph="panelRight" Size="17" />
-            </Button>
-            <Button x:Name="TasksButton" Theme="{StaticResource IconButton}" ToolTip.Tip="Tasks">
-              <controls:SofiaIcon Glyph="list" Size="17" />
-            </Button>
-          </StackPanel>
-        </Grid>
-      </Border>
+      <header:HeaderView x:Name="HeaderPane" Grid.Row="0" />
 
       <Panel Grid.Row="1" ClipToBounds="True">
         <Border Background="{DynamicResource BrushBg}" />
@@ -74,22 +42,8 @@
           </Grid>
         </Border>
 
-        <Border x:Name="TaskPanelHost"
-                IsVisible="False"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Bottom"
-                Margin="24,0,0,150"
-                Classes="card"
-                Padding="12"
-                Width="320">
-          <StackPanel Spacing="8">
-            <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Classes="eyebrow" Text="TASKS" />
-              <TextBlock Grid.Column="1" x:Name="TaskCount" Classes="faint" FontSize="{DynamicResource FontSizeXs}" />
-            </Grid>
-            <StackPanel x:Name="TaskList" Spacing="6" />
-          </StackPanel>
-        </Border>
+        <!-- Floating task card (TaskListPanel): 280px, draggable, clamped to this panel and persisted. -->
+        <panels:TaskListPanel x:Name="TaskPane" IsVisible="False" />
       </Panel>
     </Grid>
 
@@ -100,21 +54,7 @@
             BorderBrush="{DynamicResource BrushBorder}"
             BorderThickness="1,0,0,0"
             ClipToBounds="True">
-      <Grid x:Name="RightPanelInner" RowDefinitions="Auto,*,Auto" Margin="14,12,14,12" Opacity="0">
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
-          <TextBlock Classes="eyebrow" Text="CHANGES" VerticalAlignment="Center" />
-          <Button Grid.Column="1" x:Name="ClosePanelButton" Theme="{StaticResource IconButton}" ToolTip.Tip="Close">
-            <controls:SofiaIcon Glyph="x" Size="16" />
-          </Button>
-        </Grid>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-          <StackPanel x:Name="ChangesList" Spacing="2" />
-        </ScrollViewer>
-        <StackPanel Grid.Row="2" Spacing="6" Margin="0,10,0,0">
-          <TextBlock Classes="eyebrow" Text="PROCESSES" />
-          <StackPanel x:Name="ProcessList" Spacing="4" />
-        </StackPanel>
-      </Grid>
+      <panels:RightPanelView x:Name="RightPanelPane" />
     </Border>
 
     <!-- ======================= overlay ladder ============================ -->

@@ -24,6 +24,12 @@ public sealed class HeadOptions
     /// <summary>Render deterministic <see cref="Fixture"/> data instead of connecting (screenshots, tests).</summary>
     public bool Fixture { get; set; }
 
+    /// <summary>
+    /// True on a head that can act on the host: open folders/terminals/VS Code (<c>POST /api/open</c>, loopback only).
+    /// The browser head flips it to false in 044 and the right panel hides those actions instead of showing a 403.
+    /// </summary>
+    public bool HostActions { get; set; } = true;
+
     /// <summary>Screenshot/frame harness request parsed from the command line, or null for a normal run.</summary>
     public ScreenshotRequest? Screenshot { get; set; }
 }
@@ -87,6 +93,39 @@ public sealed class ScreenshotRequest
 
     /// <summary>Composer animation to start at frame 0: <c>press</c> (send pill, .08s) or <c>chip</c> (hover, .12s).</summary>
     public string? ComposerFrame { get; set; }
+
+    /// <summary>UI locale for the capture (en, pt, es, fr, zh, ja — spec 043 language gate).</summary>
+    public string Locale { get; set; } = "en";
+
+    /// <summary>Opens the settings modal on this tab: general, models, skills, mcp, lsp, shortcuts or appearance.</summary>
+    public string? SettingsTab { get; set; }
+
+    /// <summary>Scrolls the settings body by this many DIPs (captures the server block below the fold).</summary>
+    public double SettingsScroll { get; set; }
+
+    /// <summary>Shows the LSP install confirmation (spec 043 risk: the server runs a shell command).</summary>
+    public bool SettingsInstall { get; set; }
+
+    /// <summary>Right-panel fixture: <c>changes</c> (both lists) or <c>processes</c> (empty changes, process rows).</summary>
+    public string PanelState { get; set; } = "none";
+
+    /// <summary>Opens the diff modal for the first listed change (spec 043, z300).</summary>
+    public bool Diff { get; set; }
+
+    /// <summary>Panel animation to start at frame 0: <c>spin</c> (refresh glyph, .9s) or <c>diff</c> (modal enter, .16s).</summary>
+    public string? PanelFrame { get; set; }
+
+    /// <summary>Starts the right-panel opening (motion #19) at frame 0 instead of opening it instantly.</summary>
+    public bool PanelOpen { get; set; }
+
+    /// <summary>Opens the floating task card with the fixture task list.</summary>
+    public bool TaskCard { get; set; }
+
+    /// <summary>Opens the pairing dialog with a deterministic code (no server call).</summary>
+    public bool Pairing { get; set; }
+
+    /// <summary>Overrides the header status dot: working, waiting, done, permission, question or error.</summary>
+    public string? HeaderStatus { get; set; }
 
     /// <summary>All three logical sizes in one run; individual width/height/scale override it.</summary>
     public bool AllSizes { get; set; }
@@ -158,6 +197,40 @@ public sealed class ScreenshotRequest
                     break;
                 case "--composer-frame":
                     request.ComposerFrame = Next();
+                    break;
+                case "--locale":
+                    request.Locale = Next() ?? request.Locale;
+                    break;
+                case "--settings":
+                    request.SettingsTab = Next() ?? "general";
+                    break;
+                case "--settings-scroll":
+                    if (double.TryParse(Next(), System.Globalization.CultureInfo.InvariantCulture, out var scroll))
+                        request.SettingsScroll = scroll;
+                    break;
+                case "--settings-install":
+                    request.SettingsInstall = true;
+                    break;
+                case "--panel-state":
+                    request.PanelState = Next() ?? request.PanelState;
+                    break;
+                case "--diff":
+                    request.Diff = true;
+                    break;
+                case "--panel-frame":
+                    request.PanelFrame = Next();
+                    break;
+                case "--panel-open":
+                    request.PanelOpen = true;
+                    break;
+                case "--tasks":
+                    request.TaskCard = true;
+                    break;
+                case "--pairing":
+                    request.Pairing = true;
+                    break;
+                case "--header-status":
+                    request.HeaderStatus = Next();
                     break;
                 case "--all-sizes":
                     request.AllSizes = true;

@@ -237,7 +237,7 @@ synthetic message. Such card-only messages are never replayed to the model.
 | `POST` | `/api/workspaces/{id}/sessions` | `{ title? }` | `SessionDto` (the new chat starts on the workspace's base model; permission/reasoning modes are copied from the workspace's most recent chat. A model that is unknown or switched off in Settings falls back to the server default) |
 | `GET` | `/api/sessions/status` | – | `{ [sessionId]: SessionStatus }` (non-idle only) |
 | `GET` | `/api/sessions/{id}` | – | `SessionDto` with `messages` |
-| `PATCH` | `/api/sessions/{id}` | `{ title?, modelId?, agent?, permissionMode?, reasoningMode?, sandbox? }` | `SessionDto` |
+| `PATCH` | `/api/sessions/{id}` | `{ title?, modelId?, agent?, permissionMode?, reasoningMode?, sandbox?, language? }` | `SessionDto` (`language` is the UI locale the conversation was left in, e.g. `pt`) |
 | `DELETE` | `/api/sessions/{id}` | – | `204` |
 | `POST` | `/api/sessions/{id}/archive` | – | `SessionDto` (aborts a live run, sets `archived: true`; the UI parks it in the workspace's **Archived** folder) |
 | `POST` | `/api/sessions/{id}/unarchive` | – | `SessionDto` (`archived` cleared) |

@@ -78,7 +78,7 @@ public static class SessionEndpoints
         api.MapPatch("/sessions/{id}", (string id, UpdateSessionRequest body, AgentService agents) =>
         {
             var (session, _) = agents.Load(id);
-            return Results.Ok(agents.ApplySettings(session, body.ModelId, body.Agent, body.PermissionMode, body.ReasoningMode, body.Title, body.Sandbox));
+            return Results.Ok(agents.ApplySettings(session, body.ModelId, body.Agent, body.PermissionMode, body.ReasoningMode, body.Title, body.Sandbox, body.Language));
         });
 
         api.MapDelete("/sessions/{id}", async (string id, SessionService sessions) =>

@@ -477,4 +477,63 @@ Last line after the rule.
         new("s_3", "Working border motion parity"),
         new("s_4", "Review the SQLite ordering fix"),
     ];
+
+    /// <summary>Changed files of the right panel (spec 043), shaped like <c>GET /api/sessions/{id}/diff</c>.</summary>
+    public static List<FileDiff> PanelDiffs() =>
+    [
+        new(
+            "src/Sofia.App/Features/Settings/SettingsDialog.axaml",
+            string.Join('\n',
+                "@@ -1,6 +1,9 @@",
+                " <UserControl",
+                "     xmlns=\"https://github.com/avaloniaui\"",
+                "+     xmlns:controls=\"using:Sofia.App.Controls\"",
+                "     xmlns:x=\"x\">",
+                "-  <Border />",
+                "+  <Header />",
+                "+  <Tabs />",
+                "+  <Body />",
+                " </UserControl>"),
+            7,
+            1,
+            "M"),
+        new(
+            "src/Sofia.App/Localization/Localization.cs",
+            string.Join('\n',
+                "@@ -1,3 +1,4 @@",
+                " namespace Sofia.App.I18n;",
+                "+// six locales, generated from the web catalog",
+                " public static class Localization"),
+            1,
+            0,
+            "M"),
+        new(
+            "src/Sofia.App/Features/Panels/DiffModal.cs",
+            string.Join('\n',
+                "@@ -1,2 +1,3 @@",
+                "+using Avalonia.Media;",
+                " namespace Sofia.App.Features.Panels;"),
+            1,
+            0,
+            "A"),
+        new(
+            "src/Sofia.App/Features/Panels/OldTaskPanel.cs",
+            string.Join('\n',
+                "@@ -1,2 +0,0 @@",
+                "-namespace Sofia.App.Features.Panels;",
+                "-internal static class OldTaskPanel { }"),
+            0,
+            2,
+            "D"),
+    ];
+
+    /// <summary>Task list of the floating card (spec 043), shaped like <c>GET /api/sessions/{id}/tasks</c>.</summary>
+    public static List<TaskItem> Tasks() =>
+    [
+        new() { Id = "tsk_1", SessionId = "s_1", Title = "Port the seven settings tabs", Status = TaskItemStatus.Completed, Order = 0 },
+        new() { Id = "tsk_2", SessionId = "s_1", Title = "Wire the right panel to the diff endpoints", Status = TaskItemStatus.Completed, Order = 1 },
+        new() { Id = "tsk_3", SessionId = "s_1", Title = "Record the panel and modal frames", Status = TaskItemStatus.InProgress, Order = 2 },
+        new() { Id = "tsk_4", SessionId = "s_1", Title = "Translate the header copy", Status = TaskItemStatus.Pending, Order = 3 },
+        new() { Id = "tsk_5", SessionId = "s_1", Title = "Verify the locales in the screenshots", Status = TaskItemStatus.Pending, Order = 4 },
+    ];
 }

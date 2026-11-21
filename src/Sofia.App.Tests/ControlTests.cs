@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Media;
 using Sofia.App.Controls;
+using Sofia.App.I18n;
 using Sofia.App.Services;
 using Sofia.App.Theme;
 

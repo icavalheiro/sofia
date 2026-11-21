@@ -23,7 +23,7 @@ public sealed record CreateWorkspaceRequest(string? Kind, string? Path, string? 
 public sealed record UpdateWorkspaceRequest(string? Name, string? Icon, string? ModelId, bool? Expanded, int? Order, bool? Sandbox = null);
 public sealed record CreateSessionRequest(string? Title, string? Origin = null);
 public sealed record ReorderRequest(List<string>? Ids);
-public sealed record UpdateSessionRequest(string? Title, string? ModelId, string? Agent, string? PermissionMode, string? ReasoningMode, bool? Sandbox = null);
+public sealed record UpdateSessionRequest(string? Title, string? ModelId, string? Agent, string? PermissionMode, string? ReasoningMode, bool? Sandbox = null, string? Language = null);
 public sealed record CommandRequest(string Name, string? Arguments, List<string>? Attachments = null);
 public sealed record RevertRequest(string MessageId);
 public sealed record PermissionReplyRequest(string Decision);

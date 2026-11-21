@@ -68,7 +68,7 @@ public class ScreenshotTests
         Assert.Equal(1232, shell.FindControl<Grid>("ComposerInner")!.MaxWidth);
 
         // Header band padding .7rem 1.5rem .55rem and composer band .45rem 1.5rem .55rem at the 16px base.
-        var header = shell.FindControl<Border>("HeaderBand")!;
+        var header = shell.Header.Band;
         Assert.Equal(new Thickness(24, 11.2, 24, 8.8), header.Padding);
         var composer = shell.FindControl<Border>("ComposerBand")!;
         Assert.Equal(new Thickness(24, 7.2, 24, 8.8), composer.Padding);
@@ -96,7 +96,7 @@ public class ScreenshotTests
         MotionService.Current.Seek(240);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(300, column.Width.Value, 1);
-        Assert.Equal(1, shell.FindControl<Grid>("RightPanelInner")!.Opacity, 2);
+        Assert.Equal(1, shell.Panel.Opacity, 2);
 
         foreach (var ms in new[] { 0d, 60, 120, 180, 240 })
         {

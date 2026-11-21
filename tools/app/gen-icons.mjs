@@ -98,7 +98,10 @@ const readIcon = (component) => {
   if (!parts.length) throw new Error(`no nodes in ${file}`)
   const name = /createLucideIcon\("([^"]+)"/.exec(source)?.[1]
   if (name !== kebab(component)) throw new Error(`${file}: expected ${kebab(component)}, got ${name}`)
-  return parts.join('')
+  // Every Lucide <path>/<circle>/<rect> is its own path: a lowercase `m` at its start is relative to (0,0), not to
+  // the end of the previous path. When the parts are concatenated into one StreamGeometry the command must become the
+  // absolute `M`, or the second sub-path lands at a bogus offset (that is how the X turned into a stray slash).
+  return parts.map((d, index) => (index === 0 ? d : d.replace(/^m/, 'M'))).join('')
 }
 
 const escape = (s) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')

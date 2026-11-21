@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Shared Avalonia UI (AXAML) for every Sofia.App head: desktop now, the WASM browser head later. It must stay
        free of desktop-only packages (SoundFlow, SQLite) so the browser build can reference it; platform services
@@ -30,6 +30,11 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <!-- Localization.T is used by every feature view; the namespace is global so ported views keep the short call. -->
+  <ItemGroup>
+    <Using Include="Sofia.App.I18n" />
   </ItemGroup>
 
   <ItemGroup>

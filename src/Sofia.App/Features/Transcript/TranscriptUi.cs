@@ -101,5 +101,5 @@ public static class TranscriptUi
 
     /// <summary>The pending tag of a steer/queued follow-up.</summary>
     public static string LocalizePending(string? delivery) =>
-        Services.Localization.T(delivery == "steer" ? "chat.pendingSteer" : "chat.pendingQueue");
+        Localization.T(delivery == "steer" ? "chat.pendingSteer" : "chat.pendingQueue");
 }

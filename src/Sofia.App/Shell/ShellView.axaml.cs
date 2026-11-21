@@ -6,22 +6,21 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Sofia.App.Controls;
+using Sofia.App.Features.Panels;
+using Sofia.App.Features.Settings;
 using Sofia.App.Services;
 using Sofia.App.Theme;
 using Sofia.Contracts.Domain;
-using Path = Avalonia.Controls.Shapes.Path;
 
 namespace Sofia.App.Shell;
 
 /// <summary>
-/// The shell frame: builds the sidebar tree, header, transcript host, composer chrome and right panel from
-/// <see cref="ShellViewModel"/>, keeps the overlay ladder, and animates the right panel from the shared clock. Feature
-/// specs 040-043 replace the placeholder rows and the empty transcript with the real components; the geometry, tokens
-/// and timings here are final.
+/// The shell frame: sidebar, header (title/crumbs/status/language/session menus), transcript, composer, right panel, the
+/// floating task card and the overlay ladder (lightbox, diff modal, settings, destructive modals). The right panel is
+/// animated from the shared clock (motion #19) so the frame harness can capture it stop-motion.
 /// </summary>
 public partial class ShellView : UserControl
 {
@@ -39,14 +38,19 @@ public partial class ShellView : UserControl
 
     private ShellViewModel? _vm;
     private readonly PanelAnimator _panelAnimator;
+    private Panel? _settingsLayer;
+    private Panel? _pairingLayer;
+    private SettingsDialog? _settings;
+    private PairingDialog? _pairing;
 
     public ShellView()
     {
         InitializeComponent();
-        _panelAnimator = new PanelAnimator(Root.ColumnDefinitions[2], RightPanelInner);
+        _panelAnimator = new PanelAnimator(Root.ColumnDefinitions[2], RightPanelPane);
         LoadArt();
         SidebarPane.UseOverlayHost(OverlayHost);
         TranscriptPane.UseOverlayHost(OverlayHost);
+        RightPanelPane.UseOverlayHost(OverlayHost);
         // The composer publishes its measured height (attachment strip + growing textarea + hint row change it);
         // the transcript reserves that many DIPs at the bottom so the last row is never covered.
         ComposerPane.HeightChanged += height => TranscriptPane.SetComposerHeight(height);
@@ -56,9 +60,11 @@ public partial class ShellView : UserControl
         };
         Root.AddHandler(KeyDownEvent, OnGlobalKeyDown, RoutingStrategies.Tunnel);
         Root.AddHandler(PointerPressedEvent, OnGlobalPointerPressed, RoutingStrategies.Tunnel);
+        BuildOverlayLayers();
         WireButtons();
         WireComposerShortcuts();
         MotionService.Current.Attach(_panelAnimator);
+        Localization.Changed += OnLocaleChanged;
     }
 
     public ShellViewModel? ViewModel => _vm;
@@ -80,6 +86,21 @@ public partial class ShellView : UserControl
 
     public Border RightPanel => RightPanelHost;
 
+    /// <summary>The right panel (043): changes, processes, actions and the diff modal.</summary>
+    public RightPanelView Panel => RightPanelPane;
+
+    /// <summary>The conversation header (043): title, crumbs, status dot, language and session menus.</summary>
+    public Features.Header.HeaderView Header => HeaderPane;
+
+    /// <summary>The settings modal (043).</summary>
+    public SettingsDialog Settings => _settings!;
+
+    /// <summary>The fast task card (043).</summary>
+    public TaskListPanel Tasks => TaskPane;
+
+    /// <summary>The pairing dialog (043).</summary>
+    public PairingDialog Pairing => _pairing!;
+
     /// <summary>Binds a view model: fixture data or a live backend, depending on the head.</summary>
     public void Attach(ShellViewModel viewModel)
     {
@@ -88,6 +109,11 @@ public partial class ShellView : UserControl
         SidebarPane.Attach(viewModel.Sidebar);
         TranscriptPane.Attach(viewModel.Transcript);
         ComposerPane.Attach(viewModel.Composer);
+        HeaderPane.Attach(viewModel);
+        RightPanelPane.Attach(viewModel);
+        TaskPane.Attach(viewModel);
+        _settings!.Attach(viewModel);
+        _pairing!.Attach(viewModel);
         if (viewModel.Connection.Backend is { } backend)
         {
             TranscriptPane.Attachments.UrlResolver = backend.AttachmentUrl;
@@ -104,15 +130,27 @@ public partial class ShellView : UserControl
         SidebarPane.PanelToggleRequested += () =>
         {
             if (_vm is null) return;
-            _vm.RightPanelOpen = !_vm.RightPanelOpen;
-            _panelAnimator.SetOpen(_vm.RightPanelOpen, animate: true);
+            SetRightPanel(!_vm.RightPanelOpen, animate: true);
         };
         SidebarPane.ComposerFocusRequested += ComposerPane.FocusInput;
+        SidebarPane.ShellSettingsRequested += () => OpenSettings();
+        HeaderPane.PanelToggled += open => SetRightPanel(open, animate: true);
+        HeaderPane.TasksToggled += open => TaskPane.SetOpen(open, notify: false);
+        HeaderPane.SessionImported += sessionId => _ = OpenSessionAsync(sessionId);
+        RightPanelPane.Closed += () => SetRightPanel(false, animate: true);
+        TaskPane.OpenChanged += open =>
+        {
+            if (_vm is not null) _vm.TasksOpen = open;
+            HeaderPane.Rebuild();
+        };
+        _settings!.OpenChanged += open => SetLayerOpen(_settingsLayer, open);
+        _settings.PairingRequested += () => OpenPairing();
+        _pairing!.Closed += () => SetLayerOpen(_pairingLayer, false);
+        viewModel.AppearanceChanged += ApplyAppearance;
         ApplyAppearance();
         Rebuild();
         viewModel.PropertyChanged += (_, _) => Rebuild();
         viewModel.Theme.PropertyChanged += (_, _) => ApplyAppearance();
-        Localization.Changed += Rebuild;
     }
 
     /// <summary>Message a search hit asked the transcript to scroll to; consumed by spec 041.</summary>
@@ -134,6 +172,9 @@ public partial class ShellView : UserControl
         }
         TranscriptPane.Attach(_vm.Transcript);
         if (_vm.Connection.Backend is { } backend) TranscriptPane.Attachments.UrlResolver = backend.AttachmentUrl;
+        HeaderPane.Rebuild();
+        RightPanelPane.RefreshLabels();
+        _ = TaskPane.RefreshAsync();
         if (PendingScrollMessageId is { } messageId)
         {
             TranscriptPane.ScrollToMessage(messageId);
@@ -141,14 +182,98 @@ public partial class ShellView : UserControl
         }
     }
 
+    /// <summary>Opens the settings modal on a tab (gear, Ctrl+, Ctrl+/ and the screenshot harness).</summary>
+    public void OpenSettings(SettingsDialog.SettingsTab tab = SettingsDialog.SettingsTab.General)
+    {
+        if (_settings is null) return;
+        SetLayerOpen(_settingsLayer, true);
+        _settings.Open(tab);
+    }
+
+    /// <summary>Opens the pairing dialog above the settings modal.</summary>
+    public void OpenPairing()
+    {
+        if (_pairing is null) return;
+        SetLayerOpen(_pairingLayer, true);
+        _pairing.Open();
+    }
+
+    /// <summary>Fixture/screenshot entry: opens the pairing dialog with a deterministic code.</summary>
+    public void PreviewPairing()
+    {
+        if (_pairing is null) return;
+        SetLayerOpen(_pairingLayer, true);
+        _pairing.PreviewFixture();
+    }
+
+    private void BuildOverlayLayers()
+    {
+        if (OverlayHost is not Canvas canvas) return;
+        _settingsLayer = new Panel { IsVisible = false, ZIndex = OverlayLayer.Settings };
+        _settings = new SettingsDialog();
+        _settingsLayer.Children.Add(_settings);
+        canvas.Children.Add(_settingsLayer);
+
+        _pairingLayer = new Panel { IsVisible = false, ZIndex = OverlayLayer.Modal };
+        _pairing = new PairingDialog();
+        _pairingLayer.Children.Add(_pairing);
+        canvas.Children.Add(_pairingLayer);
+
+        // A Canvas arranges its children at their own size; the modal layers must cover the whole window so their scrim
+        // centres the dialog and dims everything behind it.
+        void Fit()
+        {
+            foreach (var layer in new[] { _settingsLayer, _pairingLayer })
+            {
+                if (layer is null) continue;
+                layer.Width = Math.Max(canvas.Bounds.Width, canvas.DesiredSize.Width);
+                layer.Height = Math.Max(canvas.Bounds.Height, canvas.DesiredSize.Height);
+            }
+        }
+        canvas.SizeChanged += (_, _) => Fit();
+        Fit();
+    }
+
+    private void SetLayerOpen(Panel? layer, bool open)
+    {
+        if (layer is not null) layer.IsVisible = open;
+        OverlayHost.IsHitTestVisible = open || _settings?.IsOpen == true || _pairing?.IsVisible == true;
+    }
+
     /// <summary>
-    /// One key route for the whole window: Escape closes the composer's palettes/popovers first, then the sidebar's and
-    /// the transcript's transient surfaces, then the shared shortcut table runs (Ctrl+K/O, Ctrl+N, Ctrl+Shift+E,
-    /// Alt+â†‘/â†“, Ctrl+\, Ctrl+, and the composer's Ctrl+L/M/B/P/Shift+A/.).
+    /// One key route for the whole window: Escape closes the settings/pairing/diff dialogs first, then the composer's
+    /// palettes/popovers, then the sidebar's and the transcript's transient surfaces, then the shared shortcut table
+    /// (Ctrl+K/O, Ctrl+N, Ctrl+Shift+E, Alt+↑/↓, Ctrl+\, Ctrl+, Ctrl+/, and the composer's Ctrl+L/M/B/P/Shift+A/.).
     /// </summary>
     private void OnGlobalKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && _settings?.HandleEscape() == true)
+        {
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && _pairing?.IsVisible == true)
+        {
+            _pairing.Close();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && RightPanelPane.HandleEscape())
+        {
+            e.Handled = true;
+            return;
+        }
+        if (_settings?.IsOpen == true)
+        {
+            // The modal owns the keyboard: only its own recorder sees the keys.
+            return;
+        }
         if (e.Key == Key.Escape && ComposerPane.HandleEscape())
+        {
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && HeaderPane.HandleEscape())
         {
             e.Handled = true;
             return;
@@ -168,12 +293,13 @@ public partial class ShellView : UserControl
 
     /// <summary>
     /// Clicking outside the sidebar closes its quick prompt and workspace menu (web document mousedown); a click that
-    /// lands outside the composer closes its chip popovers and the pinned context legend.
+    /// lands outside the composer closes its chip popovers and the pinned context legend, and the header menus close too.
     /// </summary>
     private void OnGlobalPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (e.Source is not Visual source) return;
         if (!IsInside(source, ComposerPane)) ComposerPane.CloseTransient();
+        if (!IsInside(source, HeaderPane)) HeaderPane.CloseTransient();
         if (IsInside(source, SidebarPane)) return;
         SidebarPane.CloseTransient();
     }
@@ -190,6 +316,8 @@ public partial class ShellView : UserControl
         {
             if (ComposerPane.ViewModel is { IsReplying: true } composer) _ = composer.StopAsync();
         });
+        ShortcutService.Current.Register("settings.open", () => OpenSettings());
+        ShortcutService.Current.Register("shortcuts.show", () => OpenSettings(SettingsDialog.SettingsTab.Shortcuts));
     }
 
     private static bool IsInside(object? source, Visual container)
@@ -225,10 +353,19 @@ public partial class ShellView : UserControl
     {
         if (_vm is not null) _vm.RightPanelOpen = open;
         _panelAnimator.SetOpen(open, animate);
+        RightPanelPane.SetOpen(open);
     }
 
     /// <summary>Re-applies accent/font-scale/compact tokens after a settings change and rebuilds the chrome.</summary>
     public void RefreshAppearance() => ApplyAppearance();
+
+    private void OnLocaleChanged()
+    {
+        Rebuild();
+        RightPanelPane.RefreshLabels();
+        TaskPane.RefreshLabels();
+        _settings?.RefreshLabels();
+    }
 
     // --- appearance ---------------------------------------------------------------------------------------
 
@@ -238,12 +375,13 @@ public partial class ShellView : UserControl
         Root.ColumnDefinitions[0].Width = new GridLength(theme.SidebarWidth);
         SidebarPane.RefreshAppearance();
 
-        if (!_panelAnimator.IsOpen && !_vm!.RightPanelOpen)
+        if (!_panelAnimator.IsOpen && _vm?.RightPanelOpen != true)
         {
             Root.ColumnDefinitions[2].Width = new GridLength(0);
-            RightPanelInner.Opacity = 0;
+            RightPanelPane.Opacity = 0;
         }
         _panelAnimator.SetOpen(_vm?.RightPanelOpen ?? false, animate: false);
+        RightPanelPane.SetOpen(_vm?.RightPanelOpen ?? false);
         Rebuild();
     }
 
@@ -252,113 +390,15 @@ public partial class ShellView : UserControl
     private void Rebuild()
     {
         if (_vm is null) return;
-        BuildHeader();
-        BuildRightPanel();
-        TaskPanelHost.IsVisible = _vm.TasksOpen;
+        HeaderPane.Rebuild();
         TranscriptPane.SetComposerHeight(ComposerPane.MeasuredHeight > 0 ? ComposerPane.MeasuredHeight : 130);
-    }
-
-    private void BuildHeader()
-    {
-        if (_vm is null) return;
-        HeaderTitle.Text = _vm.ActiveSessionTitle;
-        HeaderBreadcrumb.Text = string.IsNullOrEmpty(_vm.ActiveWorkspacePath)
-            ? _vm.ActiveWorkspaceName
-            : _vm.ActiveWorkspacePath;
-        StatusText.Text = Localization.T($"status.{_vm.Status}");
-        if (StatusText.Text.StartsWith("status.")) StatusText.Text = _vm.Status;
-        var (fill, text) = _vm.Status switch
-        {
-            "working" => ("BrushPrimarySoft", "BrushPrimary"),
-            "waiting" => ("BrushSurface2", "BrushTextMuted"),
-            "permission" => ("BrushWarnSoft", "BrushWarn"),
-            "question" => ("BrushInfoSoft", "BrushInfo"),
-            "error" => ("BrushErrSoft", "BrushErr"),
-            _ => ("BrushSurface2", "BrushTextMuted"),
-        };
-        StatusPill.Background = Brush(fill);
-        StatusText.Foreground = Brush(text);
-
-        if (StatusPill.Child is StackPanel pill)
-        {
-            pill.Children.Clear();
-            var icon = new SofiaIcon
-            {
-                Glyph = "loader",
-                Size = 14,
-                Paused = _vm.Status is not ("working" or "waiting"),
-                Foreground = Brush(text),
-            };
-            pill.Children.Add(icon);
-            pill.Children.Add(StatusText);
-        }
-    }
-
-    private void BuildRightPanel()
-    {
-        ChangesList.Children.Clear();
-        foreach (var (file, add, del) in new[]
-                 {
-                     ("src/Sofia.App/Theme/Tokens.axaml", 74, 0),
-                     ("src/Sofia.App/Controls/SofiaIcon.cs", 190, 0),
-                     ("src/Sofia.App/Shell/ShellView.axaml", 154, 0),
-                 })
-        {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Height = 26 };
-            var name = Caption(file, 12, "BrushTextMuted");
-            name.Classes.Add("truncate");
-            name.VerticalAlignment = VerticalAlignment.Center;
-            row.Children.Add(name);
-            var stats = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            stats.Children.Add(Caption($"+{add}", 11, "BrushOk"));
-            stats.Children.Add(Caption($"-{del}", 11, "BrushErr"));
-            Grid.SetColumn(stats, 1);
-            row.Children.Add(stats);
-            ChangesList.Children.Add(new Border { Child = row, Padding = new Thickness(4, 0) });
-        }
-
-        ProcessList.Children.Clear();
-        foreach (var (label, dot) in new[] { ("dotnet run - :5199", "BrushOk"), ("tsc --watch", "BrushWarn") })
-        {
-            var row = Row(
-                new Border
-                {
-                    Width = 6,
-                    Height = 6,
-                    CornerRadius = new CornerRadius(3),
-                    Background = Brush(dot),
-                    VerticalAlignment = VerticalAlignment.Center,
-                },
-                Caption(label, 12, "BrushTextMuted"));
-            ProcessList.Children.Add(row);
-        }
     }
 
     // --- helpers -------------------------------------------------------------------------------------------
 
     private void WireButtons()
     {
-        ChangesButton.Click += (_, _) =>
-        {
-            if (_vm is null) return;
-            _vm.RightPanelOpen = !_vm.RightPanelOpen;
-            _panelAnimator.SetOpen(_vm.RightPanelOpen, animate: true);
-            SoundService.Current.Play(SoundKey.Click);
-        };
-        ClosePanelButton.Click += (_, _) =>
-        {
-            if (_vm is null) return;
-            _vm.RightPanelOpen = false;
-            _panelAnimator.SetOpen(false, animate: true);
-            SoundService.Current.Play(SoundKey.Click);
-        };
-        TasksButton.Click += (_, _) =>
-        {
-            if (_vm is null) return;
-            _vm.TasksOpen = !_vm.TasksOpen;
-            TaskPanelHost.IsVisible = _vm.TasksOpen;
-            SoundService.Current.Play(SoundKey.Click);
-        };
+        // The header owns the panel/tasks toggles; nothing else needs a direct click handler here.
     }
 
     private void LoadArt()
@@ -375,9 +415,6 @@ public partial class ShellView : UserControl
             Stretch = Stretch.None,
             DestinationRect = new RelativeRect(0, 0, 140, 140, RelativeUnit.Absolute),
         };
-        TaskCount.Text = "2 open";
-        TaskList.Children.Add(Caption("Port the design tokens", 12, "BrushTextMuted"));
-        TaskList.Children.Add(Caption("Verify reduced motion", 12, "BrushTextMuted"));
     }
 
     private static Bitmap Load(string uri)
@@ -386,28 +423,8 @@ public partial class ShellView : UserControl
         return new Bitmap(stream);
     }
 
-    private static IBrush Brush(string key) =>
-        Application.Current?.TryFindResource(key, out var value) == true && value is IBrush brush
-            ? brush
-            : Brushes.Transparent;
-
-    private static TextBlock Caption(string text, double size, string brush) => new()
-    {
-        Text = text,
-        FontSize = size,
-        Foreground = Brush(brush),
-        TextWrapping = TextWrapping.NoWrap,
-    };
-
-    private static StackPanel Row(params Control[] children)
-    {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        foreach (var child in children) panel.Children.Add(child);
-        return panel;
-    }
-
     /// <summary>
-    /// Motion contract #19: the right panel opens width 0Ã¢â€ â€™300 (.24s), slides translateX 40Ã¢â€ â€™0 (.24s) and fades 0Ã¢â€ â€™1
+    /// Motion contract #19: the right panel opens width 0→300 (.24s), slides translateX 40→0 (.24s) and fades 0→1
     /// (.18s). Driven by the shared clock so the frame harness can capture it stop-motion.
     /// </summary>
     private sealed class PanelAnimator(ColumnDefinition column, Control content) : IMotionParticipant
@@ -466,6 +483,3 @@ public partial class ShellView : UserControl
         }
     }
 }
-
-
-

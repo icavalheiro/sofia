@@ -111,7 +111,7 @@ public sealed class InProcSofiaBackend(IServiceProvider services) : ISofiaBacken
     public Task<Session> UpdateSessionAsync(string id, UpdateSessionRequest request, CancellationToken ct = default)
     {
         var (session, _) = Agents.Load(id);
-        return Task.FromResult(Agents.ApplySettings(session, request.ModelId, request.Agent, request.PermissionMode, request.ReasoningMode, request.Title, request.Sandbox));
+        return Task.FromResult(Agents.ApplySettings(session, request.ModelId, request.Agent, request.PermissionMode, request.ReasoningMode, request.Title, request.Sandbox, request.Language));
     }
 
     public Task DeleteSessionAsync(string id, CancellationToken ct = default) => Get<SessionService>().DeleteAsync(id);

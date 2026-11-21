@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:Sofia.App.Controls"
+             x:Class="Sofia.App.Features.Settings.SettingsDialog">
+
+  <!-- SettingsPanel.vue: z2000 overlay (`rgba(0,0,0,.55)`, 2rem padding), modal min(720px,100%) × min(640px,92vh),
+       r16, the seven tab rail under the head, the scrolling body and the footer with Reset/Done. The dialog opens
+       instantly (the web has no entry animation). Tabs, rows and cards are built in code-behind from the backend state. -->
+  <Border x:Name="Overlay" Background="#8C000000" Padding="32">
+    <Border x:Name="Modal"
+            MaxWidth="720"
+            MaxHeight="640"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"
+            Background="{DynamicResource BrushSurface}"
+            BorderBrush="{DynamicResource BrushBorderStrong}"
+            BorderThickness="1"
+            CornerRadius="16"
+            BoxShadow="0 30 80 0 #8C000000"
+            ClipToBounds="True">
+      <Grid RowDefinitions="Auto,Auto,*,Auto">
+        <Border Grid.Row="0" Padding="17.6,14.4" BorderBrush="{DynamicResource BrushBorder}"
+                BorderThickness="0,0,0,1">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <controls:SofiaIcon Glyph="gear" Size="16.8" Foreground="{DynamicResource BrushPrimary}" />
+              <TextBlock x:Name="Title" FontSize="{DynamicResource FontSizeXl}" Foreground="{DynamicResource BrushText}"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+            <Button Grid.Column="1" x:Name="CloseButton" Theme="{StaticResource IconButton}" Width="30" Height="30"
+                    CornerRadius="8">
+              <controls:SofiaIcon Glyph="x" Size="16" />
+            </Button>
+          </Grid>
+        </Border>
+
+        <Border Grid.Row="1" Padding="12,8" BorderBrush="{DynamicResource BrushBorder}" BorderThickness="0,0,0,1">
+          <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="TabRail" Orientation="Horizontal" Spacing="4" />
+          </ScrollViewer>
+        </Border>
+
+        <ScrollViewer Grid.Row="2" x:Name="BodyScroll" Padding="17.6,16" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="TabBody" Spacing="0" />
+        </ScrollViewer>
+
+        <Border Grid.Row="3" Padding="17.6,11.2" BorderBrush="{DynamicResource BrushBorder}"
+                BorderThickness="0,1,0,0">
+          <Grid ColumnDefinitions="Auto,*,Auto">
+            <Button x:Name="ResetButton" Theme="{StaticResource ActionButton}" Padding="8,5" />
+            <Button Grid.Column="2" x:Name="DoneButton" Theme="{StaticResource PrimaryButton}" Padding="12,6" />
+          </Grid>
+        </Border>
+      </Grid>
+    </Border>
+  </Border>
+</UserControl>

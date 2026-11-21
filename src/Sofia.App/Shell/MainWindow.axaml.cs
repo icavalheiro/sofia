@@ -21,6 +21,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _viewModel = new ShellViewModel(fixture);
+        LocalPreferences.Current.Apply();
+        _viewModel.Language = Localization.Current;
         Shell.Attach(_viewModel);
         _viewModel.RightPanelOpen = HeadOptions.Current.Screenshot?.RightPanel ?? false;
         _viewModel.Theme.CompactSidebar = HeadOptions.Current.Screenshot?.CompactSidebar ?? false;
@@ -48,11 +50,26 @@ public partial class MainWindow : Window
             ApplyTranscriptState(screenshot);
             Shell.Attach(_viewModel);
             ApplyComposerState(screenshot);
+            ApplyPanelsAndSettings(screenshot);
             var frameActionApplied = false;
             var composerFrameApplied = false;
             ScreenshotHarness.FrameBegin = () =>
             {
                 if (screenshot.HoverSession is { } row) Shell.Sidebar.HoverConversation(row);
+                switch (screenshot.PanelFrame)
+                {
+                    case "spin":
+                        Shell.Panel.PreviewSpinning(true);
+                        break;
+                    case "diff":
+                        Shell.Panel.PreviewDiff();
+                        break;
+                }
+                if (screenshot.PanelOpen)
+                {
+                    Shell.SetRightPanel(false, animate: false);
+                    Shell.SetRightPanel(true, animate: true);
+                }
                 if (!composerFrameApplied)
                 {
                     composerFrameApplied = true;
@@ -165,6 +182,72 @@ public partial class MainWindow : Window
         if (screenshot.ComposerState is { Length: > 0 } state)
         {
             Shell.ComposerView.ApplyPreviewState(state);
+        }
+    }
+
+    /// <summary>
+    /// Spec 043 evidence: locale, header status dot, settings tab, right panel (changes/processes), diff modal, task card
+    /// and pairing dialog. Every state is deterministic fixture data, so the gate never needs a server.
+    /// </summary>
+    private void ApplyPanelsAndSettings(ScreenshotRequest screenshot)
+    {
+        _viewModel.Language = screenshot.Locale;
+
+        if (screenshot.HeaderStatus is { Length: > 0 } status)
+        {
+            _viewModel.HeaderStatusOverride = status;
+            Shell.Header.Rebuild();
+        }
+
+        if (screenshot.SettingsTab is { Length: > 0 } tab)
+        {
+            Shell.Settings.LoadFixture();
+            var target = tab switch
+            {
+                "models" => Features.Settings.SettingsDialog.SettingsTab.Models,
+                "skills" => Features.Settings.SettingsDialog.SettingsTab.Skills,
+                "mcp" => Features.Settings.SettingsDialog.SettingsTab.Mcp,
+                "lsp" => Features.Settings.SettingsDialog.SettingsTab.Lsp,
+                "shortcuts" => Features.Settings.SettingsDialog.SettingsTab.Shortcuts,
+                "appearance" => Features.Settings.SettingsDialog.SettingsTab.Appearance,
+                _ => Features.Settings.SettingsDialog.SettingsTab.General,
+            };
+            Shell.OpenSettings(target);
+        }
+
+        if (screenshot.PanelState is "changes" or "processes")
+        {
+            var changes = screenshot.PanelState == "processes"
+                ? new List<Features.Panels.PanelChange>()
+                : Fixture.PanelDiffs().Select(Features.Panels.PanelChange.FromDiff).ToList();
+            var processes = screenshot.PanelState == "processes"
+                ? new List<Features.Panels.PanelProcess>
+                {
+                    new("p_1", "dotnet run --project src/Sofia.Server", 30214, "running", null),
+                    new("p_2", "npx vite --host 127.0.0.1", 40192, "running", null),
+                    new("p_3", "npm run typecheck", 51220, "exited", 0),
+                }
+                : new List<Features.Panels.PanelProcess>();
+            Shell.SetRightPanel(true, animate: false);
+            Shell.Panel.LoadFixture(changes, processes);
+        }
+
+        if (screenshot.Diff) Shell.Panel.PreviewDiff(animate: false);
+
+        if (screenshot.TaskCard)
+        {
+            Shell.Tasks.LoadFixture(Fixture.Tasks());
+            _viewModel.TasksOpen = true;
+            Shell.Header.Rebuild();
+        }
+
+        if (screenshot.Pairing) Shell.PreviewPairing();
+
+        if (screenshot.SettingsInstall) Shell.Settings.PreviewInstallConfirm("csharp");
+
+        if (screenshot.SettingsScroll > 0 && Shell.Settings.IsOpen)
+        {
+            Shell.Settings.PreviewScroll(screenshot.SettingsScroll);
         }
     }
 

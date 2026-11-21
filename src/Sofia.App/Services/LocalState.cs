@@ -43,10 +43,15 @@ public sealed class LocalState
 
     public const string RightPanelKey = "sofia.rightPanel.openBySession";
     public const string TasksPanelKey = "sofia.tasks.openBySession";
+    /// <summary>Floating task card position (web <c>sofia.tasks.pos</c>).</summary>
+    public const string TasksPositionKey = "sofia.tasks.pos";
     public const string DraftsKey = "sofia.drafts";
     public const string DeliveryKey = "sofia.delivery";
     public const string ChipsKey = "sofia.chips";
-    public const string ShortcutsKey = "sofia.shortcuts";
+    /// <summary>Partial shortcut overrides, id → combo (web <c>sofia.shortcuts.v1</c>).</summary>
+    public const string ShortcutsKey = "sofia.shortcuts.v1";
+    /// <summary>Language and the local general/appearance preferences (web <c>sofia.settings.v1</c>).</summary>
+    public const string SettingsKey = "sofia.settings.v1";
     public const string AppearanceKey = "sofia.appearance";
     public const string SoundKey = "sofia.sound";
     public const string ConnectionKey = "sofia.connection";
