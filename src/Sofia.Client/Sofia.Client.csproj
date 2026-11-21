@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Client transport for any host: HTTP + SignalR against a running Sofia.Server. References only the contract
+       assembly, so it also builds and runs in the browser (WASM) head. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sofia.Client</RootNamespace>
+    <AssemblyName>Sofia.Client</AssemblyName>
+    <Version>0.5.16</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.15" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sofia.Contracts\Sofia.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

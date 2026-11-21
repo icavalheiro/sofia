@@ -6,11 +6,11 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Sofia.Server.Agent;
-using Sofia.Server.Data;
-using Sofia.Server.Domain;
+using Sofia.Core.Agent;
+using Sofia.Core.Data;
+using Sofia.Contracts.Domain;
 
-namespace Sofia.Server.Tests;
+namespace Sofia.Core.Tests;
 
 /// <summary>OpenAI-compatible endpoint that answers plain text and records every chat-completion body.</summary>
 internal sealed class PlainLlmHandler : HttpMessageHandler

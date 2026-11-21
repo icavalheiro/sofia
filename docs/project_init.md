@@ -1,9 +1,16 @@
-# Sofia.Server — architecture
+# Sofia — architecture
 
-`src/Sofia.Server` is Sofia's own agent harness: an ASP.NET Core (.NET 10)
-service with minimal APIs, SQLite persistence (EF Core), an in-process event bus and a
-SignalR hub. `src/Sofia.UI` is its web client. The HTTP/SignalR contract lives
-in [server_api.md](./server_api.md).
+`src/Sofia.Core` is Sofia's own agent harness: the engine (agent loop,
+providers, tools, MCP, LSP, browser, SQLite persistence, in-process event bus).
+It is a plain `net10.0` class library with **no** `Microsoft.AspNetCore.*`
+reference; that is what keeps the host boundary real. `src/Sofia.Server` is the
+ASP.NET Core host over it (minimal APIs, SignalR hub, access middleware, static
+UI) and `src/Sofia.UI` is its web client. `src/Sofia.Contracts` holds the
+entities, wire DTOs, request bodies, event names and `Json.Options` with no
+package references, so a browser (WASM) head can use them later.
+`src/Sofia.Client` defines `ISofiaBackend` with an HTTP + SignalR implementation,
+and `src/Sofia.Client.InProc` implements the same interface straight over Core.
+The HTTP/SignalR contract lives in [server_api.md](./server_api.md).
 
 The agent design follows [pi.dev](https://pi.dev): a minimal system prompt, a
 small core tool set, context files discovered from the filesystem, skills with
@@ -16,13 +23,21 @@ and pairing.
 ## Layout
 
 ```
-src/Sofia.Server/
-├── Program.cs                 # composition root (DI, JSON, SignalR, access, static UI)
-├── Infrastructure/            # options/paths, ids, JSON, text helpers, process runner
+src/Sofia.Contracts/
 ├── Domain/Entities.cs         # entities that double as wire DTOs
-├── Data/SofiaDbContext.cs     # EF Core model: columns, JSON columns and indexes
-├── Data/SofiaDb.cs            # store facade + one-shot LiteDB migration
-├── Events/EventBus.cs         # bus, dispatcher, IEventHandler, SignalR hub + broadcaster
+├── Domain/Views.cs            # WorkspaceView, FileDiff, StatsView, SofiaEventDto
+├── Domain/Requests.cs         # request bodies (prompt, workspace, provider, config, …)
+├── Domain/*.cs                # Counter, local [Bson*] persistence markers
+├── Events/EventTypes.cs       # SofiaEvent + event names
+└── Infrastructure/            # Json.Options (the wire contract) and Ids
+
+src/Sofia.Core/
+├── CoreServiceCollectionExtensions.cs  # AddSofiaCore(options, core => …)
+├── Infrastructure/            # options/paths, ids, text helpers, process runner, IBaseUrlProvider
+├── Data/SofiaDbContext.cs     # EF Core model: columns, JSON columns, indexes, counters
+├── Data/SofiaDb.cs            # store facade, atomic NextSeq, one-shot LiteDB migration
+├── Data/DataDirLock.cs        # advisory sofia.lock ownership (exclusive for a host that owns the dir)
+├── Events/EventBus.cs         # bus, dispatcher, IEventHandler
 ├── Providers/                 # OpenAI-compatible + Anthropic streaming clients,
 │                              #   discovery, model catalog, limits/pricing table
 ├── Tools/                     # read, write, edit, apply_patch (Codex-style patches + PatchParser +
@@ -39,16 +54,48 @@ src/Sofia.Server/
 │                              #   (built-in servers), LspManager (per-workspace clients,
 │                              #   diagnostics cache, idle shutdown; IHostedService)
 ├── Vcs/GitService.cs          # branch info, working-tree diff, worktrees
-├── Infrastructure/NativeTerminal.cs  # opens the OS terminal in a folder (POST /api/open)
-├── Security/Access.cs         # loopback trust, origin check, pairing tokens
-└── Api/                       # minimal API endpoint groups
-src/Sofia.Server.Tests/        # xUnit: unit tests + in-process agent-loop test
+├── Infrastructure/NativeTerminal.cs  # opens the OS terminal in a folder
+├── Security/PairingService.cs # one-time codes → bearer tokens
+└── Services/                  # the rules that used to live in endpoints: WorkspaceService,
+                               #   SessionService, DiffService, FileService, AttachmentService,
+                               #   ConfigService, HostLauncher, ProviderAdminService,
+                               #   BrowserAdminService, McpAdminService, LspAdminService
+
+src/Sofia.Server/
+├── Program.cs                 # composition root (JSON, SignalR, CORS, access, static UI)
+├── GlobalUsings.cs            # contracts namespaces
+├── Events/SofiaHub.cs         # SignalR hub + HubBroadcaster
+├── Security/AccessMiddleware.cs  # loopback trust, origin check, pairing tokens
+├── Infrastructure/ServerAddressBaseUrl.cs  # IBaseUrlProvider over IServer
+└── Api/                       # minimal API endpoint groups (binding + Results only)
+
+src/Sofia.Client/              # ISofiaBackend, HttpSofiaBackend (REST + SignalR)
+src/Sofia.Client.InProc/       # InProcSofiaBackend over an in-process Core host
+src/Sofia.Core.Tests/          # xUnit over Core services
+src/Sofia.Server.Tests/        # xUnit that boots the real ASP.NET app
 ```
 
 Data lives in `~/.sofia` (override with `SOFIA_HOME`): `sofia.sqlite` (SQLite),
-`attachments/`, plus optional `AGENTS.md`, `SYSTEM.md`, `APPEND_SYSTEM.md`,
-`skills/`, `commands/` (and legacy `prompts/`) and `agents/`. Settings,
-providers and MCP servers live in the database, not in files.
+`sofia.lock` (advisory ownership), `attachments/`, plus optional `AGENTS.md`,
+`SYSTEM.md`, `APPEND_SYSTEM.md`, `skills/`, `commands/` (and legacy `prompts/`)
+and `agents/`. Settings, providers and MCP servers live in the database, not in
+files.
+
+## Hosts and transports
+
+A host composes the engine with `services.AddSofiaCore(options, core => …)` and
+then exposes it however it wants:
+
+- **Server**: registers `IBaseUrlProvider` (`ServerAddressBaseUrl`), the
+  `HubBroadcaster` and the endpoint groups.
+- **In-process** (the desktop head planned in 039): registers
+  `SofiaCoreOptions.ExclusiveDataDir = true` and serves the UI through
+  `InProcSofiaBackend`, with no HTTP port at all.
+
+Both hand the UI the same payloads: `ISofiaBackend` methods return entities and
+request bodies from `Sofia.Contracts`, while views the engine computes on the fly
+(models, providers, MCP/LSP/process/browser lists, search, config) travel as
+`JsonElement` serialized with `Json.Options` in both transports.
 
 ## Event-driven core
 
@@ -74,12 +121,26 @@ config, knowledge, memory, task lists, file snapshots and read records.
   ones (`[BsonIgnore]`). The entity shape, and therefore the HTTP/SignalR
   contract, is unchanged from the LiteDB era.
 - `SofiaDb` is the store facade: it owns the `PooledDbContextFactory`, one
-  write gate (SQLite has a single writer, writes retry on busy) and a monotonic
-  `NextSeq()`. `EntitySet<T>` recreates the familiar collection surface
+  write gate (SQLite has a single writer, writes retry on busy) and the message
+  sequence. `EntitySet<T>` recreates the familiar collection surface
   (`Find`, `FindById`, `Upsert`, `DeleteMany`, …) on top of short-lived pooled
   contexts.
+- **Message ordering is allocated by the database**, not by a process field:
+  `NextSeq()` runs `UPDATE counters SET value = value + 1 WHERE name =
+  'message_seq' RETURNING value` inside the write gate. `EnsureCreated` only
+  builds a schema for a new store, so `SofiaDb` also runs an idempotent bootstrap
+  (`CREATE TABLE IF NOT EXISTS counters …` seeded from `MAX(messages.Seq)`) for
+  stores created before the counter existed. Two hosts writing one `~/.sofia`
+  therefore never hand out the same `Seq`; gaps are harmless.
+- **One data directory, several processes**: `DataDirLock`
+  (`<dataDir>/sofia.lock`, `FileShare.None`, pid + start time, removed on
+  dispose) is advisory. `Sofia.Server` logs a warning and keeps serving; a host
+  that owns the directory sets `SofiaCoreOptions.ExclusiveDataDir` and refuses to
+  start next to another process. Browser windows, background processes and the
+  screen-awake lock remain shared in that situation.
 - Schema creation is `EnsureCreated()`: there are no EF migrations yet, so a
-  schema change means a new database (fine before 1.0).
+  schema change means a new database (fine before 1.0) — except the `counters`
+  table, which older stores get from the bootstrap above.
 - `LiteDbMigration` converts a legacy LiteDB file once, on first start: it
   streams every collection into SQLite through a staging file, verifies the row
   counts, renames the old `sofia.db` to `sofia.db.migrated` and writes

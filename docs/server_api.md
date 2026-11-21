@@ -1,9 +1,16 @@
-# Sofia.Server API
+# Sofia API
 
 `src/Sofia.Server` is Sofia's own harness backend (ASP.NET Core, .NET 10,
-minimal APIs, SQLite, SignalR). `src/Sofia.UI` is its only client. This file is
-the contract between the two: REST for commands and queries, one SignalR hub
+minimal APIs, SQLite, SignalR). `src/Sofia.UI` is its current client. This file
+is the contract between them: REST for commands and queries, one SignalR hub
 for live events.
+
+The same surface is available to .NET clients through `ISofiaBackend`
+(`src/Sofia.Client`, HTTP + SignalR) and, for a host that owns the data
+directory, through `InProcSofiaBackend` (`src/Sofia.Client.InProc`, direct calls
+into `Sofia.Core`). Endpoint behaviours with rules live in `Sofia.Core/Services`
+and the endpoints in `src/Sofia.Server/Api` only bind and translate, so the two
+transports cannot drift.
 
 - Default address: `http://127.0.0.1:5199` (loopback only). Override with
   `--urls` or the `SOFIA_URLS` environment variable.
@@ -12,6 +19,9 @@ for live events.
 - The server serves the built UI (`src/Sofia.UI/dist`) at `/` when present. In
   dev, Vite proxies `/api` and `/hubs` to the server, so the UI always uses
   same-origin relative URLs unless the user connects to another server.
+- Message ordering (`Seq`) is allocated in the database, so two processes may
+  write one `~/.sofia`; `<dataDir>/sofia.lock` records who owns the directory
+  (advisory for the server).
 
 ## Auth and pairing
 

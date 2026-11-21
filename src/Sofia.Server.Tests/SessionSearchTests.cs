@@ -5,14 +5,14 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Sofia.Server.Data;
-using Sofia.Server.Domain;
-using Sofia.Server.Events;
-using Sofia.Server.Infrastructure;
-using Sofia.Server.Search;
-using Sofia.Server.Tools;
+using Sofia.Core.Data;
+using Sofia.Contracts.Domain;
+using Sofia.Core.Events;
+using Sofia.Core.Infrastructure;
+using Sofia.Core.Search;
+using Sofia.Core.Tools;
 
-namespace Sofia.Server.Tests;
+namespace Sofia.Core.Tests;
 
 public class SessionSearchIndexTests
 {

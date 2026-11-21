@@ -12,9 +12,13 @@ RUN npm run build
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS server
 WORKDIR /src
 COPY Sofia.slnx ./
+COPY src/Sofia.Contracts/Sofia.Contracts.csproj src/Sofia.Contracts/
+COPY src/Sofia.Core/Sofia.Core.csproj src/Sofia.Core/
 COPY src/Sofia.Server/Sofia.Server.csproj src/Sofia.Server/
 COPY src/Sofia.Server.Tests/Sofia.Server.Tests.csproj src/Sofia.Server.Tests/
 RUN dotnet restore src/Sofia.Server/Sofia.Server.csproj
+COPY src/Sofia.Contracts/ src/Sofia.Contracts/
+COPY src/Sofia.Core/ src/Sofia.Core/
 COPY src/Sofia.Server/ src/Sofia.Server/
 RUN dotnet publish src/Sofia.Server/Sofia.Server.csproj -c Release -o /out --no-restore -p:BuildUiOnPublish=false
 COPY --from=ui /src/src/Sofia.UI/dist/ /out/wwwroot/

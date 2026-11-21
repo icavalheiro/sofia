@@ -1,4 +1,4 @@
-using Sofia.Server.Infrastructure;
+using Sofia.Core.Infrastructure;
 
 namespace Sofia.Server.Api;
 

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Dependency-free on purpose: the WASM (browser) head must be able to reference the domain entities, the wire
+       DTOs, the event names and the JSON contract without dragging SQLite, Playwright, LiteDB or MCP into it. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sofia.Contracts</RootNamespace>
+    <AssemblyName>Sofia.Contracts</AssemblyName>
+    <Version>0.5.16</Version>
+  </PropertyGroup>
+
+</Project>

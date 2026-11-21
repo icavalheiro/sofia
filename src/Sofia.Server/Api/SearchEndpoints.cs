@@ -1,7 +1,7 @@
-using Sofia.Server.Agent;
-using Sofia.Server.Data;
-using Sofia.Server.Domain;
-using Sofia.Server.Search;
+using Sofia.Core.Agent;
+using Sofia.Core.Data;
+using Sofia.Contracts.Domain;
+using Sofia.Core.Search;
 
 namespace Sofia.Server.Api;
 

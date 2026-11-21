@@ -1,19 +1,14 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Extensions.FileProviders;
-using Sofia.Server.Agent;
+using Sofia.Core;
+using Sofia.Core.Agent;
+using Sofia.Core.Infrastructure;
+using Sofia.Core.Security;
 using Sofia.Server.Api;
-using Sofia.Server.Browser;
-using Sofia.Server.Changes;
-using Sofia.Server.Context;
-using Sofia.Server.Data;
+using Sofia.Core.Events;
 using Sofia.Server.Events;
 using Sofia.Server.Infrastructure;
-using Sofia.Server.Lsp;
-using Sofia.Server.Mcp;
-using Sofia.Server.Providers;
-using Sofia.Server.Search;
 using Sofia.Server.Security;
-using Sofia.Server.Vcs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,7 +32,6 @@ if (string.IsNullOrWhiteSpace(options.UiPath))
 }
 options.EnsureDirectories();
 
-builder.Services.AddSingleton(options);
 builder.Services.ConfigureHttpJsonOptions(o => Json.Configure(o.SerializerOptions));
 builder.Services.AddSignalR().AddJsonProtocol(o => Json.Configure(o.PayloadSerializerOptions));
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
@@ -46,64 +40,13 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
     .AllowAnyMethod()
     .AllowCredentials()));
 
-// Providers that gate subscription traffic (OpenCode Go) reject a generic or missing user agent, so both LLM
-// clients identify the harness; a per-request override in a provider client wins over these defaults.
-builder.Services.AddHttpClient("llm", c =>
-{
-    c.Timeout = Timeout.InfiniteTimeSpan;
-    c.DefaultRequestHeaders.UserAgent.ParseAdd(ProviderIdentity.UserAgent);
-});
-builder.Services.AddHttpClient("probe", c =>
-{
-    c.Timeout = TimeSpan.FromSeconds(15);
-    c.DefaultRequestHeaders.UserAgent.ParseAdd(ProviderIdentity.UserAgent);
-});
-builder.Services.AddHttpClient("fetch", c =>
-{
-    c.Timeout = TimeSpan.FromSeconds(40);
-    c.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; SofiaHarness/0.2)");
-});
-
-builder.Services.AddSingleton<SofiaDb>();
-builder.Services.AddSingleton<IEventBus, EventBus>();
-builder.Services.AddSingleton<ModelCatalog>();
-builder.Services.AddSingleton<ProviderService>();
-builder.Services.AddSingleton<SessionStore>();
-builder.Services.AddSingleton<ChangeTracker>();
-builder.Services.AddSingleton<GitService>();
-builder.Services.AddSingleton<SkillService>();
-builder.Services.AddSingleton<AgentCatalog>();
-builder.Services.AddSingleton<KnowledgeService>();
-builder.Services.AddSingleton<KeepAwakeService>();
-builder.Services.AddSingleton<CommandService>();
-builder.Services.AddSingleton<ContextFiles>();
-builder.Services.AddSingleton<PairingService>();
-builder.Services.AddSingleton<McpManager>();
-builder.Services.AddSingleton<LspManager>();
-builder.Services.AddSingleton<BrowserService>();
-builder.Services.AddSingleton<ProcessManager>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessManager>());
-builder.Services.AddSingleton<IEventHandler, ProcessCleanupHandler>();
-builder.Services.AddSingleton<IEventHandler, BrowserCleanupHandler>();
-builder.Services.AddHostedService<BrowserStartupService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<McpManager>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<LspManager>());
-builder.Services.AddSingleton<ToolRegistry>();
-builder.Services.AddSingleton<ModelGate>();
-builder.Services.AddSingleton<ImageAnalysisService>();
-builder.Services.AddSingleton<RunServices>();
-builder.Services.AddSingleton<AgentService>();
-
-// Event-driven pieces: the dispatcher feeds handlers; the broadcaster feeds SignalR clients.
-builder.Services.AddSingleton<ISessionSearch, SessionSearchIndex>();
-builder.Services.AddSingleton<IEventHandler, TitleHandler>();
-builder.Services.AddSingleton<IEventHandler, SearchIndexHandler>();
-builder.Services.AddHostedService<SearchIndexRebuildService>();
-builder.Services.AddHostedService<EventDispatcher>();
+// The engine: store, providers, agent loop, tools, MCP, LSP, browser, processes and the event pipeline.
+// The server only warns when another process holds the data directory (two servers on one store keep working).
+builder.Services.AddSofiaCore(options);
+// Where this host answers: tools that hand the model a REST endpoint need the real listening address.
+builder.Services.AddSingleton<IBaseUrlProvider, ServerAddressBaseUrl>();
+// Every bus event goes out to SignalR clients.
 builder.Services.AddHostedService<HubBroadcaster>();
-builder.Services.AddHostedService<MaintenanceService>();
-// Pushes `config.changed` when commands, skills, agents or instruction files are edited on disk.
-builder.Services.AddHostedService<ConfigWatcher>();
 
 var app = builder.Build();
 

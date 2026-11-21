@@ -1,0 +1,1918 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using Sofia.Core.Changes;
+using Sofia.Core.Context;
+using Sofia.Core.Data;
+using Sofia.Contracts.Domain;
+using Sofia.Core.Infrastructure;
+using Sofia.Core.Lsp;
+using Sofia.Core.Providers;
+using Sofia.Core.Tools;
+using Sofia.Core.Vcs;
+
+namespace Sofia.Core.Agent;
+
+/// <summary>A unit of work waiting for a run: a user prompt or a compaction request.</summary>
+public sealed record PendingPrompt(string MessageId, string Kind, string Text, string? Expanded, List<Attachment> Attachments)
+{
+    /// <summary>False for the prompt that starts a run: it is consumed at once, so clients need no "waiting" preview.</summary>
+    public bool Announce { get; init; } = true;
+
+    public static PendingPrompt Compact() => new(Ids.New("msg"), "compact", "", null, []);
+
+    /// <summary>Regenerates the next assistant step from the current history without adding a user turn.</summary>
+    public static PendingPrompt Continue() => new(Ids.New("msg"), "continue", "", null, []);
+}
+
+/// <summary>Services shared by every run (resolved once from DI).</summary>
+public sealed class RunServices(
+    SofiaDb db,
+    SessionStore store,
+    ProviderService providers,
+    ToolRegistry tools,
+    ContextFiles contextFiles,
+    SkillService skills,
+    AgentCatalog agentCatalog,
+    KnowledgeService knowledge,
+    ChangeTracker changes,
+    GitService git,
+    ModelGate gate,
+    LspManager lsp,
+    ImageAnalysisService imageAnalysis,
+    ILogger<SessionRun> log)
+{
+    public ModelGate Gate => gate;
+    public SofiaDb Db => db;
+    public SessionStore Store => store;
+    public ProviderService Providers => providers;
+    public ToolRegistry Tools => tools;
+    public ContextFiles ContextFiles => contextFiles;
+    public SkillService Skills => skills;
+    public AgentCatalog AgentCatalog => agentCatalog;
+    public KnowledgeService Knowledge => knowledge;
+    public ChangeTracker Changes => changes;
+    public GitService Git => git;
+    public LspManager Lsp => lsp;
+    public ImageAnalysisService ImageAnalysis => imageAnalysis;
+    public ILogger<SessionRun> Log => log;
+}
+
+/// <summary>
+/// One agent loop for one session (pi-style): stream a step, run its tool calls, repeat
+/// until the model stops calling tools; then drain steering and follow-up prompts.
+/// </summary>
+public sealed class SessionRun : IToolHost
+{
+    public static readonly List<string> PermissionChoices = ["Allow once", "Allow for this session", "Deny"];
+
+    private readonly RunServices _s;
+    private readonly AgentService _agents;
+    private readonly CancellationTokenSource _cts;
+    private readonly object _gate = new();
+    private readonly Queue<PendingPrompt> _steer = new();
+    private readonly Queue<PendingPrompt> _followUps = new();
+    private readonly ConcurrentDictionary<string, (TaskCompletionSource<string> Tcs, Message Card)> _permissions = new();
+    private readonly ConcurrentDictionary<string, (TaskCompletionSource<List<string>> Tcs, Message Card)> _questions = new();
+    private readonly ConcurrentDictionary<string, (SubagentInfo Info, SessionRun Run, TaskCompletionSource<string?> Completion)> _subagentRuns = new();
+    /// <summary>Clock of the request in flight: start → end, minus the time the user spent answering.</summary>
+    private readonly TurnClock _turn = new();
+    private bool _finished;
+    private bool _dropImages;
+    /// <summary>The provider refused image input this run: images are described by the fallback vision model instead of sent.</summary>
+    private bool _blindImages;
+    /// <summary>This turn's fallback-vision runner (null when unset or the chat model can see); reset with the turn context.</summary>
+    private ImageAnalysisService.Runner? _vision;
+    private bool _compactedOnTooLarge;
+    private Message? _current;
+    private bool _askedAboutUnfinished;
+    private DateTime _lastProgressPublish = DateTime.MinValue;
+
+    public SessionRun(RunServices services, AgentService agents, Session session, Workspace workspace, SessionRun? root, CancellationToken parent)
+    {
+        _s = services;
+        _agents = agents;
+        Session = session;
+        Workspace = workspace;
+        Root = root ?? this;
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(parent);
+    }
+
+    public Session Session { get; }
+    public Workspace Workspace { get; }
+    public SessionRun Root { get; }
+    public SandboxPolicy? Sandbox => SandboxPolicy.Resolve(_s.Db.GetConfig(), Workspace, Session);
+    public SandboxPolicy? EffectiveSandbox => Sandbox;
+    /// <summary>Read-before-edit tracker for this run (state lives in SQLite, so the instance is cheap and cacheable).</summary>
+    private ReadTracker? _reads;
+    private ReadTracker Reads => _reads ??= new(_s.Db);
+    public string? LastError { get; private set; }
+    public bool HasPendingQuestion => !_questions.IsEmpty;
+
+    public bool IsFinished
+    {
+        get
+        {
+            lock (_gate) return _finished;
+        }
+    }
+
+    private string Cwd => Workspace.IsFolder ? Workspace.Path : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    // --- queueing ------------------------------------------------------------
+
+    public bool TryEnqueue(PendingPrompt prompt, bool steer)
+    {
+        lock (_gate)
+        {
+            if (_finished) return false;
+            (steer ? _steer : _followUps).Enqueue(prompt);
+            SyncQueue();
+        }
+        _s.Store.SaveSession(Session);
+        return true;
+    }
+
+    /// <summary>Removes a follow-up that has not reached the model yet (steer or queued). Returns false when it is gone or already sent.</summary>
+    public bool TryRemoveQueued(string messageId)
+    {
+        lock (_gate)
+        {
+            if (_finished) return false;
+            if (!RemoveFromQueue(_steer, messageId) && !RemoveFromQueue(_followUps, messageId)) return false;
+            SyncQueue();
+        }
+        _s.Store.SaveSession(Session);
+        return true;
+    }
+
+    private static bool RemoveFromQueue(Queue<PendingPrompt> queue, string messageId)
+    {
+        var items = queue.ToList();
+        var index = items.FindIndex(p => p.MessageId == messageId);
+        if (index < 0) return false;
+        queue.Clear();
+        for (var i = 0; i < items.Count; i++)
+            if (i != index) queue.Enqueue(items[i]);
+        return true;
+    }
+
+    /// <summary>Refreshes the queue fields clients render. Caller holds <c>_gate</c>.</summary>
+    private void SyncQueue()
+    {
+        Session.Queued = _steer.Count + _followUps.Count;
+        Session.QueuedMessages = _steer.Select(p => (Prompt: p, Delivery: "steer"))
+            .Concat(_followUps.Select(p => (Prompt: p, Delivery: "queue")))
+            .Where(x => x.Prompt is { Kind: "prompt", Announce: true })
+            .Select(x => new QueuedMessage(x.Prompt.MessageId, x.Prompt.Text, x.Delivery, x.Prompt.Attachments))
+            .ToList();
+    }
+
+    public void Start() => _ = Task.Run(() => RunAsync());
+
+    public void Abort() => _cts.Cancel();
+
+    private bool HasSteering
+    {
+        get
+        {
+            lock (_gate) return _steer.Count > 0;
+        }
+    }
+
+    // --- main loop -------------------------------------------------------------
+
+    public async Task RunAsync()
+    {
+        var ct = _cts.Token;
+        _s.Gate.Retain(Root.Session.Id);
+        _s.Store.SetStatus(Session, SessionStatus.Working);
+        // The composer clock shows how long the request is taking, so it must keep ticking between steps too
+        // (metrics are otherwise published only while tokens stream).
+        using var beat = new CancellationTokenSource();
+        _ = HeartbeatAsync(beat.Token);
+        var aborted = false;
+        try
+        {
+            while (true)
+            {
+                PendingPrompt next;
+                lock (_gate)
+                {
+                    if (_steer.Count == 0 && _followUps.Count == 0)
+                    {
+                        _finished = true;
+                        break;
+                    }
+                    next = _steer.Count > 0 ? _steer.Dequeue() : _followUps.Dequeue();
+                    SyncQueue();
+                }
+
+                if (next.Kind == "compact")
+                {
+                    _ = await CompactAsync(auto: false, ct);
+                    continue;
+                }
+                // Each request is timed from the moment the prompt is taken, so the composer clock always
+                // shows the latest one.
+                _turn.Restart();
+                PublishMetrics(0);
+                try
+                {
+                    // A new turn: re-read the live facts once (frozen prompt reused, changes become context notes).
+                    _turnPrompt = null;
+                    _vision = null;
+                    _askedAboutUnfinished = false;
+                    if (next.Kind == "continue")
+                    {
+                        // Regenerate from the current history without adding a new user turn (retry of an LLM message).
+                        await RunTurnAsync(ct);
+                    }
+                    else
+                    {
+                        // The model is resolved here too: the turn-context cache (and the `auto` apply_patch filter)
+                        // must not be primed with an unfiltered tool set.
+                        var (provider, model) = ResolveModel();
+                        var (_, _, notes) = await TurnContextAsync(_s.Db.GetConfig(), provider, model, ct);
+                        AddUserMessage(next, contextNotes: notes);
+                        // Only after the message is persisted: a crash replays the change once more instead of losing it.
+                        CommitFacts();
+                        await RunTurnAsync(ct);
+                    }
+                }
+                finally
+                {
+                    RecordTurn();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            aborted = true;
+        }
+        catch (Exception ex)
+        {
+            LastError = ex is ProviderException or InvalidOperationException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+            _s.Log.LogWarning(ex, "Run for session {Session} failed", Session.Id);
+        }
+        finally
+        {
+            beat.Cancel();
+            lock (_gate)
+            {
+                _finished = true;
+                _steer.Clear();
+                _followUps.Clear();
+                SyncQueue();
+            }
+            Cleanup(aborted);
+            _s.Gate.Release(Root.Session.Id);
+            _agents.Finished(this);
+        }
+    }
+
+    /// <summary>Republishes the live readouts while a request runs, so a client that just switched chats converges at once.</summary>
+    private async Task HeartbeatAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+                if (_turn.Running) PublishMetrics(0);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The run ended; the final metrics are published by RecordTurn/Cleanup.
+        }
+    }
+
+    /// <summary>Stores how long the request that just finished took, so the clock survives a chat switch or a reload.</summary>
+    private void RecordTurn()
+    {
+        Session.LastTurnMs = (long)_turn.Elapsed.TotalMilliseconds;
+        Session.LastTurnAt = DateTime.UtcNow;
+        _s.Store.SaveSession(Session);
+        PublishMetrics(0);
+    }
+
+    /// <summary>
+    /// Stops counting time while the run waits on the user (a question or a permission card): the request duration
+    /// measures Sofia's work, not the minutes the answer took. Subagents report the wait to their root run too.
+    /// </summary>
+    private void BeginUserWait()
+    {
+        _turn.BeginWait();
+        if (Root != this) Root._turn.BeginWait();
+    }
+
+    private void EndUserWait()
+    {
+        _turn.EndWait();
+        if (Root != this) Root._turn.EndWait();
+    }
+
+    private void Cleanup(bool aborted)
+    {
+        // A run that ends while a card is waiting would leave it clickable forever: AskAsync/permission
+        // finally-blocks settle them. Here we only release anything still pending.
+        foreach (var (_, pending) in _permissions) pending.Tcs.TrySetCanceled();
+        foreach (var (_, pending) in _questions) pending.Tcs.TrySetCanceled();
+
+        if (_current is { } current)
+        {
+            var changed = false;
+            lock (current)
+            {
+                foreach (var call in current.ToolCalls ?? [])
+                {
+                    if (call.Completed) continue;
+                    call.Status = "error";
+                    call.Error = aborted ? "Aborted." : "Interrupted.";
+                    call.Duration = "—";
+                    call.Completed = true;
+                    changed = true;
+                }
+                if (aborted && current.Error is null)
+                {
+                    current.Error = "Stopped by the user.";
+                    changed = true;
+                }
+                if (LastError is not null && current.Error is null)
+                {
+                    current.Error = LastError;
+                    changed = true;
+                }
+            }
+            if (changed) _s.Store.UpdateMessage(Session, current);
+        }
+        else if (LastError is not null)
+        {
+            _s.Store.AddMessage(Session, new Message { Role = "assistant", Error = LastError, Model = ModelLabel() });
+        }
+
+        _s.Store.SaveSession(Session);
+        _s.Store.SetStatus(Session, LastError is null ? SessionStatus.Idle : SessionStatus.Error, LastError);
+        PublishMetrics(0);
+    }
+
+    private void AddUserMessage(PendingPrompt prompt, bool steered = false, List<string>? contextNotes = null)
+    {
+        _s.Store.AddMessage(Session, new Message
+        {
+            Id = prompt.MessageId,
+            Role = "user",
+            Text = prompt.Text,
+            Expanded = prompt.Expanded,
+            Attachments = prompt.Attachments.Count > 0 ? prompt.Attachments : null,
+            Steered = steered,
+            ContextNotes = contextNotes,
+        });
+    }
+
+    private void InjectSteering()
+    {
+        while (true)
+        {
+            PendingPrompt next;
+            lock (_gate)
+            {
+                if (_steer.Count == 0) return;
+                next = _steer.Dequeue();
+                SyncQueue();
+            }
+            if (next.Kind == "compact") continue;
+            AddUserMessage(next, steered: true);
+        }
+    }
+
+    private (ProviderConfig Provider, ModelInfo Model) ResolveModel()
+    {
+        if (string.IsNullOrEmpty(Session.ModelId))
+        {
+            Session.ModelId = _s.Providers.DefaultModelId();
+            _s.Store.SaveSession(Session);
+        }
+        var resolved = _s.Providers.Resolve(Session.ModelId);
+        if (resolved is null)
+            throw new InvalidOperationException(string.IsNullOrEmpty(Session.ModelId)
+                ? "No model is available. Start a local runtime (Unsloth, Ollama, LM Studio, llama.cpp, vLLM) or add a provider in Settings → Models."
+                : $"Model '{Session.ModelId}' is not available. Pick another model.");
+        if (!resolved.Value.Provider.Enabled) throw new InvalidOperationException($"Provider '{resolved.Value.Provider.Name}' is disabled.");
+        // The provider rejected image input this run: keep the same model but stop sending it pictures (the fallback
+        // vision model describes them instead).
+        return _blindImages ? (resolved.Value.Provider, resolved.Value.Model.WithoutVision()) : resolved.Value;
+    }
+
+    /// <summary>
+    /// This turn's view of the configured fallback vision model (null when unset or unusable). Created once per turn so
+    /// descriptions cached by an earlier step are reused; the run analyses images a history build asked for and rebuilds.
+    /// </summary>
+    private ImageAnalysisService.Runner? VisionFallback(ModelInfo model)
+    {
+        if (_vision is { } cached) return cached;
+        // A chat model that can see images never needs the fallback: keep the common path free of config and catalog lookups.
+        if (model.CanSeeImages) return null;
+        var fallback = _s.ImageAnalysis.Resolve(model.Id);
+        if (fallback is null) return null;
+        return _vision = _s.ImageAnalysis.For(fallback.Value.Provider, fallback.Value.Model);
+    }
+
+    /// <summary>The history builder's hook for one runner (null when there is none).</summary>
+    private static HistoryBuilder.ImageDescription? Describe(ImageAnalysisService.Runner? vision) =>
+        vision is null ? null : new HistoryBuilder.ImageDescription(vision.Describe);
+
+    /// <summary>History for one request: built with the fallback's descriptions, and — when images still have none —
+    /// analysed once and rebuilt. The second build is identical whenever nothing new was described.</summary>
+    private async Task<List<ChatMessage>> BuildHistoryAsync(ImageAnalysisService.Runner? vision, ModelInfo model, HistoryBuilder.PruneOptions? prune, CancellationToken ct)
+    {
+        var history = HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune, Describe(vision));
+        if (vision is null || vision.Pending.Count == 0) return history;
+        await vision.AnalyzePendingAsync(Session.Id, ct);
+        return vision.Pending.Count > 0 ? history : HistoryBuilder.Build(_s.Db.SessionMessages(Session.Id), model, !_dropImages, prune, vision.Describe);
+    }
+
+    /// <summary>
+    /// Single-client models serve one conversation at a time. The root conversation (session + its subagents) leases the model
+    /// on first use and keeps it until the root run ends, so the runtime never switches context between conversations.
+    /// Waiting conversations are served subagents first, then sessions.
+    /// </summary>
+    private async Task<IDisposable?> AcquireModelAsync(ModelInfo model, CancellationToken ct)
+    {
+        if (!_s.Providers.IsSingleClient(model.Id)) return null;
+        var waited = false;
+        await _s.Gate.AcquireAsync(model.Id, Root.Session.Id, Session.ParentId is not null, ct, () =>
+        {
+            waited = true;
+            _s.Store.SetStatus(Session, SessionStatus.Waiting);
+        });
+        // The lease above is per root conversation; the slot serialises the actual streams inside it.
+        var lease = await _s.Gate.AcquireSlotAsync(model.Id, Session.Id, ct, () =>
+        {
+            waited = true;
+            _s.Store.SetStatus(Session, SessionStatus.Waiting);
+        });
+        if (waited) _s.Store.SetStatus(Session, SessionStatus.Working);
+        return lease;
+    }
+
+    private string ModelLabel() => _s.Providers.Resolve(Session.ModelId)?.Model.Label ?? Session.ModelId;
+
+    private async Task RunTurnAsync(CancellationToken ct)
+    {
+        // The request prefix (system prompt + tool schemas) is frozen for the whole CONVERSATION, not just the turn: it is
+        // written once and stored on the session. Providers cache on the longest common prefix, so one changed character
+        // would re-bill every token. Whatever changed since (notes, branch, date, mode, language, context files, skills)
+        // arrives as <context_updates> on the newest user message (see `TurnContextAsync`), appended where it never
+        // invalidates the cache. Only an agent or tool-set change re-freezes, and then the prefix is doomed anyway.
+        // History stays append-only within a run (see `HistoryBuilder`).
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            // Resolved before the turn context: `auto` apply_patch exposure depends on the provider/model.
+            var (provider, model) = ResolveModel();
+            var config = _s.Db.GetConfig();
+            Session.Context.Limit = model.ContextLength;
+            var (system, tools, _) = await TurnContextAsync(config, provider, model, ct);
+            // The frozen prefix (system prompt + tool schemas) rides on every request of this conversation. Estimate it
+            // where the request is already built and persist the split so the composer meter can show system/tools/
+            // messages; `Used` keeps covering them plus the history, so re-writing it each step stays consistent even
+            // for a session that has never streamed a full step.
+            var toolSpecs = tools.Select(t => new ToolSpec(t.Name, t.Description, t.Parameters)).ToList();
+            Session.Context.SystemTokens = Text.EstimateTokens(system);
+            Session.Context.ToolTokens = toolSpecs.Sum(t => Text.EstimateTokens(JsonSerializer.Serialize(t, Json.Options)));
+
+            HistoryBuilder.PruneOptions? prune = Session.PrunedThroughSeq > 0 ? new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars) : null;
+            var vision = VisionFallback(model);
+            var history = await BuildHistoryAsync(vision, model, prune, ct);
+            int EstimatedInput(HistoryBuilder.PruneOptions? p)
+            {
+                // Same build as the request (same prune watermark, same image drop), so the estimate matches what is sent.
+                var (messagesTok, images) = HistoryBuilder.EstimateBreakdown(_s.Db.SessionMessages(Session.Id), model, !_dropImages, p, Describe(vision));
+                return Session.Context.SystemTokens + Session.Context.ToolTokens + messagesTok + images * 1000;
+            }
+            var estimatedInput = EstimatedInput(prune);
+
+            // Prune old tool results before compaction: cheaper (no model call), and the watermark is batched so the
+            // prompt cache only dies once per prune. Runs at most once per step, then falls through to the compact check.
+            if (config.PruneToolResults && Math.Max(Session.Context.Used, estimatedInput) > config.PruneThreshold * model.ContextLength)
+            {
+                var pruned = await PruneAsync(config, model, estimatedInput, ct);
+                if (pruned is not null)
+                {
+                    prune = new HistoryBuilder.PruneOptions(Session.PrunedThroughSeq, config.PruneMinChars);
+                    history = await BuildHistoryAsync(vision, model, prune, ct);
+                    estimatedInput = EstimatedInput(prune);
+                }
+            }
+
+            // `Context.Used` only reflects the previous response; tool results and the new user message added since then
+            // are not in it. Compare against the estimate of what is about to be sent as well, otherwise a large tool
+            // output pushes the next request past the window before compaction ever triggers.
+            var threshold = config.CompactThreshold * model.ContextLength;
+            if (config.AutoCompact && Math.Max(Session.Context.Used, estimatedInput) > threshold)
+            {
+                if (await CompactAsync(auto: true, ct))
+                {
+                    history = await BuildHistoryAsync(vision, model, prune, ct);
+                    estimatedInput = EstimatedInput(prune);
+                }
+            }
+            var room = model.ContextLength - estimatedInput - 512;
+            var request = new ChatRequest
+            {
+                Model = model.ModelId,
+                System = system,
+                Messages = history,
+                Tools = toolSpecs,
+                Reasoning = Session.ReasoningMode,
+                MaxTokens = Math.Max(1024, Math.Min(model.MaxOutput, room)),
+                ModelSupportsReasoning = model.Reasoning,
+                SessionId = Session.Id,
+            };
+
+            var assistant = _s.Store.AddMessage(Session, new Message
+            {
+                Role = "assistant",
+                Model = model.Label,
+                ModelId = model.Id,
+                ReasoningMode = Session.ReasoningMode,
+            });
+            _current = assistant;
+
+            List<ToolCall> calls = [];
+            string finish = "stop";
+            try
+            {
+                (calls, finish) = await StreamStepAsync(provider, model, request, assistant, tools, estimatedInput, ct);
+            }
+            catch (Exception ex) when (RetryPolicy.IsRequestTooLarge(ex))
+            {
+                // Drop the failed (empty) assistant card and retry without the heaviest parts of the request.
+                _current = null;
+                try { _s.Store.DeleteMessages(Session, [assistant.Id]); } catch { }
+
+                if (!_dropImages)
+                {
+                    _dropImages = true;
+                    _s.Log.LogWarning("Request too large; retrying without inline images.");
+                    continue;
+                }
+                if (!_compactedOnTooLarge)
+                {
+                    _compactedOnTooLarge = true;
+                    try { await CompactAsync(auto: true, ct); } catch { }
+                    _s.Log.LogWarning("Request too large; retrying after compaction.");
+                    continue;
+                }
+                throw;
+            }
+            catch (Exception ex) when (!_blindImages && RetryPolicy.IsImageRejected(ex))
+            {
+                // The endpoint refused the image input although metadata claimed vision. Drop the failed card and
+                // retry the step blind: images go through the fallback vision model as text descriptions.
+                _current = null;
+                try { _s.Store.DeleteMessages(Session, [assistant.Id]); } catch { }
+                _blindImages = true;
+                _vision = null;
+                _s.Log.LogWarning("Provider rejected image input ({Reason}); retrying with fallback image descriptions.", Text.FirstLine(ex.Message, 200));
+                continue;
+            }
+            if (calls.Count == 0)
+            {
+                if (finish == "length")
+                {
+                    lock (assistant) assistant.Error ??= "The reply was cut off at the output token limit.";
+                    _s.Store.UpdateMessage(Session, assistant);
+                }
+
+                // If the model stopped with unfinished tasks still on its list, ask it to either finish them or
+                // explain why they are skipped, so nothing is silently forgotten.
+                if (!_askedAboutUnfinished)
+                {
+                    var unfinished = _s.Db.Tasks.Find(t => t.SessionId == Session.Id
+                        && t.Status != TaskItemStatus.Completed && t.Status != TaskItemStatus.Cancelled).ToList();
+                    if (unfinished.Count > 0)
+                    {
+                        _askedAboutUnfinished = true;
+                        var lines = unfinished.Select(t => $"- ({t.Id}) {t.Title} [{t.Status}]");
+                        _s.Store.AddMessage(Session, new Message
+                        {
+                            Role = "user",
+                            Text = $"Your task list still has {unfinished.Count} unfinished item(s):\n{string.Join("\n", lines)}\n\nBefore you finish, either complete (or cancel) each of them and update the list, or explain clearly why they are left open.",
+                        });
+                        continue;
+                    }
+                }
+                return;
+            }
+
+            await ExecuteToolsAsync(assistant, calls, tools, ct);
+            InjectSteering();
+        }
+    }
+
+    private (string System, List<ITool> Tools, List<string>? Delta, string Agent)? _turnPrompt;
+    private Dictionary<string, string>? _pendingFacts;
+
+    /// <summary>
+    /// The system prompt, tool set and context delta of the current turn. The prompt is frozen on the session for the whole
+    /// conversation; it is rebuilt (and the delta dropped) only when the agent or the tool-schema fingerprint changed.
+    /// Otherwise the live facts are diffed against <see cref="Session.PromptFacts"/>. The result is cached in
+    /// <c>_turnPrompt</c> (reset by <c>RunAsync</c> at turn start) so every step reuses the same system string and delta.
+    /// </summary>
+    private async Task<(string System, List<ITool> Tools, List<string>? Delta)> TurnContextAsync(ServerConfig config, ProviderConfig provider, ModelInfo model, CancellationToken ct)
+    {
+        if (_turnPrompt is { } cached && cached.Agent == Session.Agent) return (cached.System, cached.Tools, cached.Delta);
+        var agent = _s.AgentCatalog.Get(Session.Agent, Workspace.IsFolder ? Workspace.Path : null);
+        var tools = _s.Tools.For(agent, Workspace, Session.Id);
+        // Subagents never ask the user or spawn further subagents.
+        if (Session.ParentId is not null) tools.RemoveAll(t => t.Kind is ToolKind.Agent or ToolKind.Interactive);
+        // `apply_patch` exposure: auto keeps it only for OpenAI-family models (Codex-trained), because small local
+        // models do worse with a second editing format. The tool set change re-freezes the prompt, which is expected.
+        if (tools.Any(t => t.Name == "apply_patch") && !ApplyPatchExposure(config.ApplyPatch, provider, model))
+            tools.RemoveAll(t => t.Name == "apply_patch");
+        var fingerprint = Text.Sha256(string.Join("\n", tools.Select(t => t.Name + "\u0000" + Text.FirstLine(t.Description, 400))));
+
+        var (snapshot, overrides, shell) = await PromptSnapshotAsync(agent, config, ct);
+        string system;
+        List<string>? delta = null;
+        if (Session.FrozenPrompt is null || Session.FrozenAgent != Session.Agent || Session.FrozenTools != fingerprint)
+        {
+            system = SystemPromptBuilder.Build(agent, Workspace, Session, tools, snapshot.ContextFiles, snapshot.Skills, overrides, shell,
+                snapshot.Branch, snapshot.Notes, Sandbox);
+            Session.FrozenPrompt = system;
+            Session.FrozenAgent = Session.Agent;
+            Session.FrozenTools = fingerprint;
+            Session.PromptFacts = snapshot.Facts;
+            _pendingFacts = null;
+            _s.Store.SaveSession(Session);
+        }
+        else
+        {
+            system = Session.FrozenPrompt;
+            delta = ContextUpdates.Build(Session.PromptFacts, snapshot);
+            // Advanced only after the user message carrying the delta is persisted (see CommitFacts).
+            _pendingFacts = delta is null ? null : snapshot.Facts;
+        }
+        _turnPrompt = (system, tools, delta, Session.Agent);
+        return (system, tools, delta);
+    }
+
+    /// <summary>Marks the pending context delta as delivered; called after the user message holding it was stored.</summary>
+    private void CommitFacts()
+    {
+        if (_pendingFacts is null) return;
+        Session.PromptFacts = _pendingFacts;
+        _pendingFacts = null;
+        _s.Store.SaveSession(Session);
+    }
+
+    private async Task<(PromptSnapshot Snapshot, (string? Replace, string? Append) Overrides, ShellSpec Shell)> PromptSnapshotAsync(
+        AgentDefinition agent, ServerConfig config, CancellationToken ct)
+    {
+        var dir = Workspace.IsFolder ? Workspace.Path : null;
+        string? branch = null;
+        if (dir is not null)
+        {
+            try
+            {
+                var info = await _s.Git.InfoAsync(dir, ct);
+                if (info.IsRepo) branch = info.Branch;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Git is optional.
+            }
+        }
+        var skills = _s.Skills.List(dir);
+        var active = skills.Where(s => Session.ActiveSkills.Contains(s.Id)).ToList();
+        var overrides = _s.ContextFiles.SystemOverrides(dir);
+        var shell = ProcessRunner.ResolveShell(config.Shell);
+        var snapshot = ContextUpdates.Snapshot(_s.ContextFiles.Load(dir), skills, active, _s.Knowledge.ForPrompt(Workspace.Id, Session.Agent),
+            branch, Session.PermissionMode, Session.Language, shell.Name, overrides);
+
+        // Subfolder instruction files (injected on demand through tool results) join the volatile facts as `sub:`
+        // entries, so an edit or removal of an already-loaded file is announced at the next turn start through the
+        // standard <context_updates> path. Facts carry "" for a deleted file (announced once as a removal); entries
+        // whose delivering message was compacted or pruned away are dropped entirely — no announcement, the content
+        // is re-injected on the next touch of the folder.
+        if (dir is not null && Session.SubContextFiles is { Count: > 0 } sub)
+        {
+            var live = _s.Db.SessionMessages(Session.Id);
+            var dropped = false;
+            foreach (var key in sub.Keys.ToList())
+            {
+                var entry = sub[key];
+                if (entry.Seq > 0 && live.Any(m => m.Seq == entry.Seq && m.Compacted)) { sub.Remove(key); dropped = true; }
+                else if (entry.Seq <= Session.PrunedThroughSeq) { sub.Remove(key); dropped = true; }
+            }
+            foreach (var key in sub.Keys)
+            {
+                string? content;
+                try { content = File.ReadAllText(Path.Combine(dir, key)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    snapshot.Facts["sub:" + key] = "";   // deleted: announced once, the map entry stays as a tombstone
+                    continue;
+                }
+                // Always present in the current facts (even when unchanged), so Build() compares instead of
+                // announcing a removal; an edit flips Old != Cur and earns exactly one refresh line.
+                snapshot.Facts["sub:" + key] = Text.Sha256(content);
+            }
+            if (dropped) _s.Store.SaveSession(Session);   // persist so a restart does not re-add the dropped entries
+        }
+        return (snapshot, overrides, shell);
+    }
+
+    // --- streaming -------------------------------------------------------------
+
+    /// <summary>
+    /// Runs one model step, repeating it while the provider fails in a way that means "this request never got an answer":
+    /// a gateway 499/408/429/5xx, a socket dropped mid-stream, a provider timeout, or a stream that closed without a single
+    /// event. Without this, one hiccup of a local runtime ends the conversation on the first failed request; see
+    /// <see cref="RetryPolicy"/> for what counts as transient. A retry restarts the step from scratch — keeping what the
+    /// failed attempt streamed would splice two generations of the same answer together.
+    /// </summary>
+    private async Task<(List<ToolCall> Calls, string Finish)> StreamStepAsync(ProviderConfig provider, ModelInfo model, ChatRequest request,
+        Message assistant, List<ITool> tools, int estimatedInput, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var lastAttempt = attempt >= RetryPolicy.MaxAttempts;
+            try
+            {
+                var (calls, finish, produced) = await StreamOnceAsync(provider, model, request, assistant, tools, estimatedInput, ct);
+                // A stream that closed without producing anything is the same failure as a dropped connection: runtimes
+                // answer 200 and hang up. The step body already wrote "empty response" on the card; repeat it first.
+                if (produced || lastAttempt) return (calls, finish);
+                await RetryStepAsync(assistant, "The model returned an empty response.", attempt, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && RetryPolicy.IsTransient(ex))
+            {
+                // Out of attempts: the error reaches the chat and ends the run, exactly as it did before retries existed.
+                if (lastAttempt)
+                {
+                    ClearRetry(assistant);
+                    throw;
+                }
+                await RetryStepAsync(assistant, RetryPolicy.Reason(ex), attempt, ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// What happens between two attempts of one step: drop what the failed attempt streamed (its tool calls never ran),
+    /// show which attempt is starting and why, then wait out the backoff.
+    /// </summary>
+    private async Task RetryStepAsync(Message assistant, string reason, int attempt, CancellationToken ct)
+    {
+        var wait = RetryPolicy.Delay(attempt);
+        lock (assistant)
+        {
+            assistant.Text = "";
+            assistant.Reasoning = null;
+            assistant.ReasoningSignature = null;
+            assistant.ToolCalls = null;
+            assistant.Error = null;
+            assistant.Retry = new RetryNotice { Attempt = attempt + 1, Attempts = RetryPolicy.MaxAttempts, Error = reason };
+        }
+        _s.Store.UpdateMessage(Session, assistant);
+        _s.Log.LogWarning("Step of session {Session} failed ({Reason}); starting attempt {Attempt}/{Attempts} in {Delay}s",
+            Session.Id, reason, attempt + 1, RetryPolicy.MaxAttempts, wait.TotalSeconds);
+        await Task.Delay(wait, ct);
+    }
+
+    /// <summary>Drops a retry notice that has stopped being true (the run gave up on the step).</summary>
+    private void ClearRetry(Message assistant)
+    {
+        lock (assistant)
+        {
+            if (assistant.Retry is null) return;
+            assistant.Retry = null;
+        }
+        _s.Store.UpdateMessage(Session, assistant);
+    }
+
+    private async Task<(List<ToolCall> Calls, string Finish, bool Produced)> StreamOnceAsync(ProviderConfig provider, ModelInfo model, ChatRequest request,
+        Message assistant, List<ITool> tools, int estimatedInput, CancellationToken ct)
+    {
+        using var slot = await AcquireModelAsync(model, ct);
+        var client = _s.Providers.CreateClient(provider, model.ModelId);
+        var builders = new SortedDictionary<int, (ToolCall Call, StringBuilder Args)>();
+        var stepClock = Stopwatch.StartNew();
+        TimeSpan? firstToken = null;
+        var approxOut = 0;
+        Usage? usage = null;
+        double? reportedTps = null;
+        var finish = "stop";
+        var lastPublish = DateTime.MinValue;
+
+        double LiveTps()
+        {
+            if (firstToken is null) return 0;
+            var seconds = (stepClock.Elapsed - firstToken.Value).TotalSeconds;
+            return seconds > 0.2 ? approxOut / seconds : 0;
+        }
+
+        await foreach (var ev in client.StreamAsync(request, ct))
+        {
+            switch (ev)
+            {
+                case TextDelta t when t.Text.Length > 0:
+                    firstToken ??= stepClock.Elapsed;
+                    approxOut += Text.EstimateTokens(t.Text);
+                    lock (assistant) assistant.Text += t.Text;
+                    _s.Store.Delta(Session, assistant, "text", t.Text);
+                    break;
+                case ReasoningDelta r when r.Text.Length > 0:
+                    firstToken ??= stepClock.Elapsed;
+                    approxOut += Text.EstimateTokens(r.Text);
+                    lock (assistant) assistant.Reasoning = (assistant.Reasoning ?? "") + r.Text;
+                    _s.Store.Delta(Session, assistant, "reasoning", r.Text);
+                    break;
+                case ReasoningSignature sig:
+                    lock (assistant) assistant.ReasoningSignature = (assistant.ReasoningSignature ?? "") + sig.Signature;
+                    break;
+                case ToolCallStarted started:
+                    {
+                        firstToken ??= stepClock.Elapsed;
+                        var call = new ToolCall { Id = started.Id, Name = started.Name, Summary = started.Name };
+                        builders[started.Index] = (call, new StringBuilder());
+                        lock (assistant) (assistant.ToolCalls ??= []).Add(call);
+                        _s.Store.UpdateMessage(Session, assistant, persist: false);
+                        break;
+                    }
+                case ToolCallArgumentsDelta delta:
+                    if (builders.TryGetValue(delta.Index, out var builder))
+                    {
+                        builder.Args.Append(delta.Delta);
+                        approxOut += Text.EstimateTokens(delta.Delta);
+                    }
+                    break;
+                case UsageReported u:
+                    usage = u.Usage;
+                    reportedTps = u.TokensPerSecond;
+                    break;
+                case StreamFinished f:
+                    finish = f.Reason;
+                    break;
+            }
+            if (DateTime.UtcNow - lastPublish > TimeSpan.FromMilliseconds(250))
+            {
+                lastPublish = DateTime.UtcNow;
+                PublishMetrics(LiveTps());
+            }
+        }
+
+        var byName = tools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
+        var calls = new List<ToolCall>();
+        var produced = false;
+        lock (assistant)
+        {
+            foreach (var (call, args) in builders.Values)
+            {
+                call.Arguments = args.ToString();
+                try
+                {
+                    var parsed = Args.Parse(call.Arguments);
+                    // Re-serialise so duplicate keys never reach the history replayed to providers.
+                    call.Arguments = parsed.ToJsonString();
+                    call.Input = parsed.ToJsonString(Json.Indented);
+                    if (byName.TryGetValue(call.Name, out var tool))
+                    {
+                        var summary = tool.Summarize(parsed);
+                        call.Summary = string.IsNullOrWhiteSpace(summary) ? call.Name : summary;
+                    }
+                }
+                catch (ToolArgumentException)
+                {
+                    call.Input = call.Arguments;
+                }
+                calls.Add(call);
+            }
+
+            usage ??= new Usage { Input = estimatedInput, Output = approxOut };
+            usage.Cost = model.Cost(usage);
+            assistant.Usage = usage;
+            assistant.DurationMs = (long)stepClock.Elapsed.TotalMilliseconds;
+            produced = !string.IsNullOrWhiteSpace(assistant.Text) || !string.IsNullOrWhiteSpace(assistant.Reasoning) || calls.Count > 0;
+            if (!produced) assistant.Error = "The model returned an empty response.";
+            // Any attempt that ran to the end closes the retry cycle: `StreamStepAsync` re-sets the notice when this
+            // emptiness is worth repeating, so a card never keeps a stale "retrying" line.
+            assistant.Retry = null;
+        }
+
+        Session.Usage.Add(usage);
+        Session.Context = new ContextInfo { Used = (int)Math.Min(int.MaxValue, usage.Input + usage.Output), Limit = model.ContextLength };
+        var streamSeconds = firstToken is null ? 0 : (stepClock.Elapsed - firstToken.Value).TotalSeconds;
+        var tps = reportedTps ?? (streamSeconds > 0 ? usage.Output / streamSeconds : 0);
+        _s.Store.UpdateMessage(Session, assistant);
+        _s.Store.SaveSession(Session);
+        PublishMetrics(tps);
+        return (calls, finish, produced);
+    }
+
+    private double _lastTps;
+
+    private void PublishMetrics(double tps)
+    {
+        if (tps > 0) _lastTps = tps;
+        var model = _s.Providers.Resolve(Session.ModelId)?.Model;
+        _s.Store.PublishMetrics(Session, new
+        {
+            // Live clock of the request in flight (0 between runs), plus what the last one took: clients show
+            // `durationMs` while the chat is busy and `lastTurnMs` when it is idle.
+            durationMs = (long)_turn.Elapsed.TotalMilliseconds,
+            lastTurnMs = Session.LastTurnMs,
+            lastTurnAt = Session.LastTurnAt,
+            tokensPerSec = Math.Round(_lastTps, 1),
+            usage = Session.Usage,
+            cost = Session.Usage.Cost,
+            costAvailable = model is { Local: false } && (model.InputPrice > 0 || model.OutputPrice > 0),
+            context = Session.Context,
+        });
+    }
+
+    // --- tools -------------------------------------------------------------------
+
+    private async Task ExecuteToolsAsync(Message assistant, List<ToolCall> calls, List<ITool> tools, CancellationToken ct)
+    {
+        var byName = tools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
+        var parallel = calls.Count > 1 && calls.All(c => byName.TryGetValue(c.Name, out var t) && t.Kind is ToolKind.Read or ToolKind.Network or ToolKind.Agent);
+        if (parallel)
+        {
+            await Task.WhenAll(calls.Select(c => ExecuteOneAsync(assistant, c, byName, ct)));
+            return;
+        }
+        for (var i = 0; i < calls.Count; i++)
+        {
+            if (HasSteering)
+            {
+                // pi semantics: a steering message skips the remaining tool calls of the step.
+                foreach (var skipped in calls.Skip(i))
+                    Complete(assistant, skipped, ToolResult.Fail("Skipped: the user sent a new message before this tool ran."), TimeSpan.Zero);
+                return;
+            }
+            await ExecuteOneAsync(assistant, calls[i], byName, ct);
+        }
+    }
+
+    private async Task ExecuteOneAsync(Message assistant, ToolCall call, Dictionary<string, ITool> byName, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        ToolResult result;
+        try
+        {
+            if (!byName.TryGetValue(call.Name, out var tool))
+            {
+                result = ToolResult.Fail($"Unknown tool '{call.Name}'. Available tools: {string.Join(", ", byName.Keys)}.");
+            }
+            else
+            {
+                var args = Args.Parse(call.Arguments);
+                var denial = await AuthorizeAsync(tool, call, args, ct);
+                if (denial is not null)
+                {
+                    result = ToolResult.Fail(denial);
+                }
+                else
+                {
+                    var ctx = new ToolContext
+                    {
+                        Session = Session,
+                        Workspace = Workspace,
+                        Cwd = Cwd,
+                        Message = assistant,
+                        Call = call,
+                        Config = _s.Db.GetConfig(),
+                        Changes = _s.Changes,
+                        Host = this,
+                        Sandbox = Sandbox,
+                        Lsp = Workspace.IsFolder ? _s.Lsp : null,
+                        Reads = Reads,
+                    };
+                    result = await tool.ExecuteAsync(ctx, args, ct);
+                }
+            }
+        }
+        catch (ToolArgumentException ex)
+        {
+            result = ToolResult.Fail($"{ex.Message} Check the tool's parameters and try again.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            Complete(assistant, call, ToolResult.Fail("Aborted."), sw.Elapsed);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            result = ToolResult.Fail($"{ex.GetType().Name}: {ex.Message}");
+        }
+        Complete(assistant, call, result, sw.Elapsed);
+    }
+
+    private static readonly HashSet<string> FileTools = new(StringComparer.Ordinal) { "read", "write", "edit", "ls", "find", "grep" };
+
+    /// <summary>The explicit path argument of a file tool, or null (grep/find over the whole tree must not inject).</summary>
+    private static string? TouchedPath(ToolCall call)
+    {
+        if (!FileTools.Contains(call.Name)) return null;
+        try
+        {
+            var args = Args.Parse(call.Arguments);
+            return Args.Optional(args, "path", "file_path", "filePath");
+        }
+        catch (ToolArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private void Complete(Message assistant, ToolCall call, ToolResult result, TimeSpan elapsed)
+    {
+        var max = _s.Db.GetConfig().MaxToolOutput;
+        lock (assistant)
+        {
+            call.Status = result.IsError ? "error" : "success";
+            var display = Text.Truncate(result.Output, 20_000);
+            if (result.IsError) call.Error = display;
+            else call.Output = display;
+            call.Result = Text.Truncate(result.Output, max);
+            call.Duration = elapsed == TimeSpan.Zero ? "—" : Text.Duration(elapsed);
+            if (result.Images is { Count: > 0 }) call.Images = result.Images;
+            // Subfolder AGENTS.md/CLAUDE.md discovered by this call are appended to the model-facing result only
+            // (the UI keeps the plain output). Appending to the newest tool result keeps the history append-only,
+            // so the prompt cache is never invalidated. The lock above serialises parallel calls of one step.
+            if (!result.IsError && assistant.Seq > 0) InjectSubfolderInstructions(assistant, call);
+            call.Completed = true;
+        }
+        _s.Store.UpdateMessage(Session, assistant);
+    }
+
+    /// <summary>
+    /// Appends the AGENTS.md/CLAUDE.md of every subfolder between the workspace root and the touched file to this
+    /// tool result — once per conversation per file, or again when the file changed (including the agent editing it).
+    /// </summary>
+    private void InjectSubfolderInstructions(Message assistant, ToolCall call)
+    {
+        if (!Workspace.IsFolder) return;
+        var path = TouchedPath(call);
+        if (string.IsNullOrWhiteSpace(path)) return;
+        List<ContextFile> candidates;
+        try
+        {
+            candidates = _s.ContextFiles.SubfolderFiles(Workspace.Path, PathUtil.Resolve(Cwd, path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return;
+        }
+        if (candidates.Count == 0) return;
+
+        var map = Session.SubContextFiles ??= new Dictionary<string, SubContextEntry>();
+        var additions = new List<string>();
+        foreach (var file in candidates)
+        {
+            var key = PathUtil.Relative(Workspace.Path, file.Path).Replace('\\', '/');
+            var hash = Text.Sha256(file.Content);
+            if (map.TryGetValue(key, out var entry) && entry.Hash == hash) continue;
+            map[key] = new SubContextEntry { Hash = hash, Seq = assistant.Seq };
+            additions.Add(ContextUpdates.RenderSubfolderInstructions(key, file.Content));
+            // Seed the frozen facts with what was just delivered, so the next turn's diff does not announce a change
+            // for content the model already saw in this tool result.
+            if (Session.PromptFacts is { } facts) facts["sub:" + key] = hash;
+        }
+        if (additions.Count == 0) return;
+
+        call.Result = (call.Result ?? "") + string.Join("", additions);
+        _s.Store.SaveSession(Session);   // persisted so a resumed session does not re-inject what the model saw
+    }
+
+    /// <summary>
+    /// Whether `apply_patch` is offered for this provider/model under the configured exposure mode. `auto` keeps it
+    /// only for OpenAI-family models: the Responses API, any model id that looks like a GPT/o-series/Codex model
+    /// (this also catches OpenRouter-style `openai/gpt-*` ids on proxy providers) or an openai-flavoured provider.
+    /// </summary>
+    public static bool ApplyPatchExposure(string mode, ProviderConfig provider, ModelInfo model) => mode switch
+    {
+        "always" => true,
+        "never" => false,
+        _ => provider.Type == "openai-responses"
+             || string.Equals(provider.Flavor, "openai", StringComparison.OrdinalIgnoreCase)
+             || IsOpenAiFamilyModel(model.ModelId),
+    };
+
+    /// <summary>True for model ids that look like GPT / o-series / Codex models (case-insensitive substring match).</summary>
+    public static bool IsOpenAiFamilyModel(string modelId)
+    {
+        if (string.IsNullOrEmpty(modelId)) return false;
+        var id = modelId.ToLowerInvariant();
+        return id.Contains("gpt-", StringComparison.Ordinal)
+            || id.Contains("codex", StringComparison.Ordinal)
+            || Regex.IsMatch(id, "(^|/)o\\d");
+    }
+
+    /// <summary>Removes injected subfolder instructions whose delivering message is no longer in the model's view.</summary>
+    private void DropDeliveredSubContext(long throughSeq, bool save)
+    {
+        if (Session.SubContextFiles is not { Count: > 0 } map) return;
+        var removed = false;
+        foreach (var key in map.Where(kv => kv.Value.Seq <= throughSeq).Select(kv => kv.Key).ToList())
+        {
+            map.Remove(key);
+            removed = true;
+        }
+        if (removed && save) _s.Store.SaveSession(Session);
+    }
+
+    // --- tool-result pruning -------------------------------------------------------
+
+    /// <summary>
+    /// Advances the persisted pruning watermark to just before the last <c>PruneKeepSteps</c> assistant steps that call
+    /// tools, in one batch. Hysteresis: it only fires when the estimated savings are at least 10% of the context
+    /// window, so a cache invalidation buys real space and happens rarely. Returns the number of pruned results.
+    /// </summary>
+    private async Task<int?> PruneAsync(ServerConfig config, ModelInfo model, int currentEstimate, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var messages = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).OrderBy(m => m.Seq).ToList();
+        var (keepSeq, saved) = ComputePruneWatermark(messages, Session.PrunedThroughSeq, config.PruneKeepSteps, config.PruneMinChars, model.ContextLength);
+        if (keepSeq is null) return null;
+
+        Session.PrunedThroughSeq = keepSeq.Value;
+        // Injected subfolder instructions that lived in pruned results are gone from the model's view: drop them so
+        // the next touch of the folder re-injects them. One save covers both.
+        DropDeliveredSubContext(keepSeq.Value, save: false);
+        _s.Store.SaveSession(Session);
+        var count = messages.Where(m => m.Seq <= keepSeq.Value)
+            .SelectMany(m => m.ToolCalls ?? [])
+            .Count(c => (c.Result ?? c.Output ?? c.Error ?? "").Length > config.PruneMinChars);
+        _s.Log.LogInformation("Pruned {Count} old tool results (~{Tokens} tokens) for session {Session}", count, saved, Session.Id);
+        return count;
+    }
+
+    /// <summary>
+    /// The pruning decision, pure and testable: the watermark to advance to (just before the last <paramref name="keepSteps"/>
+    /// assistant steps that call tools), or null when nothing should be pruned yet — either there is no headroom over the
+    /// current watermark or the hysteresis check fails. The estimated token savings are returned alongside so the caller
+    /// can log them.
+    /// </summary>
+    public static (long? ThroughSeq, int SavedTokens) ComputePruneWatermark(IEnumerable<Message> messages, long currentWatermark,
+        int keepSteps, int minChars, int contextLength)
+    {
+        var ordered = messages.Where(m => !m.Compacted && !m.Synthetic).OrderBy(m => m.Seq).ToList();
+        // Keep the newest steps intact; the watermark lands on the message just before them.
+        var keepSeq = ordered.Where(m => m.Role == "assistant" && (m.ToolCalls?.Count ?? 0) > 0)
+            .SkipLast(Math.Max(1, keepSteps)).Select(m => m.Seq).DefaultIfEmpty(0).Max();
+        if (keepSeq <= currentWatermark) return (null, 0);
+
+        // What the placeholder would save: result size minus its line, plus the images that stop being re-sent.
+        var saved = 0;
+        foreach (var m in ordered.Where(m => m.Seq <= keepSeq))
+            foreach (var call in m.ToolCalls ?? [])
+            {
+                var content = call.Result ?? (call.Status == "error" ? call.Error : call.Output) ?? "";
+                if (content.Length > minChars) saved += Text.EstimateTokens(content) - 30;
+                saved += (call.Images?.Count(a => a.Kind == "image") ?? 0) * 1000;
+            }
+        // Hysteresis: pruning invalidates the cache from the first pruned message on, so it must pay for itself.
+        if (saved < Math.Max(500, contextLength / 10)) return (null, saved);
+        return (keepSeq, saved);
+    }
+
+    public void ReportProgress(ToolCall call, string chunk)
+    {
+        var message = _current;
+        if (message is null) return;
+        lock (message)
+        {
+            var output = (call.Output ?? "") + chunk;
+            call.Output = output.Length > 20_000 ? output[^20_000..] : output;
+        }
+        if (DateTime.UtcNow - _lastProgressPublish < TimeSpan.FromMilliseconds(300)) return;
+        _lastProgressPublish = DateTime.UtcNow;
+        _s.Store.UpdateMessage(Session, message, persist: false);
+    }
+
+    // --- permissions ------------------------------------------------------------
+
+    private async Task<string?> AuthorizeAsync(ITool tool, ToolCall call, JsonObject args, CancellationToken ct)
+    {
+        if (tool.Kind is ToolKind.Read or ToolKind.Network or ToolKind.Interactive or ToolKind.Agent) return null;
+        var mode = Session.Agent == "plan" ? "plan" : Session.PermissionMode;
+        var unsandboxed = Args.Bool(args, "unsandboxed");
+        if (mode is "read-only" or "plan" && tool.Kind is ToolKind.Write or ToolKind.Execute)
+            return $"Blocked: the session is in '{mode}' mode, which does not allow `{tool.Name}`. Describe the change instead, or ask the user to switch the permission mode.";
+        // Escalation: running a command outside the sandbox always needs a one-time card, even in full mode.
+        if (unsandboxed && Sandbox is not null && tool.Kind == ToolKind.Execute)
+        {
+            BeginUserWait();
+            try
+            {
+                return await Root.RequestEscalationAsync(tool, call, args, ct);
+            }
+            finally
+            {
+                EndUserWait();
+            }
+        }
+        if (mode == "full") return null;
+        BeginUserWait();
+        try
+        {
+            return await Root.RequestPermissionAsync(tool, call, args, ct);
+        }
+        finally
+        {
+            EndUserWait();
+        }
+    }
+
+    private async Task<string?> RequestEscalationAsync(ITool tool, ToolCall call, JsonObject args, CancellationToken ct)
+    {
+        var requestId = Ids.New("per");
+        var card = _s.Store.AddMessage(Session, new Message
+        {
+            Role = "assistant",
+            Synthetic = true,
+            Model = ModelLabel(),
+            Text = "I need your approval before I continue.",
+            Permission = new PermissionCard
+            {
+                Tool = tool.Name,
+                Description = $"Run unsandboxed: {DescribeCall(tool, call, args)}",
+                Choices = ["Allow once", "Deny"],
+                RequestId = requestId,
+            },
+        });
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _permissions[requestId] = (tcs, card);
+        RefreshStatus();
+        string decision;
+        try
+        {
+            await using (ct.Register(() => tcs.TrySetCanceled()))
+                decision = await tcs.Task;
+        }
+        finally
+        {
+            _permissions.TryRemove(requestId, out _);
+            if (SettleCard(card)) _s.Store.UpdateMessage(Session, card);
+            RefreshStatus();
+        }
+        return decision == "reject" ? $"The user denied permission to run `{tool.Name}` unsandboxed." : null;
+    }
+
+    private async Task<string?> RequestPermissionAsync(ITool tool, ToolCall call, JsonObject args, CancellationToken ct)
+    {
+        lock (Session.AllowedTools)
+        {
+            if (Session.AllowedTools.Contains(tool.Name)) return null;
+        }
+        var requestId = Ids.New("per");
+        var card = _s.Store.AddMessage(Session, new Message
+        {
+            Role = "assistant",
+            Synthetic = true,
+            Model = ModelLabel(),
+            Text = "I need your approval before I continue.",
+            Permission = new PermissionCard
+            {
+                Tool = tool.Name,
+                Description = DescribeCall(tool, call, args),
+                Choices = [.. PermissionChoices],
+                RequestId = requestId,
+            },
+        });
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _permissions[requestId] = (tcs, card);
+        RefreshStatus();
+        string decision;
+        try
+        {
+            await using (ct.Register(() => tcs.TrySetCanceled()))
+                decision = await tcs.Task;
+        }
+        finally
+        {
+            _permissions.TryRemove(requestId, out _);
+            if (SettleCard(card)) _s.Store.UpdateMessage(Session, card);
+            RefreshStatus();
+        }
+        return decision == "reject" ? $"The user denied permission to run `{tool.Name}`. Do not retry it; ask how to proceed or choose another approach." : null;
+    }
+
+    private static string DescribeCall(ITool tool, ToolCall call, JsonObject args) => tool.Kind switch
+    {
+        ToolKind.Execute => $"Run: {Args.Optional(args, "command", "cmd")}",
+        ToolKind.Write when tool.Name == "edit" => $"Edit {call.Summary}",
+        // The summary is "N files: a.ts, b.ts…" (empty for an unparsable patch): "Apply patch (3 files): a.ts, b.ts".
+        ToolKind.Write when tool.Name == "apply_patch" => call.Summary.Length > 0 ? $"Apply patch ({call.Summary})" : "Apply patch",
+        ToolKind.Write => $"Write {call.Summary}",
+        ToolKind.Browser => $"Browser: {call.Summary}",
+        _ => $"{tool.Name} {Text.FirstLine(args.ToJsonString(), 200)}",
+    };
+
+    public bool ReplyPermission(string requestId, string decision)
+    {
+        // Accept either the server's canonical decisions ('once'/'always'/'reject') or the UI/ACP
+        // card labels, so a client that sends the label still resolves the card correctly.
+        decision = NormalizePermissionDecision(decision);
+        if (!_permissions.TryGetValue(requestId, out var pending)) return false;
+        var card = pending.Card;
+        lock (card)
+        {
+            if (card.Permission is { } p)
+                p.Resolved = decision == "always" ? PermissionChoices[1] : decision == "reject" ? PermissionChoices[2] : PermissionChoices[0];
+        }
+        _s.Store.UpdateMessage(Session, card);
+        if (decision == "always" && card.Permission is { } perm)
+        {
+            lock (Session.AllowedTools)
+            {
+                if (!Session.AllowedTools.Contains(perm.Tool)) Session.AllowedTools.Add(perm.Tool);
+            }
+            _s.Store.SaveSession(Session, publish: false);
+        }
+        pending.Tcs.TrySetResult(decision);
+        return true;
+    }
+
+    private static string NormalizePermissionDecision(string decision)
+    {
+        var d = (decision ?? "").Trim().ToLowerInvariant();
+        if (d is "always" or "allow for this session" or "allow_always" or "allow-always") return "always";
+        if (d is "reject" or "deny" or "denied" or "reject_once" or "reject-once") return "reject";
+        if (d is "once" or "allow once" or "allow_once" or "allow-once") return "once";
+        if (d.Contains("session") || d.Contains("always")) return "always";
+        if (d.Contains("deny") || d.Contains("reject")) return "reject";
+        if (d.Contains("once")) return "once";
+        return "once";
+    }
+
+    /// <summary>Marks an unanswered permission/question card as expired. Returns true when it changed.</summary>
+    public static bool SettleCard(Message card)
+    {
+        var changed = false;
+        lock (card)
+        {
+            if (card.Permission is { Resolved: null } p)
+            {
+                p.Resolved = "Expired";
+                changed = true;
+            }
+            if (card.Question is { Resolved: null } q)
+            {
+                q.Resolved = "Expired";
+                changed = true;
+            }
+            if (card.QuestionSet is { Confirmed: not true } qs)
+            {
+                qs.Confirmed = true;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private void RefreshStatus()
+    {
+        lock (_gate)
+        {
+            if (_finished) return;
+        }
+        var status = !_permissions.IsEmpty ? SessionStatus.Permission : !_questions.IsEmpty ? SessionStatus.Question : SessionStatus.Working;
+        if (Session.Status != status) _s.Store.SetStatus(Session, status);
+    }
+
+    // --- questions --------------------------------------------------------------
+
+    public async Task<List<string>> AskAsync(ToolContext ctx, List<QuestionRequest> questions, CancellationToken ct)
+    {
+        var formId = Ids.New("frm");
+        // The card rides on the assistant message that produced the call, so the question reads as part of
+        // that reply; a second question in the same step gets its own synthetic card message instead.
+        var host = ctx.Message;
+        bool taken;
+        lock (host) taken = host.Question is not null || host.QuestionSet is not null;
+        var card = taken
+            ? _s.Store.AddMessage(Session, new Message { Role = "assistant", Synthetic = true, Model = ModelLabel() })
+            : host;
+
+        lock (card)
+        {
+            if (questions.Count == 1)
+            {
+                var q = questions[0];
+                card.Question = new QuestionCard { Prompt = q.Prompt, Options = q.Options, FormId = formId, FieldKey = "q0", Multi = q.Multi };
+            }
+            else
+            {
+                card.QuestionSet = new QuestionSetCard
+                {
+                    FormId = formId,
+                    Answers = [],
+                    Questions = questions.Select((q, i) => new QuestionItem { Prompt = q.Prompt, Options = q.Options, FieldKey = $"q{i}", Multi = q.Multi }).ToList(),
+                };
+            }
+        }
+        _s.Store.UpdateMessage(Session, card);
+        var tcs = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _questions[formId] = (tcs, card);
+        RefreshStatus();
+        BeginUserWait();
+        try
+        {
+            await using (ct.Register(() => tcs.TrySetCanceled()))
+                return await tcs.Task;
+        }
+        finally
+        {
+            EndUserWait();
+            _questions.TryRemove(formId, out _);
+            if (SettleCard(card)) _s.Store.UpdateMessage(Session, card);
+            RefreshStatus();
+        }
+    }
+
+    public bool Answer(string formId, List<string?> answers)
+    {
+        if (!_questions.TryGetValue(formId, out var pending)) return false;
+        var card = pending.Card;
+        lock (card)
+        {
+            if (card.Question is { } q) q.Resolved = answers.FirstOrDefault() ?? "";
+            if (card.QuestionSet is { } qs)
+            {
+                qs.Answers = answers;
+                qs.Confirmed = true;
+            }
+        }
+        _s.Store.UpdateMessage(Session, card);
+        pending.Tcs.TrySetResult(answers.Select(a => a ?? "").ToList());
+        return true;
+    }
+
+    /// <summary>A message typed while the agent waits on questions answers them all.</summary>
+    public bool AnswerPendingWithText(string text)
+    {
+        var any = false;
+        foreach (var (formId, pending) in _questions.ToList())
+        {
+            var count = pending.Card.QuestionSet?.Questions.Count ?? 1;
+            any |= Answer(formId, Enumerable.Repeat<string?>(text, count).ToList());
+        }
+        return any;
+    }
+
+    // --- subagents ----------------------------------------------------------------
+
+    public async Task<string> RunSubagentAsync(ToolContext ctx, string agent, string description, string prompt, CancellationToken ct) =>
+        await SpawnSubagentAsync(ctx, new SubagentRequest(agent, description, prompt, null, false), ct);
+
+    public async Task<string> SpawnSubagentAsync(ToolContext ctx, SubagentRequest request, CancellationToken ct)
+    {
+        var agentId = request.Agent;
+        var description = request.Description;
+        var prompt = request.Prompt;
+        var agentDef = _s.AgentCatalog.Get(agentId, Workspace.IsFolder ? Workspace.Path : null);
+
+        // Model precedence: task param > agent frontmatter > parent model.
+        string? warning = null;
+        string resolvedModel;
+        if (!string.IsNullOrWhiteSpace(request.Model))
+        {
+            if (!_s.Providers.IsUsable(request.Model))
+            {
+                var sample = string.Join(", ", _s.Providers.EnabledModelIds().Take(5));
+                throw new ArgumentException($"Unknown or disabled model '{request.Model}'. Enabled models include: {sample}");
+            }
+            resolvedModel = request.Model!;
+        }
+        else if (!string.IsNullOrWhiteSpace(agentDef.Model))
+        {
+            if (_s.Providers.IsUsable(agentDef.Model)) resolvedModel = agentDef.Model!;
+            else { resolvedModel = Session.ModelId; warning = $"Agent default model '{agentDef.Model}' is not usable; using parent model."; }
+        }
+        else
+        {
+            resolvedModel = Session.ModelId;
+        }
+        if (string.IsNullOrWhiteSpace(resolvedModel)) resolvedModel = _s.Providers.DefaultModelId();
+
+        var child = _s.Store.CreateSession(Workspace, description, template: Session, parentId: Session.Id, agent: agentId);
+        child.ModelId = resolvedModel;
+        if (!string.IsNullOrWhiteSpace(agentDef.Reasoning))
+            child.ReasoningMode = agentDef.Reasoning!;
+        _s.Store.SaveSession(child);
+
+        lock (ctx.Message) { ctx.Call.ChildSessionId = child.Id; ctx.Call.ChildModelId = resolvedModel; ctx.Call.ChildBackground = request.Background; }
+        _s.Store.UpdateMessage(Session, ctx.Message, persist: false);
+
+        var parentToken = request.Background ? Root._cts.Token : ct;
+        var run = _agents.CreateChildRun(child, Workspace, Root, parentToken);
+
+        var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var state = new SubagentInfo
+        {
+            Id = child.Id,
+            Description = description,
+            Agent = agentId,
+            Model = resolvedModel,
+            Background = request.Background,
+            Status = "running",
+        };
+        // store extra in a parallel dictionary? Use Tag via Run? We'll keep a local map on root.
+        Root._subagentRuns[child.Id] = (state, run, completion);
+
+        run.TryEnqueue(new PendingPrompt(Ids.New("msg"), "prompt", prompt, null, []) { Announce = false }, steer: false);
+
+        if (!request.Background)
+        {
+            await run.RunAsync();
+            ct.ThrowIfCancellationRequested();
+            if (run.LastError is not null) throw new InvalidOperationException($"Subagent failed: {run.LastError}");
+            var report = _s.Db.SessionMessages(child.Id).LastOrDefault(m => m.Role == "assistant" && !m.Synthetic && !string.IsNullOrWhiteSpace(m.Text))?.Text;
+            if (child.Status == SessionStatus.Idle && report is null && run.WasAborted)
+                throw new InvalidOperationException("The subagent was stopped by the user.");
+            var final = report ?? "(The subagent finished without a report.)";
+            if (warning is not null) final = warning + "\n" + final;
+            state.Status = run.LastError is null ? "done" : "error";
+            state.LastReportPreview = Text.Truncate(final, 200);
+            Root._subagentRuns[child.Id].Completion.TrySetResult(final);
+            return final;
+        }
+
+        // background
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await run.RunAsync();
+                var report = _s.Db.SessionMessages(child.Id).LastOrDefault(m => m.Role == "assistant" && !m.Synthetic && !string.IsNullOrWhiteSpace(m.Text))?.Text;
+                var final = report ?? "(The subagent finished without a report.)";
+                if (run.LastError is not null) final = $"Subagent failed: {run.LastError}";
+                state.Status = run.LastError is null ? "done" : "error";
+                state.LastReportPreview = Text.Truncate(final, 200);
+                Root._subagentRuns[child.Id].Completion.TrySetResult(final);
+                var notice = $"Subagent {child.Id} finished: {Text.Truncate(final, 1000)}";
+                if (Root.IsFinished) _agents.Prompt(Root.Session.Id, new PromptInput("Subagent finished"), notice);
+                else Root.TryEnqueue(new PendingPrompt(Ids.New("msg"), "prompt", notice, null, []) { Announce = false }, steer: false);
+            }
+            catch (Exception ex)
+            {
+                state.Status = "error";
+                state.LastReportPreview = Text.Truncate(ex.Message, 200);
+                Root._subagentRuns[child.Id].Completion.TrySetException(ex);
+            }
+        }, Root._cts.Token);
+
+        var started = $"Started subagent {child.Id} ({agentId}, model {resolvedModel}).";
+        if (warning is not null) started = warning + "\n" + started;
+        state.Status = "running";
+        return started;
+    }
+
+    public IReadOnlyList<SubagentInfo> ListSubagents(ToolContext ctx)
+    {
+        var list = new List<SubagentInfo>();
+        foreach (var kv in Root._subagentRuns)
+        {
+            var (info, run, _) = kv.Value;
+            info.Status = run.IsFinished ? (run.LastError is null ? "done" : "error") : "running";
+            info.Queued = run.Session.Queued;
+            list.Add(info);
+        }
+        return list;
+    }
+
+    public async Task<string> SendToSubagentAsync(ToolContext ctx, string id, string text, bool steer, CancellationToken ct)
+    {
+        if (!Root._subagentRuns.TryGetValue(id, out var entry))
+            return $"Unknown subagent '{id}'.";
+        if (!entry.Run.IsFinished)
+        {
+            var ok = entry.Run.TryEnqueue(new PendingPrompt(Ids.New("msg"), "prompt", text, null, []) { Announce = false }, steer);
+            if (ok) return $"Queued message to subagent {id}.";
+        }
+        // finished (or race): start a new run on the same session
+        var session = _s.Db.Sessions.FindById(id);
+        if (session is null) return $"Unknown subagent '{id}'.";
+        var newRun = _agents.CreateChildRun(session, Workspace, Root, Root._cts.Token);
+        var newCompletion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newInfo = new SubagentInfo { Id = id, Description = entry.Info.Description, Agent = entry.Info.Agent, Model = entry.Info.Model, Background = entry.Info.Background, Status = "running" };
+        newRun.TryEnqueue(new PendingPrompt(Ids.New("msg"), "prompt", text, null, []) { Announce = false }, steer);
+        Root._subagentRuns[id] = (newInfo, newRun, newCompletion);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await newRun.RunAsync();
+                var report = _s.Db.SessionMessages(id).LastOrDefault(m => m.Role == "assistant" && !m.Synthetic && !string.IsNullOrWhiteSpace(m.Text))?.Text;
+                var final = report ?? "(The subagent finished without a report.)";
+                if (newRun.LastError is not null) final = $"Subagent failed: {newRun.LastError}";
+                newInfo.Status = newRun.LastError is null ? "done" : "error";
+                newInfo.LastReportPreview = Text.Truncate(final, 200);
+                newCompletion.TrySetResult(final);
+            }
+            catch (Exception ex)
+            {
+                newInfo.Status = "error";
+                newInfo.LastReportPreview = Text.Truncate(ex.Message, 200);
+                newCompletion.TrySetException(ex);
+            }
+        }, Root._cts.Token);
+        return $"Started a new run on subagent {id}.";
+    }
+
+    public async Task<string> WaitSubagentsAsync(ToolContext ctx, List<string>? ids, bool any, int timeoutSeconds, CancellationToken ct)
+    {
+        timeoutSeconds = Math.Clamp(timeoutSeconds <= 0 ? 300 : timeoutSeconds, 1, 1800);
+        var targets = (ids is { Count: > 0 } ? ids : Root._subagentRuns.Keys.ToList()).ToList();
+        var entries = targets.Where(id => Root._subagentRuns.ContainsKey(id)).Select(id => (Id: id, Entry: Root._subagentRuns[id])).ToList();
+        if (entries.Count == 0) return "No subagents to wait for.";
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+        if (any)
+        {
+            var tasks = entries.Select(e => e.Entry.Completion.Task).ToList();
+            try { await Task.WhenAny(tasks.Append(Task.Delay(Timeout.Infinite, timeoutCts.Token))); }
+            catch (OperationCanceledException) { }
+        }
+        else
+        {
+            try { await Task.WhenAll(entries.Select(e => e.Entry.Completion.Task)).WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), ct); }
+            catch (TimeoutException) { }
+            catch (OperationCanceledException) { }
+        }
+
+        var sb = new StringBuilder();
+        foreach (var (id, entry) in entries)
+        {
+            if (entry.Completion.Task.IsCompletedSuccessfully)
+            {
+                var report = entry.Completion.Task.Result ?? "(no report)";
+                sb.AppendLine($"[{id}] done: {Text.Truncate(report, 500)}");
+            }
+            else if (entry.Completion.Task.IsFaulted)
+            {
+                sb.AppendLine($"[{id}] error: {entry.Completion.Task.Exception?.GetBaseException().Message}");
+            }
+            else
+            {
+                sb.AppendLine($"[{id}] still running");
+            }
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    public async Task<string> InterruptSubagentAsync(ToolContext ctx, string id, CancellationToken ct)
+    {
+        if (!Root._subagentRuns.TryGetValue(id, out var entry)) return $"Unknown subagent '{id}'.";
+        entry.Run.Abort();
+        try { await entry.Completion.Task.WaitAsync(TimeSpan.FromSeconds(5), ct); } catch { }
+        var preview = entry.Info.LastReportPreview;
+        return preview is null ? $"Interrupted subagent {id}." : $"Interrupted subagent {id}. Partial report: {preview}";
+    }
+
+    public bool WasAborted => _cts.IsCancellationRequested;
+
+    // --- compaction ----------------------------------------------------------------
+
+    /// <summary>
+    /// Compacts the history and reports progress and outcome as a system notice in the chat.
+    /// Returns true when the history was actually replaced by a summary.
+    /// </summary>
+    private async Task<bool> CompactAsync(bool auto, CancellationToken ct)
+    {
+        var live = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).ToList();
+        var before = Math.Max(Session.Context.Used, live.Sum(Estimate));
+        var notice = new CompactionNotice { Status = "running", Auto = auto, Before = before };
+        var card = _s.Store.AddMessage(Session, new Message { Role = "assistant", Synthetic = true, Compaction = notice });
+        void Finish(string status, int? after = null, string? error = null, string? result = null)
+        {
+            lock (card)
+            {
+                card.Compaction = new CompactionNotice { Status = status, Auto = auto, Before = before, After = after, Error = error, Result = result };
+            }
+            _s.Store.UpdateMessage(Session, card);
+        }
+
+        try
+        {
+            var done = await CompactCoreAsync(auto, card.Seq, ct);
+            if (done is null) { Finish("skipped"); return false; }
+            Finish("done", done.Value.After, result: done.Value.Summary);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            Finish("failed", error: "Aborted.");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Finish("failed", error: ex.Message);
+            throw;
+        }
+    }
+
+    /// <summary>Returns the context size after compaction, or null when there was nothing to compact.</summary>
+    private async Task<(int After, string Summary)?> CompactCoreAsync(bool auto, long noticeSeq, CancellationToken ct)
+    {
+        var (provider, model) = ResolveModel();
+        using var slot = await AcquireModelAsync(model, ct);
+        var messages = _s.Db.SessionMessages(Session.Id).Where(m => !m.Compacted && !m.Synthetic).OrderBy(m => m.Seq).ToList();
+        var previous = messages.Where(m => m.Summary == true).ToList();
+        var conversation = messages.Where(m => m.Summary != true).ToList();
+        if (conversation.Count < 2) return null;
+
+        // Keep the newest messages that fit in ~30% of the window when compacting automatically.
+        var cut = conversation.Count;
+        if (auto)
+        {
+            var budget = (int)(model.ContextLength * 0.3);
+            var kept = 0;
+            cut = conversation.Count;
+            for (var i = conversation.Count - 1; i > 0; i--)
+            {
+                kept += Estimate(conversation[i]);
+                if (kept > budget) break;
+                cut = i;
+            }
+            if (cut >= conversation.Count) cut = conversation.Count - 1;
+        }
+        var prefix = conversation.Take(cut).ToList();
+        if (prefix.Count == 0) return null;
+
+        var transcript = new StringBuilder();
+        foreach (var s in previous) transcript.AppendLine("[Earlier summary]").AppendLine(s.Text).AppendLine();
+        foreach (var m in prefix)
+        {
+            transcript.Append('[').Append(m.Role).AppendLine("]");
+            if (!string.IsNullOrWhiteSpace(m.Expanded ?? m.Text)) transcript.AppendLine(m.Expanded ?? m.Text);
+            foreach (var call in m.ToolCalls ?? [])
+            {
+                transcript.AppendLine($"(tool {call.Name} {Text.Truncate(call.Arguments, 600)})");
+                transcript.AppendLine($"→ {Text.Truncate(call.Result ?? call.Output ?? call.Error ?? "", 1500)}");
+            }
+            transcript.AppendLine();
+        }
+
+        var maxInput = Math.Max(4000, (int)(model.ContextLength * 0.6) * 4);
+        var request = new ChatRequest
+        {
+            Model = model.ModelId,
+            System = "You summarize coding-agent conversations so the work can continue in a fresh context. Be factual and specific.",
+            Messages =
+            [
+                ChatMessage.UserText(
+                    "Summarize the conversation below. Include: the user's goals and constraints, key decisions, files read or changed (with paths), " +
+                    "commands run and their outcomes, the current state, and the next steps. Use concise Markdown sections.\n\n<transcript>\n" +
+                    Text.Truncate(transcript.ToString(), maxInput) + "\n</transcript>"),
+            ],
+            Reasoning = "off",
+            MaxTokens = Math.Min(4096, model.MaxOutput),
+            ModelSupportsReasoning = model.Reasoning,
+            SessionId = Session.Id,
+        };
+
+        _s.Store.SetStatus(Session, SessionStatus.Working);
+        // Thinking models can spend the whole output budget on reasoning (or ignore "off") and emit no text at all.
+        // Retry once with a bigger budget, then fall back to whatever reasoning text was produced.
+        var summary = new StringBuilder();
+        var reasoning = new StringBuilder();
+        for (var attempt = 0; attempt < 2 && summary.Length == 0; attempt++)
+        {
+            if (attempt == 1) request = new ChatRequest
+            {
+                Model = request.Model,
+                System = request.System,
+                Messages = request.Messages,
+                Reasoning = "off",
+                MaxTokens = Math.Max(request.MaxTokens, Math.Min(model.MaxOutput, 16384)),
+                ModelSupportsReasoning = request.ModelSupportsReasoning,
+                SessionId = request.SessionId,
+            };
+            reasoning.Clear();
+            await foreach (var ev in _s.Providers.CreateClient(provider, model.ModelId).StreamAsync(request, ct))
+            {
+                if (ev is TextDelta t) summary.Append(t.Text);
+                else if (ev is ReasoningDelta r) reasoning.Append(r.Text);
+            }
+            if (summary.ToString().Trim().Length == 0) summary.Clear();
+        }
+        if (summary.Length == 0 && reasoning.ToString().Trim().Length > 0) summary.Append(reasoning);
+        if (summary.Length == 0)
+            throw new InvalidOperationException($"Compaction failed: the model ({model.Label}) returned an empty summary even after a retry.");
+
+        foreach (var m in prefix.Concat(previous))
+        {
+            m.Compacted = true;
+            m.CompactedBy = noticeSeq;
+            _s.Db.Messages.Update(m);
+        }
+        // The folded messages are gone from the model's view: any subfolder instructions they carried must be
+        // re-injected on the next touch of the folder, so drop them (the watermark stays monotonic — pruning is
+        // independent and compaction excludes compacted messages anyway).
+        DropDeliveredSubContext(prefix.Max(m => m.Seq), save: false);
+        _s.Store.AddMessage(Session, new Message
+        {
+            Role = "assistant",
+            Summary = true,
+            Model = model.Label,
+            Text = summary.ToString().Trim(),
+        });
+        var keptTokens = conversation.Skip(cut).Sum(Estimate) + Text.EstimateTokens(summary.ToString());
+        // The frozen prefix survives compaction: `Used` must keep paying for it, otherwise the meter under-reports
+        // by exactly system+tools on every request after a compact.
+        Session.Context = new ContextInfo
+        {
+            Used = keptTokens + Session.Context.SystemTokens + Session.Context.ToolTokens,
+            Limit = model.ContextLength,
+            SystemTokens = Session.Context.SystemTokens,
+            ToolTokens = Session.Context.ToolTokens,
+        };
+        _s.Store.SaveSession(Session);
+        PublishMetrics(0);
+        return (keptTokens, summary.ToString().Trim());
+    }
+
+    private static int Estimate(Message m) =>
+        Text.EstimateTokens(m.Expanded ?? m.Text) + Text.EstimateTokens(m.Reasoning)
+        + (m.ToolCalls ?? []).Sum(c => Text.EstimateTokens(c.Arguments) + Text.EstimateTokens(c.Result ?? c.Output ?? c.Error))
+        + ((m.Attachments ?? []).Count(a => a.Kind == "image") + (m.ToolCalls ?? []).SelectMany(c => c.Images ?? []).Count(a => a.Kind == "image")) * 1000;
+
+    /// <summary>
+    /// How long one request took: a stopwatch that ignores the time the user was answering. Waits nest (a subagent
+    /// question and its permission card can block at the same time), so only the outermost pair stops the clock.
+    /// </summary>
+    private sealed class TurnClock
+    {
+        private readonly Stopwatch _clock = new();
+        private readonly object _gate = new();
+        private TimeSpan _waited;
+        private long _waitStarted;
+        private int _waitDepth;
+
+        public bool Running
+        {
+            get
+            {
+                lock (_gate) return _clock.IsRunning;
+            }
+        }
+
+        /// <summary>Starts timing a new request, discarding the previous one.</summary>
+        public void Restart()
+        {
+            lock (_gate)
+            {
+                _waited = TimeSpan.Zero;
+                _waitStarted = 0;
+                _waitDepth = 0;
+                _clock.Restart();
+            }
+        }
+
+        public void BeginWait()
+        {
+            lock (_gate)
+            {
+                if (_waitDepth++ == 0) _waitStarted = Stopwatch.GetTimestamp();
+            }
+        }
+
+        public void EndWait()
+        {
+            lock (_gate)
+            {
+                if (_waitDepth == 0) return;
+                if (_waitDepth-- > 1 || _waitStarted == 0) return;
+                _waited += Stopwatch.GetElapsedTime(_waitStarted);
+                _waitStarted = 0;
+            }
+        }
+
+        /// <summary>Elapsed time of the request minus every stretch the user was answering, never negative.</summary>
+        public TimeSpan Elapsed
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    var open = _waitDepth > 0 && _waitStarted != 0 ? Stopwatch.GetElapsedTime(_waitStarted) : TimeSpan.Zero;
+                    var elapsed = _clock.Elapsed - _waited - open;
+                    return elapsed > TimeSpan.Zero ? elapsed : TimeSpan.Zero;
+                }
+            }
+        }
+    }
+}

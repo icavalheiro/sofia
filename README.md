@@ -112,10 +112,10 @@ volume; put the folders the agent should work on in `./workspaces` (mounted at
 `/workspaces`, override with `SOFIA_WORKSPACES`). Host runtimes such as Ollama
 are reachable at `host.docker.internal` (see `SOFIA_LOCAL_ENDPOINTS` in
 `docker-compose.yml`). Per-platform self-contained builds ship with every
-release tag (see above). A native desktop shell (`src/Sofia.Desktop`) wraps the
-server and renders the web UI in the OS native WebView (WebView2 on Windows,
-WebKit on macOS, WebKitGTK on Linux); a single-click installer remains future
-work.
+release tag (see above). The WebView desktop shell was removed in plan-038; the
+native Avalonia client arrives with the next phase (plan-037), which replaces it
+with a single desktop + web codebase over the same `Sofia.Core` engine and
+`~/.sofia` store. A single-click installer remains future work.
 
 ## Quickstart
 
@@ -149,57 +149,31 @@ dotnet test Sofia.slnx
 cd src/Sofia.UI && npm run typecheck
 ```
 
-## Desktop app
+## Architecture
 
-A native desktop shell (`src/Sofia.Desktop`) wraps the server and renders the web
-UI in the OS native WebView (WebView2 on Windows, WebKitGTK on Linux, WKWebView
-on macOS). It launches the published `Sofia.Server` binary as a child process
-(or, if one is already answering on port 5199, connects to it as an external,
-permanent service that it does not own or stop).
+One solution, four layers:
 
-### Prerequisites
+| Project | What it is |
+| --- | --- |
+| `src/Sofia.Contracts` | Entities, wire DTOs, request bodies, event names, `Json.Options`. No package references. |
+| `src/Sofia.Core` | The engine: agent loop, providers, tools, MCP, LSP, browser, SQLite store, events, VCS, services with rules (workspaces, sessions, diff, files, attachments, config, admin). No ASP.NET reference. |
+| `src/Sofia.Server` | The ASP.NET host: minimal-API endpoints, SignalR hub and access middleware over Core. Serves the Vue UI. |
+| `src/Sofia.Client` / `src/Sofia.Client.InProc` | `ISofiaBackend` — the same API over HTTP + SignalR, or straight into Core for a host that owns `~/.sofia`. |
 
-- **.NET 10 SDK** (to build).
-- **OS WebView runtime**:
-  - Windows: WebView2 (preinstalled on Windows 10 1803+ with Edge).
-  - Linux: WebKitGTK (`sudo apt install libwebkit2gtk-4.1-dev`).
-  - macOS: WKWebView (built-in).
-
-### Run from source
-
-```bash
-# Build the web UI first (so the server serves wwwroot)
-cd src/Sofia.UI && npm run build
-
-# Or run the Vite dev server in a separate terminal:
-# cd src/Sofia.UI && npm run dev
-
-# Run the desktop app
-dotnet run --project src/Sofia.Desktop
-```
-
-The shell probes `http://127.0.0.1:5199/api/health`: if healthy it connects to
-that server as an external, permanent service (it never owns or stops it),
-otherwise it launches the resolved `Sofia.Server` binary and owns its lifecycle.
-Set `SOFIA_SERVER_PATH` to override server discovery (useful in dev when the
-binary cannot be located automatically).
-
-### Build a distributable desktop app
-
-```bash
-# Publish for your platform
-dotnet publish src/Sofia.Desktop -c Release -r win-x64 --self-contained true -o out-desktop
-# Linux: use -r linux-x64, macOS Apple Silicon: -r osx-arm64, macOS Intel: -r osx-x64
-
-# Run the published binary
-./out-desktop/Sofia.Desktop
-```
+Two processes may share one data directory: message ordering is allocated in the
+database (`counters` table) and `<dataDir>/sofia.lock` is advisory — the server
+warns, a host that owns the directory refuses to start.
 
 ## Layout
 
-- `src/Sofia.Desktop/` — Avalonia 12 native shell hosting the web UI in a platform WebView
-- `src/Sofia.Server/` — the harness backend (agent loop, tools, providers, MCP, storage, API)
-- `src/Sofia.Server.Tests/` — xUnit tests, including an in-process agent-loop test
+- `src/Sofia.Contracts/` — dependency-free contract assembly (entities, DTOs, events, JSON options)
+- `src/Sofia.Core/` — the engine (agent loop, tools, providers, MCP, storage, per-feature services)
+- `src/Sofia.Core.Tests/` — xUnit tests over Core services (no ASP.NET host)
+- `src/Sofia.Server/` — the ASP.NET host (endpoints, SignalR hub, static UI)
+- `src/Sofia.Server.Tests/` — xUnit tests that boot the real host (routing, middleware, streaming)
+- `src/Sofia.Client/` — `ISofiaBackend` + HTTP/SignalR client
+- `src/Sofia.Client.InProc/` — `ISofiaBackend` over an in-process Core host
+- `src/Sofia.Acp/` — ACP (Agent Client Protocol) stdio bridge for editors
 - `src/Sofia.UI/` — the web interface
 - `docs/server_api.md` — REST + SignalR contract between UI and server
 - `docs/project_init.md` — server architecture

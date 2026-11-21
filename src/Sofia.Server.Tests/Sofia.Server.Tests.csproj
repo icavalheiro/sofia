@@ -1,5 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Host-level tests only: these boot the real ASP.NET app (WebApplicationFactory) so routing, middleware, JSON and
+       SignalR wiring are exercised. Everything else constructs Core services directly and lives in Sofia.Core.Tests. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

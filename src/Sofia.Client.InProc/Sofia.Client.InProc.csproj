@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ISofiaBackend over an in-process Core host: the desktop head owns the data directory and does not need an HTTP
+       round trip. References Core, so it must never be pulled into the browser (WASM) head. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sofia.Client.InProc</RootNamespace>
+    <AssemblyName>Sofia.Client.InProc</AssemblyName>
+    <Version>0.5.16</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sofia.Client\Sofia.Client.csproj" />
+    <ProjectReference Include="..\Sofia.Core\Sofia.Core.csproj" />
+  </ItemGroup>
+
+</Project>

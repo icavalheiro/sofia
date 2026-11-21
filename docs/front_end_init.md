@@ -11,6 +11,11 @@ data; it now talks only to `src/Sofia.Server` (ASP.NET, REST + SignalR) â€”
 server architecture. `src/services/sofia.ts` is the only backend client and
 `src/types.ts` holds the shared shapes.
 
+The same API is exposed as `ISofiaBackend` (`src/Sofia.Client`, HTTP + SignalR)
+with an in-process implementation (`src/Sofia.Client.InProc`) over `Sofia.Core`;
+the native client planned in plan-037 uses those. When an endpoint or event
+changes, update the Vue client and `ISofiaBackend` in the same change.
+
 ## Stack
 
 - Vue 3.5 (`<script setup>`) + Vite + TypeScript

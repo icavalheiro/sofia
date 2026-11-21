@@ -6,10 +6,10 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Sofia.Server.Domain;
-using Sofia.Server.Infrastructure;
+using Sofia.Contracts.Domain;
+using Sofia.Core.Infrastructure;
 
-namespace Sofia.Server.Tests;
+namespace Sofia.Core.Tests;
 
 /// <summary>
 /// OpenAI-compatible endpoint with two models on one provider: `gpt-oss` (catalog says text-only) and `gpt-4o`
@@ -176,7 +176,7 @@ public sealed class ImageFallbackTests : IDisposable
         Assert.DoesNotContain("cannot see images", withImage, StringComparison.Ordinal);
 
         // The description is persisted on the attachment and reused: a second turn analyses nothing again.
-        var db = _factory.Services.GetRequiredService<Sofia.Server.Data.SofiaDb>();
+        var db = _factory.Services.GetRequiredService<Sofia.Core.Data.SofiaDb>();
         var stored = db.Attachments.FindById(attachmentId);
         Assert.Equal(VisionFallbackHandler.Description, stored?.Analysis);
         Assert.Equal("gpt-4o", stored?.AnalyzedBy);

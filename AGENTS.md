@@ -3,19 +3,23 @@
 ## Project
 
 Sofia is a local AI harness built from scratch (no other harness underneath):
-`src/Sofia.Server` is the backend — an ASP.NET Core (.NET 10) agent server with
-minimal APIs, SQLite (EF Core), DI, an in-process event bus and SignalR — and
-`src/Sofia.UI` (Vue) is its web client. The UI is the feature guide for the
-server: every widget maps to a server capability. The agent design follows
-pi.dev (minimal prompt, small core tool set, AGENTS.md context, skills,
-steer/follow-up, compaction), extended with workspaces, permission modes,
-questions, parallel subagents, MCP, change tracking/revert, local runtime
-auto-discovery and OpenAI/Anthropic compatibility.
+`src/Sofia.Server` is the backend — an ASP.NET Core (.NET 10) host with minimal
+APIs, DI, an in-process event bus and SignalR — over `src/Sofia.Core`, the
+engine (agent loop, providers, tools, MCP, LSP, browser, SQLite store, events).
+`src/Sofia.Contracts` is the dependency-free contract assembly (entities, wire
+DTOs, event names, `Json.Options`); `src/Sofia.Client` is the `ISofiaBackend`
+transport abstraction with an HTTP+SignalR implementation and
+`src/Sofia.Client.InProc` its in-process counterpart. `src/Sofia.UI` (Vue) is
+the current web client. The UI is the feature guide for the server: every widget
+maps to a server capability. The agent design follows pi.dev (minimal prompt,
+small core tool set, AGENTS.md context, skills, steer/follow-up, compaction),
+extended with workspaces, permission modes, questions, parallel subagents, MCP,
+change tracking/revert, local runtime auto-discovery and OpenAI/Anthropic
+compatibility.
 Per-platform self-contained `.zip` releases (win-x64, linux-x64, osx-arm64,
-osx-x64) are built by `.github/workflows/release.yml` on `v*` tags; a native
-desktop shell (`src/Sofia.Desktop`, Avalonia 12) now exists (embeds the server
-as a child process and renders the UI in the OS native WebView). A single-click
-installer remains future work.
+osx-x64) are built by `.github/workflows/release.yml` on `v*` tags. The WebView
+desktop shell was removed in plan-038; the native Avalonia client arrives with
+plan-037's children (039+). A single-click installer remains future work.
 
 - API contract: `docs/server_api.md` (keep it in sync with both sides).
 - Server architecture: `docs/project_init.md`.
@@ -23,30 +27,42 @@ installer remains future work.
 
 ## Stack
 
-- Server: `src/Sofia.Server` (net10.0, minimal APIs, `Sofia.slnx` at the repo
-  root, tests in `src/Sofia.Server.Tests`). SQLite data in `~/.sofia`
+- Server: `src/Sofia.Server` (net10.0, minimal APIs + SignalR hub + access
+  middleware, `Sofia.slnx` at the repo root). SQLite data in `~/.sofia`
   (`SOFIA_HOME` overrides). Listens on `http://127.0.0.1:5199`; remote clients
   must pair (`POST /api/pair` → `/api/pair/connect`).
-- Packages: Microsoft.EntityFrameworkCore.Sqlite, ModelContextProtocol (MCP
-  client, stdio + HTTP), DiffPlex. LiteDB is kept **only** for the one-shot
-  migration of legacy `sofia.db` files (see `Data/LiteDbMigration.cs`); remove
-  the package and that file in 1.0 once 0.x data no longer needs converting.
+- Engine: `src/Sofia.Core` (net10.0 class library, no ASP.NET reference — that
+  is what keeps the host boundary real). Hosts register it with
+  `services.AddSofiaCore(options)`; endpoint behaviours with rules behind them
+  (workspaces, sessions, diff, files, attachments, config, provider/MCP/LSP/
+  browser admin, host launcher) live in `src/Sofia.Core/Services` so the
+  in-process host runs the same code and `Api/*` only binds and translates.
+- Contracts: `src/Sofia.Contracts` — entities, wire DTOs and request bodies,
+  event names, `Json.Options`. No package references, so a WASM head can use it.
+- Clients: `ISofiaBackend` in `src/Sofia.Client` (`HttpSofiaBackend`: REST +
+  SignalR over `/hubs/events`, auto-reconnect plus a `resync` signal) and
+  `src/Sofia.Client.InProc` (`InProcSofiaBackend`: direct Core calls, events
+  straight from `IEventBus`).
+- Packages (Core): Microsoft.EntityFrameworkCore.Sqlite, ModelContextProtocol
+  (MCP client, stdio + HTTP), DiffPlex, Microsoft.Playwright. LiteDB is kept
+  **only** for the one-shot migration of legacy `sofia.db` files (see
+  `Data/LiteDbMigration.cs`); remove the package and that file in 1.0 once 0.x
+  data no longer needs converting.
 - Events: `SessionStore` persists and publishes on `IEventBus`;
-  `HubBroadcaster` pushes every event to SignalR (`/hubs/events`, client
-  method `event`); `IEventHandler`s react (e.g. `TitleHandler`).
+  `HubBroadcaster` (server) pushes every event to SignalR (`/hubs/events`,
+  client method `event`); `IEventHandler`s react (e.g. `TitleHandler`).
+- Message order: the global `Seq` comes from a `counters` table
+  (`UPDATE … RETURNING`, see `SofiaDb.NextSeq`), not from an in-memory field, so
+  two hosts writing one store never duplicate a value. `DataDirLock`
+  (`<dataDir>/sofia.lock`) is advisory: the server only warns when another
+  process owns the directory, a host that owns it (`SofiaCoreOptions.ExclusiveDataDir`)
+  refuses to start.
 - Agent loop: `Agent/SessionRun.cs` (one run per active session) driven by
   `Agent/AgentService.cs`.
 - Providers: OpenAI Chat Completions + Anthropic Messages streaming clients;
   local discovery of Unsloth (`:8888`), Ollama (`:11434`), LM Studio (`:1234`),
   llama.cpp (`:8080`), vLLM (`:8000`); cloud keys from env or Settings.
 - ACP: `src/Sofia.Acp` (net10.0) stdio bridge for editors (Zed, JetBrains, Neovim); `dotnet run --project src/Sofia.Acp`.
-- Desktop: `src/Sofia.Desktop` (Avalonia 12 + XAML, net10.0) native shell that
-  launches `Sofia.Server` as a child process (or, if one is already running on
-  port 5199, connects to it as an external, permanent service it does not own
-  or stop) and renders the web UI in a platform-native WebView
-  (`Avalonia.Controls.WebView`). Run with
-  `dotnet run --project src/Sofia.Desktop`. Prerequisites: OS WebView runtime
-  (WebView2 on Windows, WebKitGTK on Linux, WKWebView on macOS).
 - UI: Vue 3.5 + Vite + TypeScript, Mantine Vue (`@mantine-vue/core`),
   `@microsoft/signalr`. Backend client in `src/Sofia.UI/src/services/sofia.ts`,
   shared shapes in `src/Sofia.UI/src/types.ts`, store in
@@ -67,7 +83,6 @@ installer remains future work.
 dotnet build Sofia.slnx
 dotnet test Sofia.slnx
 dotnet run --project src/Sofia.Server     # http://127.0.0.1:5199, serves src/Sofia.UI/dist when built
-dotnet run --project src/Sofia.Desktop    # native desktop shell (Avalonia + WebView) wrapping the server
 dotnet publish src/Sofia.Server -c Release -o out   # also builds Sofia.UI into out/wwwroot (-p:BuildUiOnPublish=false to skip)
 dotnet publish src/Sofia.Server -c Release -r win-x64 --self-contained true -p:InvariantGlobalization=true -o out   # per-platform release build (RIDs: win-x64, linux-x64, osx-arm64, osx-x64)
 
@@ -83,12 +98,20 @@ npm run typecheck  # vue-tsc --noEmit
 
 - Comments and docs in code: English. Semantic HTML, minimal custom CSS.
 - Prefer editing existing files over creating new ones.
-- Server: minimal APIs grouped in `Api/`; state changes go through
+- Server: minimal APIs grouped in `Api/`; anything with a rule behind it
+  (cascades, validation, ordering, imports, diff filtering) belongs in
+  `Sofia.Core/Services`, not in the endpoint; state changes go through
   `SessionStore` so the UI hears about them; never block the agent loop on the
   UI. Map errors with `NotFoundException` / `ConflictException` /
   `ArgumentException` (404 / 409 / 400).
 - When an endpoint or event changes, update `docs/server_api.md`,
+  `ISofiaBackend` (`src/Sofia.Client` + its in-process counterpart),
   `src/Sofia.UI/src/types.ts` and the consumer in the same change.
+- Layers: `Sofia.Contracts` has no package references; `Sofia.Core` must not
+  reference `Microsoft.AspNetCore.*`; `Sofia.Client` references only Contracts
+  (so it can run in a WASM head); `Sofia.Client.InProc` may reference Core.
+  Endpoint request bodies live in `Sofia.Contracts.Domain` so every transport
+  posts the same object.
 - Platforms: server and UI target Windows, macOS and Linux. Keep OS-specific
   code behind `OperatingSystem.Is*()` checks (shell selection and PATH lookup in
   `Infrastructure/ProcessRunner.cs`, path helpers in `Infrastructure/Common.cs`,

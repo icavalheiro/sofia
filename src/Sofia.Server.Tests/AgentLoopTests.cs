@@ -6,11 +6,11 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Sofia.Server.Changes;
-using Sofia.Server.Domain;
-using Sofia.Server.Infrastructure;
+using Sofia.Core.Changes;
+using Sofia.Contracts.Domain;
+using Sofia.Core.Infrastructure;
 
-namespace Sofia.Server.Tests;
+namespace Sofia.Core.Tests;
 
 /// <summary>Scripted OpenAI-compatible endpoint: first call writes a file, the next one answers.</summary>
 internal sealed class FakeLlmHandler : HttpMessageHandler
@@ -468,7 +468,7 @@ public sealed class AgentLoopTests : IDisposable
         Assert.Equal("assistant", last.GetProperty("role").GetString());
         Assert.Contains("Client Closed Request", last.GetProperty("error").GetString());
         Assert.False(last.TryGetProperty("retry", out _));   // the failed card keeps no "still retrying" line
-        Assert.Equal(Sofia.Server.Providers.RetryPolicy.MaxAttempts, FakeLlmHandler.FlakyHits[marker]);
+        Assert.Equal(Sofia.Core.Providers.RetryPolicy.MaxAttempts, FakeLlmHandler.FlakyHits[marker]);
     }
 
     [Fact]
@@ -490,7 +490,7 @@ public sealed class AgentLoopTests : IDisposable
         var session = await WaitFor(http, sessionId, s => RetryCard(s).HasValue);
         var retry = RetryCard(session)!.Value;
         Assert.Equal(2, retry.GetProperty("attempt").GetInt32());
-        Assert.Equal(Sofia.Server.Providers.RetryPolicy.MaxAttempts, retry.GetProperty("attempts").GetInt32());
+        Assert.Equal(Sofia.Core.Providers.RetryPolicy.MaxAttempts, retry.GetProperty("attempts").GetInt32());
         Assert.Contains("Client Closed Request", retry.GetProperty("error").GetString());
 
         // The attempt that answers clears the notice.
@@ -785,23 +785,23 @@ public sealed class AgentLoopTests : IDisposable
         File.WriteAllText(Path.Combine(data, "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Ship it\n---\nSteps");
         var http = _factory.CreateClient();
         await http.GetAsync("/api/config"); // boots the host
-        var db = _factory.Services.GetRequiredService<Sofia.Server.Data.SofiaDb>();
-        db.McpServers.Insert(new Sofia.Server.Domain.McpServerConfig
+        var db = _factory.Services.GetRequiredService<Sofia.Core.Data.SofiaDb>();
+        db.McpServers.Insert(new Sofia.Contracts.Domain.McpServerConfig
         {
             Id = "mcp_test", Name = "demo", Command = "node server.js --api-key SECRET-ARG", Token = "SECRET-TOKEN",
             Env = new Dictionary<string, string> { ["KEY"] = "SECRET-ENV" }, Enabled = false,
         });
-        db.Providers.Insert(new Sofia.Server.Domain.ProviderConfig { Id = "p_test", Name = "Keyed", BaseUrl = "https://user:SECRET-URL@api.example.com/v1?key=SECRET-QUERY", ApiKey = "SECRET-KEY", Enabled = false });
+        db.Providers.Insert(new Sofia.Contracts.Domain.ProviderConfig { Id = "p_test", Name = "Keyed", BaseUrl = "https://user:SECRET-URL@api.example.com/v1?key=SECRET-QUERY", ApiKey = "SECRET-KEY", Enabled = false });
 
-        var workspace = new Sofia.Server.Domain.Workspace { Id = "ws", Kind = "folder", Path = _project };
-        var registry = _factory.Services.GetRequiredService<Sofia.Server.Agent.ToolRegistry>();
-        var tool = registry.For(Sofia.Server.Agent.Agents.Get("build"), workspace).Single(t => t.Name == "sofia_info");
-        var context = new Sofia.Server.Tools.ToolContext
+        var workspace = new Sofia.Contracts.Domain.Workspace { Id = "ws", Kind = "folder", Path = _project };
+        var registry = _factory.Services.GetRequiredService<Sofia.Core.Agent.ToolRegistry>();
+        var tool = registry.For(Sofia.Core.Agent.Agents.Get("build"), workspace).Single(t => t.Name == "sofia_info");
+        var context = new Sofia.Core.Tools.ToolContext
         {
             Session = null!, Workspace = workspace, Cwd = _project, Message = null!, Call = null!, Config = null!, Changes = null!, Host = null!,
         };
 
-        async Task<Sofia.Server.Tools.ToolResult> Call(string topic) => await tool.ExecuteAsync(context, new System.Text.Json.Nodes.JsonObject { ["topic"] = topic }, CancellationToken.None);
+        async Task<Sofia.Core.Tools.ToolResult> Call(string topic) => await tool.ExecuteAsync(context, new System.Text.Json.Nodes.JsonObject { ["topic"] = topic }, CancellationToken.None);
         var outputs = new Dictionary<string, string>();
         foreach (var topic in new[] { "overview", "skills", "commands", "agents", "mcp", "providers", "config", "context" })
             outputs[topic] = (await Call(topic)).Output;
