@@ -1,0 +1,80 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    x:Class="Sofia.App.Theme.Tokens">
+
+  <!-- Ported verbatim from src/Sofia.UI/src/styles/global.css. One CSS px = one Avalonia DIP; never re-derive a
+       value on a grid. The accent brushes (Primary*) are replaced at runtime by ThemeService from AccentPalette so a
+       DynamicResource reference repaints when the user changes the accent. -->
+
+  <!-- Neutral grey surfaces (deliberately untinted). -->
+  <Color x:Key="ColorBg">#171719</Color>
+  <Color x:Key="ColorSurface">#1D1D20</Color>
+  <Color x:Key="ColorSurface2">#242428</Color>
+  <Color x:Key="ColorSurface3">#2C2C31</Color>
+  <Color x:Key="ColorBorder">#33333A</Color>
+  <Color x:Key="ColorBorderStrong">#43434B</Color>
+  <!-- color-mix of the border at 55% (composer hairline) and the composer fill at 66%. -->
+  <Color x:Key="ColorBorderSoft">#8C33333A</Color>
+  <Color x:Key="ColorComposer">#A8171719</Color>
+
+  <!-- Neutral text ramp. -->
+  <Color x:Key="ColorText">#E9E9EC</Color>
+  <Color x:Key="ColorTextMuted">#A0A0A8</Color>
+  <Color x:Key="ColorTextFaint">#6B6B74</Color>
+
+  <!-- Brown primary accent (default preset; see AccentPalette for strong/ink/soft derivation). -->
+  <Color x:Key="ColorPrimary">#A9744F</Color>
+  <Color x:Key="ColorPrimaryStrong">#BC8A5E</Color>
+  <Color x:Key="ColorPrimaryInk">#171719</Color>
+  <Color x:Key="ColorPrimarySoft">#29A9744F</Color>
+  <Color x:Key="ColorPrimarySoftStrong">#42A9744F</Color>
+
+  <!-- Beige detail: reasoning blocks and hairlines only, never a UI-wide tint. -->
+  <Color x:Key="ColorDetail">#E4D3AC</Color>
+  <Color x:Key="ColorDetailSoft">#1AE4D3AC</Color>
+
+  <!-- Status colours (tool calls, badges). -->
+  <Color x:Key="ColorInfo">#6F9FCC</Color>
+  <Color x:Key="ColorInfoSoft">#246F9FCC</Color>
+  <Color x:Key="ColorOk">#74A672</Color>
+  <Color x:Key="ColorOkSoft">#2474A672</Color>
+  <Color x:Key="ColorErr">#C9705F</Color>
+  <Color x:Key="ColorErrSoft">#24C9705F</Color>
+  <Color x:Key="ColorWarn">#C9A94F</Color>
+  <Color x:Key="ColorWarnSoft">#29C9A94F</Color>
+
+  <SolidColorBrush x:Key="BrushBg" Color="{StaticResource ColorBg}" />
+  <SolidColorBrush x:Key="BrushSurface" Color="{StaticResource ColorSurface}" />
+  <SolidColorBrush x:Key="BrushSurface2" Color="{StaticResource ColorSurface2}" />
+  <SolidColorBrush x:Key="BrushSurface3" Color="{StaticResource ColorSurface3}" />
+  <SolidColorBrush x:Key="BrushBorder" Color="{StaticResource ColorBorder}" />
+  <SolidColorBrush x:Key="BrushBorderStrong" Color="{StaticResource ColorBorderStrong}" />
+  <SolidColorBrush x:Key="BrushBorderSoft" Color="{StaticResource ColorBorderSoft}" />
+  <SolidColorBrush x:Key="BrushComposer" Color="{StaticResource ColorComposer}" />
+
+  <SolidColorBrush x:Key="BrushText" Color="{StaticResource ColorText}" />
+  <SolidColorBrush x:Key="BrushTextMuted" Color="{StaticResource ColorTextMuted}" />
+  <SolidColorBrush x:Key="BrushTextFaint" Color="{StaticResource ColorTextFaint}" />
+
+  <SolidColorBrush x:Key="BrushPrimary" Color="{StaticResource ColorPrimary}" />
+  <SolidColorBrush x:Key="BrushPrimaryStrong" Color="{StaticResource ColorPrimaryStrong}" />
+  <SolidColorBrush x:Key="BrushPrimaryInk" Color="{StaticResource ColorPrimaryInk}" />
+  <SolidColorBrush x:Key="BrushPrimarySoft" Color="{StaticResource ColorPrimarySoft}" />
+  <SolidColorBrush x:Key="BrushPrimarySoftStrong" Color="{StaticResource ColorPrimarySoftStrong}" />
+
+  <SolidColorBrush x:Key="BrushDetail" Color="{StaticResource ColorDetail}" />
+  <SolidColorBrush x:Key="BrushDetailSoft" Color="{StaticResource ColorDetailSoft}" />
+
+  <SolidColorBrush x:Key="BrushInfo" Color="{StaticResource ColorInfo}" />
+  <SolidColorBrush x:Key="BrushInfoSoft" Color="{StaticResource ColorInfoSoft}" />
+  <SolidColorBrush x:Key="BrushOk" Color="{StaticResource ColorOk}" />
+  <SolidColorBrush x:Key="BrushOkSoft" Color="{StaticResource ColorOkSoft}" />
+  <SolidColorBrush x:Key="BrushErr" Color="{StaticResource ColorErr}" />
+  <SolidColorBrush x:Key="BrushErrSoft" Color="{StaticResource ColorErrSoft}" />
+  <SolidColorBrush x:Key="BrushWarn" Color="{StaticResource ColorWarn}" />
+  <SolidColorBrush x:Key="BrushWarnSoft" Color="{StaticResource ColorWarnSoft}" />
+
+  <!-- Browser pagination / canvas helpers. -->
+  <SolidColorBrush x:Key="BrushTransparent" Color="Transparent" />
+
+</ResourceDictionary>

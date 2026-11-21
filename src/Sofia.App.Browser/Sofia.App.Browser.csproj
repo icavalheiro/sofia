@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- WASM head. Boot smoke only for now (spec 039); publishing, the static host wiring and feature parity land in
+       spec 044. It references Sofia.App and Sofia.Client, never Sofia.Core (SQLite/Playwright would not build). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-browser1.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sofia.App.Browser</RootNamespace>
+    <AssemblyName>Sofia.App.Browser</AssemblyName>
+    <Version>0.5.16</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Browser" Version="12.1.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sofia.App\Sofia.App.csproj" />
+    <ProjectReference Include="..\Sofia.Client\Sofia.Client.csproj" />
+  </ItemGroup>
+
+</Project>

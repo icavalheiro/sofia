@@ -28,6 +28,9 @@ jobs:
       - name: Test server
         run: dotnet test Sofia.slnx -c Release
 
+      - name: Test Avalonia UI (headless render gate)
+        run: dotnet test src/Sofia.App.Tests -c Release
+
       - name: Typecheck and build UI
         working-directory: src/Sofia.UI
         run: |

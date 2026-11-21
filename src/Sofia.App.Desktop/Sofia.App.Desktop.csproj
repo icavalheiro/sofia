@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Desktop head: Avalonia.Desktop windowing, SoundFlow audio and the backend resolver (in-process Core when this
+       process owns the data directory, HTTP to a running server otherwise). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sofia.App.Desktop</RootNamespace>
+    <AssemblyName>Sofia.App.Desktop</AssemblyName>
+    <Version>0.5.16</Version>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationIcon>Assets\sofia.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
+    <PackageReference Include="SoundFlow" Version="1.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sofia.App\Sofia.App.csproj" />
+    <ProjectReference Include="..\Sofia.Client.InProc\Sofia.Client.InProc.csproj" />
+    <ProjectReference Include="..\Sofia.Client\Sofia.Client.csproj" />
+    <ProjectReference Include="..\Sofia.Core\Sofia.Core.csproj" />
+  </ItemGroup>
+
+</Project>

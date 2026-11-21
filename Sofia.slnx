@@ -2,6 +2,10 @@
   <Folder Name="/src/">
     <Project Path="src/Sofia.Acp/Sofia.Acp.csproj" />
     <Project Path="src/Sofia.Acp.Tests/Sofia.Acp.Tests.csproj" />
+    <Project Path="src/Sofia.App.Browser/Sofia.App.Browser.csproj" />
+    <Project Path="src/Sofia.App.Desktop/Sofia.App.Desktop.csproj" />
+    <Project Path="src/Sofia.App.Tests/Sofia.App.Tests.csproj" />
+    <Project Path="src/Sofia.App/Sofia.App.csproj" />
     <Project Path="src/Sofia.Client.InProc/Sofia.Client.InProc.csproj" />
     <Project Path="src/Sofia.Client/Sofia.Client.csproj" />
     <Project Path="src/Sofia.Contracts/Sofia.Contracts.csproj" />

@@ -1,0 +1,13 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    x:Class="Sofia.App.Theme.Shadows">
+
+  <!-- Shadow vocabulary copied from global.css / the component styles (offsetX offsetY blur spread colour). -->
+  <BoxShadows x:Key="ShadowSm">0 1 3 0 #40000000</BoxShadows>
+  <BoxShadows x:Key="ShadowMenu">0 12 32 0 #47000000</BoxShadows>
+  <BoxShadows x:Key="ShadowModal">0 16 40 0 #73000000</BoxShadows>
+  <BoxShadows x:Key="ShadowPanel">0 24 60 0 #80000000</BoxShadows>
+  <BoxShadows x:Key="ShadowHero">0 24 70 0 #8C000000</BoxShadows>
+  <BoxShadows x:Key="ShadowOverlay">0 30 80 0 #8C000000</BoxShadows>
+
+</ResourceDictionary>

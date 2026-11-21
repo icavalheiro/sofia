@@ -1,0 +1,211 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:theme="using:Sofia.App.Theme"
+        xmlns:controls="using:Sofia.App.Controls"
+        x:Class="Sofia.App.Theme.Controls">
+
+  <!-- Shared control vocabulary and app-wide defaults. Durations/easings always come from Motion.axaml; colours always
+       come from Tokens.axaml. Keep this file to states and typography - component layout belongs in the shell. -->
+
+  <!-- Type defaults (Typography.axaml owns the numbers). -->
+  <Style Selector="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource FontFamilyUi}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSizeMd}" />
+    <Setter Property="LineHeight" Value="{DynamicResource LineHeightBody}" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushText}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <Style Selector="TextBlock.eyebrow">
+    <Setter Property="FontSize" Value="{DynamicResource FontSizeXs}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="LetterSpacing" Value="0.88" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushTextFaint}" />
+  </Style>
+
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="{DynamicResource FontFamilyMono}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSizeSm}" />
+    <Setter Property="LineHeight" Value="{DynamicResource LineHeightMono}" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushTextMuted}" />
+  </Style>
+
+  <Style Selector="TextBlock.truncate">
+    <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    <Setter Property="TextWrapping" Value="NoWrap" />
+  </Style>
+
+  <Style Selector="TextBlock.muted">
+    <Setter Property="Foreground" Value="{DynamicResource BrushTextMuted}" />
+  </Style>
+
+  <Style Selector="TextBlock.faint">
+    <Setter Property="Foreground" Value="{DynamicResource BrushTextFaint}" />
+  </Style>
+
+  <Style Selector="TextBlock.heading">
+    <Setter Property="FontSize" Value="{DynamicResource FontSizeDisplay}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="LineHeight" Value="{DynamicResource LineHeightTight}" />
+  </Style>
+
+  <!-- Inputs: surface-2 well, 1px border, 8px radius, primary focus ring with the 3px soft halo. -->
+  <Style Selector="TextBox.input">
+    <Setter Property="FontFamily" Value="{DynamicResource FontFamilyUi}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSizeMd}" />
+    <Setter Property="Foreground" Value="{DynamicResource BrushText}" />
+    <Setter Property="CaretBrush" Value="{DynamicResource BrushPrimary}" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource BrushPrimarySoftStrong}" />
+    <Setter Property="SelectionForegroundBrush" Value="{DynamicResource BrushText}" />
+    <Setter Property="Background" Value="{DynamicResource BrushSurface2}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="10,7" />
+    <Setter Property="MinHeight" Value="0" />
+  </Style>
+
+  <Style Selector="TextBox.input /template/ Border#PART_BorderElement">
+    <Setter Property="Background" Value="{DynamicResource BrushSurface2}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="BorderBrush" Duration="{x:Static theme:MotionTokens.Hover}" Easing="{StaticResource EaseStandard}" />
+        <BoxShadowsTransition Property="BoxShadow" Duration="{x:Static theme:MotionTokens.Hover}" Easing="{StaticResource EaseStandard}" />
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="TextBox.input:pointerover /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderStrong}" />
+  </Style>
+
+  <Style Selector="TextBox.input:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushPrimary}" />
+    <Setter Property="BoxShadow" Value="0 0 0 3 #29A9744F" />
+  </Style>
+
+  <!-- Sidebar rows: 8px radius, hover surface-2, active primary-soft; .12s background transition (motion #1). -->
+  <Style Selector="Border.sidebar-row">
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="{DynamicResource RowPadding}" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="{x:Static theme:MotionTokens.Hover}" Easing="{StaticResource EaseStandard}" />
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Border.sidebar-row:pointerover">
+    <Setter Property="Background" Value="{DynamicResource BrushSurface2}" />
+  </Style>
+
+  <Style Selector="Border.sidebar-row.active">
+    <Setter Property="Background" Value="{DynamicResource BrushPrimarySoft}" />
+  </Style>
+
+  <Style Selector="Border.sidebar-row.active:pointerover">
+    <Setter Property="Background" Value="{DynamicResource BrushPrimarySoftStrong}" />
+  </Style>
+
+  <!-- Hover-action reveal (motion #3/#4): children marked `.row-reveal` fade in .15s when their row is hovered.
+       Used by the sidebar's unpin affordance today and by the message actions in 041. -->
+  <Style Selector="controls|SofiaIcon.row-reveal">
+    <Setter Property="Opacity" Value="0" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="{x:Static theme:MotionTokens.Reveal}" Easing="{StaticResource EaseStandard}" />
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Button.row-button:pointerover controls|SofiaIcon.row-reveal">
+    <Setter Property="Opacity" Value="1" />
+  </Style>
+
+  <!-- Hairline separators (1px, border at 55% like the web's color-mix). -->
+  <Style Selector="Border.hairline">
+    <Setter Property="Height" Value="1" />
+    <Setter Property="Background" Value="{DynamicResource BrushBorderSoft}" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <!-- Surfaces. -->
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource BrushSurface}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+  </Style>
+
+  <Style Selector="Border.composer-band">
+    <Setter Property="Background" Value="{DynamicResource BrushComposer}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderSoft}" />
+    <Setter Property="BorderThickness" Value="1,1,1,0" />
+  </Style>
+
+  <!-- Scrollbars: 10px track, 3px transparent inset, thumb border-strong -> text-faint on hover (web ::-webkit-scrollbar). -->
+  <Style Selector="ScrollBar:vertical">
+    <Setter Property="Width" Value="10" />
+    <Setter Property="MinWidth" Value="10" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Track Name="PART_Track"
+               Orientation="Vertical"
+               Minimum="{TemplateBinding Minimum}"
+               Maximum="{TemplateBinding Maximum}"
+               Value="{TemplateBinding Value}"
+               ViewportSize="{TemplateBinding ViewportSize}">
+          <Track.Thumb>
+            <Thumb Name="PART_Thumb" Width="10" Cursor="Hand">
+              <Thumb.Template>
+                <ControlTemplate>
+                  <Border Background="{DynamicResource BrushBorderStrong}" CornerRadius="999" Margin="3" />
+                </ControlTemplate>
+              </Thumb.Template>
+            </Thumb>
+          </Track.Thumb>
+        </Track>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover /template/ Thumb#PART_Thumb /template/ Border">
+      <Setter Property="Background" Value="{DynamicResource BrushTextFaint}" />
+    </Style>
+  </Style>
+
+  <Style Selector="ScrollBar:horizontal">
+    <Setter Property="Height" Value="10" />
+    <Setter Property="MinHeight" Value="10" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Track Name="PART_Track"
+               Orientation="Horizontal"
+               Minimum="{TemplateBinding Minimum}"
+               Maximum="{TemplateBinding Maximum}"
+               Value="{TemplateBinding Value}"
+               ViewportSize="{TemplateBinding ViewportSize}">
+          <Track.Thumb>
+            <Thumb Name="PART_Thumb" Height="10" Cursor="Hand">
+              <Thumb.Template>
+                <ControlTemplate>
+                  <Border Background="{DynamicResource BrushBorderStrong}" CornerRadius="999" Margin="3" />
+                </ControlTemplate>
+              </Thumb.Template>
+            </Thumb>
+          </Track.Thumb>
+        </Track>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+</Styles>
+
+
+
+
+

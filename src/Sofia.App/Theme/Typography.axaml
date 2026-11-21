@@ -1,0 +1,57 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    x:Class="Sofia.App.Theme.Typography">
+
+  <!-- Type scale, copied from the Vue sources (rem at the 16px base). Every font size, line height and rem-based
+       padding is declared here once as a `*Base` double; ThemeService reads those bases and republishes the
+       unscaled key names (`FontSizeMd`, `PadRow`, ...) multiplied by the user's font scale (14/16/18 -> .875/1/1.125).
+       Components must only ever reference the unscaled keys, never a literal, or the font-size setting stops
+       scaling them. -->
+
+  <!-- Platform UI stack (no Inter: the web never used it and the old shell's habit must not come back). Mono is a
+       second family resource for tool payloads and code. -->
+  <FontFamily x:Key="FontFamilyUi">-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif</FontFamily>
+  <FontFamily x:Key="FontFamilyMono">SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace</FontFamily>
+
+  <!-- 0.6875rem / 0.75rem / 0.8125rem / 0.875rem / 0.9375rem / 1rem / 1.0625rem / 1.125rem / 1.375rem / 1.6rem -->
+  <x:Double x:Key="FontSizeXsBase">11</x:Double>
+  <x:Double x:Key="FontSizeSmBase">12</x:Double>
+  <x:Double x:Key="FontSizeSm2Base">13</x:Double>
+  <x:Double x:Key="FontSizeMdBase">14</x:Double>
+  <x:Double x:Key="FontSizeMd2Base">15</x:Double>
+  <x:Double x:Key="FontSizeLgBase">16</x:Double>
+  <x:Double x:Key="FontSizeXlBase">17</x:Double>
+  <x:Double x:Key="FontSizeXxlBase">18</x:Double>
+  <x:Double x:Key="FontSizeDisplayBase">22</x:Double>
+  <x:Double x:Key="FontSizeHeroBase">25.6</x:Double>
+
+  <!-- Line heights (unitless multipliers from the web, resolved against the scaled size). -->
+  <x:Double x:Key="LineHeightMonoBase">1.55</x:Double>
+  <x:Double x:Key="LineHeightBodyBase">1.55</x:Double>
+  <x:Double x:Key="LineHeightTightBase">1.35</x:Double>
+  <x:Double x:Key="LineHeightRelaxedBase">1.6</x:Double>
+
+  <!-- Letter spacing (CSS em based). -->
+  <x:Double x:Key="LetterSpacingEyebrowBase">0.88</x:Double>
+
+  <!-- Unscaled defaults: ThemeService overwrites these at startup with base * fontScale, so a previewer or a
+       designer still sees the md (16px) render before the service runs. -->
+  <x:Double x:Key="FontSizeXs">11</x:Double>
+  <x:Double x:Key="FontSizeSm">12</x:Double>
+  <x:Double x:Key="FontSizeSm2">13</x:Double>
+  <x:Double x:Key="FontSizeMd">14</x:Double>
+  <x:Double x:Key="FontSizeMd2">15</x:Double>
+  <x:Double x:Key="FontSizeLg">16</x:Double>
+  <x:Double x:Key="FontSizeXl">17</x:Double>
+  <x:Double x:Key="FontSizeXxl">18</x:Double>
+  <x:Double x:Key="FontSizeDisplay">22</x:Double>
+  <x:Double x:Key="FontSizeHero">25.6</x:Double>
+
+  <!-- Rem-based spacings that scale with the root font size in the web (`.4rem` row padding, `.7rem 1.5rem .55rem`
+       header band, `.45rem 1.5rem .55rem` composer overlay, `1.25rem 1.5rem` transcript padding). -->
+  <x:Double x:Key="PadRowBase">6.4</x:Double>
+  <x:Double x:Key="PadBrandBase">16</x:Double>
+  <x:Double x:Key="PadRow">6.4</x:Double>
+  <x:Double x:Key="PadBrand">16</x:Double>
+
+</ResourceDictionary>

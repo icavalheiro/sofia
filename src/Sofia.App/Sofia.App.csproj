@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared Avalonia UI (AXAML) for every Sofia.App head: desktop now, the WASM browser head later. It must stay
+       free of desktop-only packages (SoundFlow, SQLite) so the browser build can reference it; platform services
+       are injected through small interfaces (ISoundPlayer, IMotionClock...). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sofia.App</RootNamespace>
+    <AssemblyName>Sofia.App</AssemblyName>
+    <Version>0.5.16</Version>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sofia.Client\Sofia.Client.csproj" />
+    <ProjectReference Include="..\Sofia.Contracts\Sofia.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sofia.App.Tests" />
+  </ItemGroup>
+
+</Project>

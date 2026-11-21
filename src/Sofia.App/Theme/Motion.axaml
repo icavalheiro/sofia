@@ -1,0 +1,40 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    x:Class="Sofia.App.Theme.Motion">
+
+  <!-- The single source of timings for the whole app: every animation in the web's motion contract is listed here with
+       its exact duration, and nothing outside this file may name a time. Values are milliseconds (x:Double) because
+       XAML cannot instantiate TimeSpan; code and AXAML both read them through Theme/MotionTokens.cs (which exposes the
+       same values as TimeSpan for transitions and as doubles for the clock-driven animations). -->
+
+  <!-- One-shot transitions (motion contract #1-#5, #17-#19). -->
+  <x:Double x:Key="MsHover">120</x:Double>
+  <x:Double x:Key="MsPress">80</x:Double>
+  <x:Double x:Key="MsReveal">150</x:Double>
+  <x:Double x:Key="MsFold">200</x:Double>
+  <x:Double x:Key="MsModal">160</x:Double>
+  <x:Double x:Key="MsCarousel">220</x:Double>
+  <x:Double x:Key="MsPanelWidth">240</x:Double>
+  <x:Double x:Key="MsPanelSlide">240</x:Double>
+  <x:Double x:Key="MsPanelFade">180</x:Double>
+
+  <!-- CSS easings: `ease` = cubic-bezier(.25,.1,.25,1), `ease-in-out` = cubic-bezier(.42,0,.58,1), linear. -->
+  <SplineEasing x:Key="EaseStandard" X1="0.25" Y1="0.1" X2="0.25" Y2="1" />
+  <SplineEasing x:Key="EaseInOut" X1="0.42" Y1="0" X2="0.58" Y2="1" />
+  <LinearEasing x:Key="EaseLinear" />
+
+  <!-- Infinite animations (motion contract #6-#11, #15, #16). -->
+  <x:Double x:Key="MsWorkspaceSweep">1100</x:Double>
+  <x:Double x:Key="MsConversationSweep">1400</x:Double>
+  <x:Double x:Key="MsIconSpin">900</x:Double>
+  <x:Double x:Key="MsPanelSpinner">900</x:Double>
+  <x:Double x:Key="MsSettingsSpinner">700</x:Double>
+  <x:Double x:Key="MsRetrySpin">1800</x:Double>
+  <x:Double x:Key="MsSteam">2200</x:Double>
+  <x:Double x:Key="MsSteamReduced">6000</x:Double>
+  <x:Double x:Key="MsSteamDelayStep">450</x:Double>
+  <x:Double x:Key="MsBeanSpin">1800</x:Double>
+  <x:Double x:Key="MsRobotShake">500</x:Double>
+  <x:Double x:Key="MsPulse">1400</x:Double>
+
+</ResourceDictionary>

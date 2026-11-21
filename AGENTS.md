@@ -18,12 +18,16 @@ change tracking/revert, local runtime auto-discovery and OpenAI/Anthropic
 compatibility.
 Per-platform self-contained `.zip` releases (win-x64, linux-x64, osx-arm64,
 osx-x64) are built by `.github/workflows/release.yml` on `v*` tags. The WebView
-desktop shell was removed in plan-038; the native Avalonia client arrives with
-plan-037's children (039+). A single-click installer remains future work.
+desktop shell was removed in plan-038; the native Avalonia client is
+`src/Sofia.App` (plan 039: theme, controls, shell frame and the screenshot/frame
+harness; 040+ add the real sidebar, transcript, composer and settings). A
+single-click installer remains future work.
 
 - API contract: `docs/server_api.md` (keep it in sync with both sides).
 - Server architecture: `docs/project_init.md`.
-- Frontend architecture: `docs/front_end_init.md`.
+- Frontend architecture: `docs/front_end_init.md` (Vue, until 044).
+- Native UI architecture: `docs/app_ui.md` (tokens, icons, motion, sounds,
+  screenshot harness and the documented web deviations).
 
 ## Stack
 
@@ -63,6 +67,15 @@ plan-037's children (039+). A single-click installer remains future work.
   local discovery of Unsloth (`:8888`), Ollama (`:11434`), LM Studio (`:1234`),
   llama.cpp (`:8080`), vLLM (`:8000`); cloud keys from env or Settings.
 - ACP: `src/Sofia.Acp` (net10.0) stdio bridge for editors (Zed, JetBrains, Neovim); `dotnet run --project src/Sofia.Acp`.
+- Native UI: `src/Sofia.App` (Avalonia 12.1.6, `net10.0`, AXAML, CompiledBindings):
+  `Theme/` (tokens, type scale, Lucide `Icons.axaml`, motion timings, control themes),
+  `Controls/` (SofiaIcon, CoffeeSpinner, WorkingRowBorder, CollapsiblePanel, SofiaPopover,
+  ToggleSwitch, SofiaMeter), `Shell/` (MainWindow, ShellView, BackendGate), `Services/`
+  (ThemeService, MotionService, SoundService, LocalState, HarnessStore, ScreenshotHarness)
+  and `Assets/` (logos, wallpaper tile, six pre-rendered WAVs). Heads:
+  `src/Sofia.App.Desktop` (Avalonia.Desktop + SoundFlow + backend resolver) and
+  `src/Sofia.App.Browser` (`net10.0-browser1.0` boot smoke, completed in 044). Keep the
+  shared project free of Core/SQLite/SoundFlow; tests are headless (`Sofia.App.Tests`).
 - UI: Vue 3.5 + Vite + TypeScript, Mantine Vue (`@mantine-vue/core`),
   `@microsoft/signalr`. Backend client in `src/Sofia.UI/src/services/sofia.ts`,
   shared shapes in `src/Sofia.UI/src/types.ts`, store in
@@ -83,6 +96,9 @@ plan-037's children (039+). A single-click installer remains future work.
 dotnet build Sofia.slnx
 dotnet test Sofia.slnx
 dotnet run --project src/Sofia.Server     # http://127.0.0.1:5199, serves src/Sofia.UI/dist when built
+dotnet run --project src/Sofia.App.Desktop -- --fixture   # native shell with deterministic fixture data
+dotnet run --project src/Sofia.App.Desktop -- --fixture --screenshot 039 --all-sizes --out-dir .specs/spec_assets
+dotnet test src/Sofia.App.Tests           # headless token/control/motion/screenshot gate
 dotnet publish src/Sofia.Server -c Release -o out   # also builds Sofia.UI into out/wwwroot (-p:BuildUiOnPublish=false to skip)
 dotnet publish src/Sofia.Server -c Release -r win-x64 --self-contained true -p:InvariantGlobalization=true -o out   # per-platform release build (RIDs: win-x64, linux-x64, osx-arm64, osx-x64)
 

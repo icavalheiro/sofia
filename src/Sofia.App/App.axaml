@@ -1,0 +1,24 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:theme="using:Sofia.App.Theme"
+             x:Class="Sofia.App.App"
+             RequestedThemeVariant="Dark">
+
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <theme:Tokens />
+        <theme:Typography />
+        <theme:Shadows />
+        <theme:Motion />
+        <theme:Icons />
+        <theme:ControlThemes />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme />
+    <theme:Controls />
+  </Application.Styles>
+</Application>
