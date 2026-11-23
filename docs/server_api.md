@@ -104,7 +104,7 @@ interface UsageDto {
 interface SessionDto extends ConversationSummaryDto {
   modelId: string
   agent: string           // 'build' | 'plan' | custom
-  permissionMode: 'read-only' | 'ask' | 'plan' | 'full'
+  permissionMode: 'read-only' | 'ask' | 'plan' | 'workspace' | 'full'
   reasoningMode: 'off' | 'low' | 'medium' | 'high'
   usage: UsageDto
   context: { used: number; limit: number; systemTokens?: number; toolTokens?: number }
@@ -209,6 +209,13 @@ interface MetricsDto {
 ```
 
 Permission choices are always `['Allow once', 'Allow for this session', 'Deny']`.
+
+Permission modes: `read-only` and `plan` block every write/command; `ask` prompts for writes,
+commands, the browser and MCP tools; `workspace` allows reads, writes, commands, web tools and
+the browser without prompting **inside the workspace folder** and asks for any file tool path
+that resolves outside it (a chat workspace has no folder, so it behaves like `ask`); `full`
+never asks. `browser` asks in every mode but `full` and `workspace`, and MCP tools ask in every
+mode but `full`.
 
 The `question` tool attaches its `question` / `questionSet` card to the assistant
 message that made the call, so the prompt renders inside that reply (next to its
@@ -419,7 +426,7 @@ built-ins `compact` and `init`. Sub-folders are part of the name (`git/pr` →
 session; a subagent gets the work delegated), `model` (`providerId/modelId`,
 switches the session), `subtask: true` (delegate instead of running inline).
 `POST /api/sessions/{id}/command` expands `$ARGUMENTS` / `$1`…`$9`, ``!`cmd` ``
-(output injected — only when the session's permission mode is `full`, otherwise
+(output injected — only when the session's permission mode is `full` or `workspace`, otherwise
 left as text) and `@path` (a file inside the workspace is appended as a
 `<file>` block). Unknown command → `404`, unknown `agent` / `model` → `400`.
 

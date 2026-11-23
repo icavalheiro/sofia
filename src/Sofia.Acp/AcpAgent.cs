@@ -10,6 +10,7 @@ public sealed class AcpAgent
         ("read-only", "Read only"),
         ("ask", "Ask"),
         ("plan", "Plan"),
+        ("workspace", "Workspace"),
         ("full", "Full access"),
     ];
 

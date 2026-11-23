@@ -62,6 +62,15 @@ internal sealed class FakeLlmHandler : HttpMessageHandler
         // done, so the script stays deterministic however many turns the test runs.
         if (body.Contains("PREFIXALPHA", StringComparison.Ordinal) || body.Contains("PREFIXBETA", StringComparison.Ordinal))
             return Sse(CountOf(body, "Saved workspace note") < CountOf(body, "\"role\":\"user\"") ? NotesSaveScript : NotesSaveAnswer);
+        if (body.Contains("OUTSIDEWRITE", StringComparison.Ordinal) || body.Contains("OUTSIDEREAD", StringComparison.Ordinal) || body.Contains("CHATBROWSER", StringComparison.Ordinal))
+        {
+            // Workspace-mode tests: one file tool call whose target sits outside the workspace folder (or, for a chat
+            // workspace with no folder, a browser call that asks exactly like it does in `ask` mode).
+            if (body.Contains("\"role\":\"tool\"", StringComparison.Ordinal)) return Sse(TextAnswerScript);
+            return Sse(body.Contains("OUTSIDEWRITE", StringComparison.Ordinal) ? OutsideWriteScript
+                : body.Contains("OUTSIDEREAD", StringComparison.Ordinal) ? OutsideReadScript
+                : ChatBrowserScript);
+        }
         if (body.Contains("future sessions should know", StringComparison.Ordinal))
         {
             // Knowledge review: answer with one justified workspace note and one the reviewer rejects as useless.
@@ -110,6 +119,37 @@ internal sealed class FakeLlmHandler : HttpMessageHandler
     [
         """{"choices":[{"index":0,"delta":{"content":"Recovered"}}]}""",
         """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+    ];
+
+    /// <summary>Plain-text answer used after a scripted tool call (the second request carries the tool result).</summary>
+    private static string[] TextAnswerScript =>
+    [
+        """{"choices":[{"index":0,"delta":{"content":"Done"}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+    ];
+
+    /// <summary>First step writes a file that resolves outside the workspace (`../outside.txt`).</summary>
+    private static string[] OutsideWriteScript =>
+    [
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_w1","function":{"name":"write","arguments":""}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"../outside.txt\",\"content\":\"leak\\n\"}"}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}""",
+    ];
+
+    /// <summary>First step reads a file that resolves outside the workspace (`../secret.txt`).</summary>
+    private static string[] OutsideReadScript =>
+    [
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_r1","function":{"name":"read","arguments":""}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"../secret.txt\"}"}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}""",
+    ];
+
+    /// <summary>First step asks the browser for a snapshot; in a chat workspace it must ask before running.</summary>
+    private static string[] ChatBrowserScript =>
+    [
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_b1","function":{"name":"browser","arguments":""}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"action\":\"snapshot\"}"}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}""",
     ];
 
     /// <summary>

@@ -29,7 +29,7 @@ public sealed class NotFoundException(string message) : Exception(message);
 /// <summary>Owns the active runs: prompts, steering, abort, approvals, answers, compaction, revert.</summary>
 public sealed class AgentService(RunServices services, CommandService commands, IHostApplicationLifetime lifetime, KeepAwakeService awake, ILogger<AgentService> log)
 {
-    private static readonly HashSet<string> PermissionModes = ["read-only", "ask", "plan", "full"];
+    private static readonly HashSet<string> PermissionModes = ["read-only", "ask", "plan", "workspace", "full"];
     private static readonly HashSet<string> ReasoningModes = ["off", "low", "medium", "high"];
 
     private readonly ConcurrentDictionary<string, SessionRun> _runs = new();
@@ -213,9 +213,9 @@ public sealed class AgentService(RunServices services, CommandService commands, 
         var args = arguments?.Trim() ?? "";
         var display = $"/{name}{(args.Length > 0 ? " " + args : "")}";
 
-        // Shell injection (!`cmd`) only runs without asking in full-access sessions.
+        // Shell injection (!`cmd`) only runs without asking where shell commands are free: full and workspace access.
         var text = await CommandService.ExpandDynamicAsync(CommandService.Expand(command.Template, args), dir,
-            session.PermissionMode == "full", ProcessRunner.ResolveShell(Db.GetConfig().Shell), ct,
+            session.PermissionMode is "full" or "workspace", ProcessRunner.ResolveShell(Db.GetConfig().Shell), ct,
             SandboxPolicy.Resolve(Db.GetConfig(), workspace, session));
 
         // A subtask (or a subagent-only agent) is delegated through `task`; any other agent takes over the session.

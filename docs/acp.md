@@ -28,7 +28,7 @@ Components:
 
 Tool kinds: read/ls→read, write/edit→edit, grep/find→search, bash/processes→execute, web_fetch/web_search→fetch, else other.
 
-Modes: `read-only`, `ask`, `plan`, `full`.
+Modes: `read-only`, `ask`, `plan`, `workspace`, `full`.
 
 ## Editor configuration
 

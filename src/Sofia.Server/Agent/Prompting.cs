@@ -136,6 +136,10 @@ public static class SystemPromptBuilder
         {
             sb.AppendLine().AppendLine("<mode>The session is read-only: tools that modify files or run commands are blocked. Explain what you would change instead.</mode>");
         }
+        else if (session.PermissionMode == "workspace")
+        {
+            sb.AppendLine().AppendLine("<mode>The session has full access inside the workspace folder: file reads and edits, shell commands and web/browser tools run without asking. Paths outside the folder need the user's approval, which the harness asks for automatically — just call the tool and the user decides.</mode>");
+        }
 
         if (!string.IsNullOrWhiteSpace(overrides.Append)) sb.AppendLine().AppendLine(overrides.Append.Trim());
 
@@ -260,6 +264,7 @@ public static class ContextUpdates
     {
         "plan" => "- " + Agents.Get("plan").Addendum,
         "read-only" => "- The session is now read-only: tools that modify files or run commands are blocked. Explain what you would change instead.",
+        "workspace" => "- The session now has full access inside the workspace folder: reads, edits, shell commands and web/browser tools run without asking. Paths outside the folder still need the user's approval.",
         _ => "- The session is no longer in plan or read-only mode; normal permissions apply.",
     };
 

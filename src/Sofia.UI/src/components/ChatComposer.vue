@@ -139,11 +139,12 @@ const activeModelIcon = computed(() => {
 })
 
 // Permission levels escalate: blue (read only) → beige (plan) → brown (ask)
-// → red (full access). The chip is icon-only, so the colour is the state.
+// → amber (workspace) → red (full access). The chip is icon-only, so the colour is the state.
 const PERMISSION_TONE: Record<PermissionModeId, PopoverTone> = {
   'read-only': 'info',
   plan: 'detail',
   ask: 'primary',
+  workspace: 'warn',
   full: 'err',
 }
 

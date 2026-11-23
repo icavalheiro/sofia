@@ -169,13 +169,23 @@ marked, pending approvals are cancelled.
 
 ### Permissions
 
-| Mode | Read / network / question / task | Write (`write`, `edit`, `apply_patch`) | Execute (shell) | MCP (not read-only) |
-| --- | --- | --- | --- | --- |
-| `full` | allow | allow | allow | allow |
-| `ask` | allow | ask | ask | ask |
-| `read-only`, `plan` | allow | blocked | blocked | ask |
+| Mode | Read / network / question / task | Write (`write`, `edit`, `apply_patch`) | Execute (shell) | Browser | MCP (not read-only) |
+| --- | --- | --- | --- | --- | --- |
+| `full` | allow | allow | allow | allow | allow |
+| `workspace` | allow inside the workspace folder, ask outside | allow inside, ask outside | allow | allow | ask |
+| `ask` | allow | ask | ask | ask | ask |
+| `read-only`, `plan` | allow | blocked | blocked | ask | ask |
 
-`browser` (`ToolKind.Browser`) asks in every mode but `full`, like MCP tools.
+`workspace` needs a folder workspace to have a boundary: in a chat workspace (no folder) it
+behaves exactly like `ask`. The boundary is checked per call from the arguments — `path` on
+the file tools, every hunk target (sources, deletes and `*** Move to:` destinations) for
+`apply_patch` — so `read`, `grep`, `find`, `ls`, `lsp` and the writers all ask when they point
+outside `Workspace.Path`; on Windows/macOS the comparison is case-insensitive and lexical
+(a symlink that leaves the folder is not detected). Shell commands, web tools and `browser`
+never ask in a folder workspace, so the mode is **not** a sandbox: a command can still reach
+outside the folder — the OS sandbox setting (below) remains the only confinement for those.
+
+`browser` (`ToolKind.Browser`) asks in every mode but `full` and `workspace`, like MCP tools.
 
 "Allow for this session" stores a per-tool rule on the session. Approvals
 requested by subagents appear in the parent conversation.

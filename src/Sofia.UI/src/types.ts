@@ -634,7 +634,7 @@ export interface ModelOption
   singleClient?: boolean;
 }
 
-export type PermissionModeId = 'read-only' | 'ask' | 'plan' | 'full';
+export type PermissionModeId = 'read-only' | 'ask' | 'plan' | 'workspace' | 'full';
 export interface PermissionMode
 {
   id: PermissionModeId;
@@ -735,6 +735,7 @@ export const PERMISSION_MODES: PermissionMode[] = [
   { id: 'read-only', label: 'Read only', description: 'Can read files but never write or run commands.' },
   { id: 'ask', label: 'Ask before edits', description: 'Prompts before any write, edit or command.' },
   { id: 'plan', label: 'Plan', description: 'Researches and proposes a plan without applying changes.' },
+  { id: 'workspace', label: 'Workspace', description: 'Edits files in this workspace, runs commands and browses without asking; anything outside the folder needs approval.' },
   { id: 'full', label: 'Full access', description: 'Edits files and runs commands without asking.' },
 ];
 

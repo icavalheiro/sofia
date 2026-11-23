@@ -148,6 +148,25 @@ public static class PathUtil
         return Path.GetFullPath(Path.IsPathRooted(expanded) ? expanded : Path.Combine(cwd, expanded));
     }
 
+    /// <summary>
+    /// True when <paramref name="path"/> is <paramref name="root"/> itself or lives under it. Lexical only: a symlink
+    /// inside the root that points elsewhere still counts as inside. Both paths are normalised first; Windows and macOS
+    /// compare case-insensitively. An empty root never confines anything.
+    /// </summary>
+    public static bool IsInside(string root, string path)
+    {
+        if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(path)) return false;
+        var normalizedRoot = Normalize(root);
+        if (normalizedRoot.Length == 0) return false;
+        var normalizedPath = Normalize(path);
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (normalizedPath.Equals(normalizedRoot, comparison)) return true;
+        return normalizedPath.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, comparison)
+            || normalizedPath.StartsWith(normalizedRoot + Path.AltDirectorySeparatorChar, comparison);
+    }
+
     public static string Relative(string root, string path)
     {
         if (string.IsNullOrEmpty(root)) return path;

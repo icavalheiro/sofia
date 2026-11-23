@@ -1033,6 +1033,68 @@ public sealed class SessionRun : IToolHost
         }
     }
 
+    /// <summary>
+    /// The raw path arguments a call touches: `path` for the file tools, every source/destination of an
+    /// `apply_patch` patch. Empty for tools that take no path (their work stays in the cwd or is not file-bound).
+    /// </summary>
+    internal static IReadOnlyList<string> TouchedPathArgs(ITool tool, JsonObject args)
+    {
+        if (tool.Name == "apply_patch")
+        {
+            var input = Args.Raw(args, "input", "patch", "patchText");
+            if (string.IsNullOrWhiteSpace(input)) return [];
+            try
+            {
+                var (hunks, _) = PatchParser.Parse(input);
+                var paths = new List<string>();
+                foreach (var hunk in hunks)
+                {
+                    switch (hunk)
+                    {
+                        case PatchHunk.Add add: paths.Add(add.Path); break;
+                        case PatchHunk.Delete delete: paths.Add(delete.Path); break;
+                        case PatchHunk.Update update:
+                            paths.Add(update.Path);
+                            if (update.MoveTo is not null) paths.Add(update.MoveTo);
+                            break;
+                    }
+                }
+                return paths;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return [];   // unparsable patch: the tool itself reports it; the gate treats it as unknown
+            }
+        }
+        var single = Args.Optional(args, "path", "file_path", "filePath");
+        return string.IsNullOrWhiteSpace(single) ? [] : [single];
+    }
+
+    /// <summary>
+    /// The `workspace` mode's boundary test: true when the call reaches outside the workspace folder, or when its
+    /// target cannot be determined (a write without a parsable path). Read tools that take no path work on the cwd,
+    /// which is the workspace itself.
+    /// </summary>
+    internal static bool LeavesWorkspace(ITool tool, JsonObject args, string cwd, string workspaceRoot)
+    {
+        var raw = TouchedPathArgs(tool, args);
+        if (raw.Count == 0) return tool.Kind == ToolKind.Write;
+        foreach (var path in raw)
+        {
+            string resolved;
+            try
+            {
+                resolved = PathUtil.Resolve(cwd, path);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                return true;
+            }
+            if (!PathUtil.IsInside(workspaceRoot, resolved)) return true;
+        }
+        return false;
+    }
+
     private void Complete(Message assistant, ToolCall call, ToolResult result, TimeSpan elapsed)
     {
         var max = _s.Db.GetConfig().MaxToolOutput;
@@ -1203,7 +1265,6 @@ public sealed class SessionRun : IToolHost
 
     private async Task<string?> AuthorizeAsync(ITool tool, ToolCall call, JsonObject args, CancellationToken ct)
     {
-        if (tool.Kind is ToolKind.Read or ToolKind.Network or ToolKind.Interactive or ToolKind.Agent) return null;
         var mode = Session.Agent == "plan" ? "plan" : Session.PermissionMode;
         var unsandboxed = Args.Bool(args, "unsandboxed");
         if (mode is "read-only" or "plan" && tool.Kind is ToolKind.Write or ToolKind.Execute)
@@ -1222,6 +1283,17 @@ public sealed class SessionRun : IToolHost
             }
         }
         if (mode == "full") return null;
+        // 'workspace' frees everything inside the folder (edits, commands, web/browser); only MCP tools and paths
+        // that resolve outside it still ask. A chat workspace has no folder, so it behaves exactly like 'ask'.
+        if (mode == "workspace" && Workspace.IsFolder)
+        {
+            var outside = tool.Kind is ToolKind.Read or ToolKind.Write && LeavesWorkspace(tool, args, Cwd, Workspace.Path);
+            if (tool.Kind != ToolKind.External && !outside) return null;
+        }
+        else if (tool.Kind is ToolKind.Read or ToolKind.Network or ToolKind.Interactive or ToolKind.Agent)
+        {
+            return null;
+        }
         BeginUserWait();
         try
         {
