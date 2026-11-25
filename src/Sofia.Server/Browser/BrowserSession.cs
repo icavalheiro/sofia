@@ -22,10 +22,12 @@ public sealed class BrowserSession : IAsyncDisposable
     private readonly BrowserHandle _handle;
     private readonly IEventBus _bus;
     private readonly ILogger _log;
+    private readonly BrowserConsole _console = new();
     private IPage? _page;
     private string _title = "";
     private BrowserViewport? _viewport;
     private ICDPSession? _browserCdp;
+    private long _consoleReported;
     private (int Width, int Height)? _natural;
     private bool _disposed;
     private volatile bool _agentBusy;
@@ -111,6 +113,19 @@ public sealed class BrowserSession : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The conversation's console log (messages, uncaught exceptions, crashes), filtered by minimum severity and
+    /// capped to the most recent entries. Reading it marks the entries as reported.
+    /// </summary>
+    public string DescribeConsole(string? level, int limit) =>
+        _console.Describe(level, limit, ref _consoleReported);
+
+    /// <summary>
+    /// The errors logged since the previous tool result, for the note section of that result, so the agent sees a
+    /// JavaScript error without having to ask for it. Empty when nothing new was logged.
+    /// </summary>
+    public string DrainConsoleNotes() => _console.TakeSummary(ref _consoleReported);
+
     /// <summary>Marks the conversation as agent-driven for the duration of the scope (serializes tool calls).</summary>
     public async Task<IDisposable> BeginAgentAsync(CancellationToken ct)
     {
@@ -147,6 +162,10 @@ public sealed class BrowserSession : IAsyncDisposable
         }
         page.Close += (_, _) => _ = OnPageClosedAsync(page);
         page.Load += (_, _) => _ = RefreshAsync(page);
+        page.Console += (_, message) => _console.Add(message.Type, message.Text,
+            string.IsNullOrWhiteSpace(message.Location) ? page.Url : message.Location);
+        page.PageError += (_, error) => _console.AddError(error, page.Url);
+        page.Crash += (_, _) => _console.AddError("The page crashed (renderer process gone).", page.Url);
         page.Dialog += async (_, dialog) =>
         {
             // Deterministic for the agent: alerts are accepted, everything else dismissed. The user is told.

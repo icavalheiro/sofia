@@ -21,7 +21,8 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
     private static readonly string[] Actions =
     [
         "launch", "navigate", "snapshot", "screenshot", "viewport", "click", "hover", "type", "select", "press", "scroll",
-        "wait", "back", "forward", "reload", "evaluate", "tabs", "new_tab", "switch_tab", "close_tab", "close", "focus",
+        "wait", "back", "forward", "reload", "evaluate", "console", "tabs", "new_tab", "switch_tab", "close_tab", "close",
+        "focus",
     ];
 
     public string Name => "browser";
@@ -39,14 +40,17 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         "touching the user's window (width/height plus optional mobile/device_scale_factor; call it again without a size to reset), " +
         "so media queries, flex wrapping and screenshots follow the emulated size — use it for responsive/mobile layout checks, " +
         "because window.resizeTo is a silent no-op in a window the page did not open. 'close' closes the window; until then it stays " +
-        "open for the user. Prefer web_fetch/web_search for plain reading.";
+        "open for the user. Prefer web_fetch/web_search for plain reading. " +
+        "Console output is recorded for the conversation (console messages, uncaught exceptions and crashes): every call reports the " +
+        "errors logged since the previous one, and 'console' returns the stored log filtered by level (error, warning, info or all) " +
+        "and capped by limit — use it to diagnose a page that fails in JavaScript.";
 
     public ToolKind Kind => ToolKind.Browser;
 
     public JsonObject Parameters => Schema.Object(
         ("action", Schema.Enum("What to do. launch (browser?) · navigate (url, browser?) · snapshot · screenshot (ref?, full_page?) · viewport (width?, height?, mobile?, device_scale_factor?) · " +
             "click (ref) · hover (ref) · type (ref?, text, submit?) · select (ref, value) · press (key, ref?) · scroll (direction up|down|top|bottom, amount?, ref?) · " +
-            "wait (seconds? or text?) · back · forward · reload · evaluate (script) · tabs · new_tab (url?) · switch_tab (tab) · close_tab (tab?) · " +
+            "wait (seconds? or text?) · back · forward · reload · evaluate (script) · console (level?, limit?) · tabs · new_tab (url?) · switch_tab (tab) · close_tab (tab?) · " +
             "focus · close.", Actions), true),
         ("url", Schema.String("Address for navigate/new_tab. Bare hosts get https://; plain text becomes a web search."), false),
         ("browser", Schema.Enum("Browser to use for launch/navigate. 'auto' (default) picks the first installed Chrome-family browser; Firefox is experimental.",
@@ -65,13 +69,16 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         ("amount", Schema.Integer("Pixels to scroll (default: most of a screen)."), false),
         ("seconds", Schema.Integer("Seconds to wait (max 30)."), false),
         ("script", Schema.String("JavaScript expression or function to evaluate in the page; the result is returned as JSON."), false),
+        ("level", Schema.Enum("Console entries to return, by minimum severity: error (errors and uncaught exceptions), warning (plus warnings), info (plus console.log/info) or all (also debug and trace; the default).",
+            "error", "warning", "info", "all"), false),
+        ("limit", Schema.Integer("How many console entries to return, most recent last (default 50, max 200)."), false),
         ("tab", Schema.Integer("Tab number from the tabs action (0-based)."), false),
         ("saveTo", Schema.String("Optional absolute file path to also save the screenshot to (for post-processing)."), false));
 
     public string Summarize(JsonObject args)
     {
         var action = Args.Optional(args, "action") ?? "";
-        var detail = Args.Optional(args, "url") ?? Args.Optional(args, "ref") ?? Args.Optional(args, "key") ?? Args.Optional(args, "text") ?? "";
+        var detail = Args.Optional(args, "url") ?? Args.Optional(args, "ref") ?? Args.Optional(args, "key") ?? Args.Optional(args, "text") ?? Args.Optional(args, "level") ?? "";
         return Text.FirstLine($"{action} {detail}".Trim(), 120);
     }
 
@@ -128,6 +135,12 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
                     $"Profile: {session.ProfileDir}", ctx.Config.MaxToolOutput));
             }
             if (action == "screenshot") return await ScreenshotAsync(session, args);
+            if (action == "console")
+            {
+                var level = Args.Optional(args, "level");
+                var limit = Math.Clamp(Args.Int(args, "limit") ?? 50, 1, BrowserConsole.MaxLimit);
+                return ToolResult.Ok(Text.Truncate($"{Prefix(session)}{session.DescribeConsole(level, limit)}", ctx.Config.MaxToolOutput));
+            }
             if (action == "viewport")
             {
                 var viewport = BrowserViewport.Validate(
@@ -229,6 +242,10 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
             {
                 var result = await page.EvaluateAsync<JsonElement?>(Args.Required(args, "script"));
                 var text = result?.ToString() ?? "undefined";
+                // The script may log or throw where it is caught: report that console output with the result instead
+                // of making the agent ask for it in a second call.
+                var console = session.DrainConsoleNotes();
+                if (console.Length > 0) text += "\n\n" + console;
                 var saveTo = Args.Optional(args, "saveTo");
                 if (!string.IsNullOrWhiteSpace(saveTo))
                 {
@@ -444,6 +461,8 @@ public sealed partial class BrowserTool(BrowserService browser, Func<byte[], str
         if (done.Length > 0) sb.AppendLine(done);
         var notes = session.DrainNotes();
         if (notes.Length > 0) sb.AppendLine(notes);
+        var console = session.DrainConsoleNotes();
+        if (console.Length > 0) sb.AppendLine(console);
         if (session.ViewportNote is { Length: > 0 } viewportNote) sb.AppendLine(viewportNote);
         sb.AppendLine($"Browser: {session.EngineId}{(session.Headless ? " (headless, no window)" : " (window on the server's desktop)")}");
         sb.AppendLine($"URL: {page.Url}");

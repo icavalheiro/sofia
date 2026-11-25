@@ -107,6 +107,188 @@ public class BrowserViewportTests
 }
 
 /// <summary>
+/// The conversation's console buffer: what the browser logs has to reach the agent, log spam must not hide the
+/// errors, and the same error must not be repeated in every tool result.
+/// </summary>
+public class BrowserConsoleTests
+{
+    [Fact]
+    public void Keeps_entries_in_order_with_their_location()
+    {
+        var console = new BrowserConsole();
+        console.Add("log", "hello");
+        console.Add("error", "boom", "https://app.test/main.js:10:5");
+        console.AddError("Uncaught TypeError: x is undefined\n  at main.js:4:1");
+
+        long cursor = 0;
+        var report = console.Describe(null, 50, ref cursor);
+
+        Assert.Contains("3 message(s) retained (2 error(s), 0 warning(s))", report);
+        Assert.Contains("log: hello", report);
+        Assert.Contains("error: boom (https://app.test/main.js:10:5)", report);
+        Assert.Contains("pageerror: Uncaught TypeError: x is undefined at main.js:4:1", report);
+        Assert.True(report.IndexOf("log: hello", StringComparison.Ordinal) < report.IndexOf("error: boom", StringComparison.Ordinal));
+        Assert.Equal(3, cursor);
+    }
+
+    [Fact]
+    public void Filters_by_minimum_severity()
+    {
+        var console = new BrowserConsole();
+        console.Add("debug", "trace-marker");
+        console.Add("log", "log-marker");
+        console.Add("warning", "warning-marker");
+        console.Add("error", "error-marker");
+        console.AddError("pageerror-marker");
+
+        long cursor = 0;
+        var errors = console.Describe("error", 50, ref cursor);
+        Assert.Contains("error-marker", errors);
+        Assert.Contains("pageerror-marker", errors);
+        Assert.DoesNotContain("warning-marker", errors);
+        Assert.DoesNotContain("log-marker", errors);
+
+        var warnings = console.Describe("warning", 50, ref cursor);
+        Assert.Contains("warning-marker", warnings);
+        Assert.DoesNotContain("log-marker", warnings);
+
+        var everything = console.Describe("all", 50, ref cursor);
+        Assert.Contains("trace-marker", everything);
+        Assert.Contains("log-marker", everything);
+        Assert.Contains("warning-marker", everything);
+        Assert.DoesNotContain("No message at or above", everything);
+
+        Assert.DoesNotContain("warning-marker", console.Describe("error", 50, ref cursor));
+    }
+
+    [Fact]
+    public void Rejects_an_unknown_level()
+    {
+        var error = Assert.Throws<ArgumentException>(() => BrowserConsole.Threshold("verbose"));
+        Assert.Contains("error, warning, info or all", error.Message);
+    }
+
+    [Fact]
+    public void Describe_returns_the_most_recent_entries_within_the_limit()
+    {
+        var console = new BrowserConsole();
+        for (var i = 0; i < 10; i++) console.Add("log", $"line-{i}");
+
+        long cursor = 0;
+        var report = console.Describe(null, 3, ref cursor);
+        Assert.Contains("line-7", report);
+        Assert.Contains("line-9", report);
+        Assert.DoesNotContain("line-6", report);
+        Assert.Contains("7 older message(s) not shown", report);
+    }
+
+    [Fact]
+    public void Log_spam_never_evicts_an_error()
+    {
+        var console = new BrowserConsole();
+        console.Add("error", "the-only-error");
+        for (var i = 0; i < BrowserConsole.Capacity + 50; i++) console.Add("log", $"line-{i}");
+
+        Assert.Equal(BrowserConsole.Capacity, console.Count);
+        long cursor = 0;
+        var report = console.Describe("error", 10, ref cursor);
+        Assert.Contains("the-only-error", report);
+        var all = console.Describe(null, BrowserConsole.MaxLimit, ref cursor);
+        Assert.Contains("line-349", all);
+        Assert.DoesNotContain("line-49", all);
+    }
+
+    [Fact]
+    public void A_full_buffer_of_errors_drops_the_oldest()
+    {
+        var console = new BrowserConsole();
+        for (var i = 0; i < BrowserConsole.Capacity + 5; i++) console.AddError($"error-{i}");
+
+        Assert.Equal(BrowserConsole.Capacity, console.Count);
+        long cursor = 0;
+        var report = console.Describe("error", BrowserConsole.MaxLimit, ref cursor);
+        Assert.Contains("error-304", report);
+        Assert.DoesNotContain("error-4 ", report);
+        Assert.DoesNotContain("error-0 ", report);
+    }
+
+    [Fact]
+    public void Summary_reports_new_errors_once_and_counts_warnings()
+    {
+        var console = new BrowserConsole();
+        long cursor = 0;
+        console.Add("error", "first-error");
+        console.Add("warning", "careful");
+
+        var first = console.TakeSummary(ref cursor);
+        Assert.Contains("1 new error, 1 new warning", first);
+        Assert.Contains("first-error", first);
+        Assert.Equal("", console.TakeSummary(ref cursor));
+
+        console.AddError("uncaught-error");
+        var second = console.TakeSummary(ref cursor);
+        Assert.Contains("1 new error", second);
+        Assert.Contains("uncaught-error", second);
+        Assert.DoesNotContain("first-error", second);
+    }
+
+    [Fact]
+    public void Summary_caps_the_error_lines_and_points_to_the_console_action()
+    {
+        var console = new BrowserConsole();
+        long cursor = 0;
+        for (var i = 0; i < 8; i++) console.Add("error", $"error-{i}");
+
+        var summary = console.TakeSummary(ref cursor);
+        Assert.Contains("8 new errors", summary);
+        Assert.Contains("3 more error(s)", summary);
+        Assert.Contains("console action", summary);
+        Assert.Contains("error-4", summary);
+        Assert.DoesNotContain("error-7", summary);
+    }
+
+    [Fact]
+    public void Reading_the_log_marks_it_as_reported()
+    {
+        var console = new BrowserConsole();
+        console.Add("error", "boom");
+
+        long cursor = 0;
+        var report = console.Describe("all", 10, ref cursor);
+        Assert.Contains("boom", report);
+        Assert.Equal("", console.TakeSummary(ref cursor));
+    }
+
+    [Fact]
+    public void Entries_are_single_lines_capped_in_length()
+    {
+        var console = new BrowserConsole();
+        console.Add("log", "line one\nline two\tindented");
+
+        long cursor = 0;
+        var report = console.Describe(null, 10, ref cursor);
+        Assert.Contains("line one line two indented", report);
+
+        var huge = new string('x', BrowserConsole.MaxText + 100);
+        console.Add("error", huge);
+        report = console.Describe("error", 10, ref cursor);
+        Assert.Contains(new string('x', BrowserConsole.MaxText) + "…", report);
+    }
+
+    [Fact]
+    public void Messages_without_a_location_are_readable_and_empty_ones_are_labelled()
+    {
+        var console = new BrowserConsole();
+        console.Add("clear", "");
+
+        long cursor = 0;
+        var report = console.Describe(null, 10, ref cursor);
+        Assert.Contains("log: (empty message)", report);
+        Assert.DoesNotContain("()", report);
+    }
+}
+
+/// <summary>
 /// Runs the real-browser tests serially with the rest of the suite: starting a browser is CPU-heavy for the first
 /// seconds and the session-based tests around it poll with fixed budgets.
 /// </summary>
@@ -139,6 +321,15 @@ public class BrowserToolTests
         """;
 
     private const string Next = "<html><head><title>Second</title></head><body><h2>Second page</h2></body></html>";
+
+    /// <summary>A page that fails in JavaScript: one console.log, one console.error and one uncaught exception.</summary>
+    private const string ConsolePage = """
+        <html><head><title>Console test</title></head><body>
+        <h1>Console</h1>
+        <script>console.log('log-marker'); console.error('console-error-marker');</script>
+        <script>setTimeout(() => { throw new Error('uncaught-marker'); }, 0);</script>
+        </body></html>
+        """;
 
     private static ToolContext Context(string sessionId) => new()
     {
@@ -314,6 +505,81 @@ public class BrowserToolTests
             Assert.True(result.IsError);
             Assert.Contains("vivaldi", result.Output, StringComparison.OrdinalIgnoreCase);
         }
+        TryDelete(dataDir);
+    }
+
+    /// <summary>
+    /// A page that fails in JavaScript has to reach the agent: the acting result reports the errors logged since the
+    /// previous call, the console action returns the retained log by severity, and nothing is repeated afterwards.
+    /// </summary>
+    [Fact]
+    public async Task Reports_console_messages_and_uncaught_errors_to_the_agent()
+    {
+        if (!Enabled) return;
+        Environment.SetEnvironmentVariable("SOFIA_BROWSER_HEADLESS", "1");
+        using var listener = new HttpListener();
+        var port = Random.Shared.Next(20000, 40000);
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        _ = Task.Run(async () =>
+        {
+            while (listener.IsListening)
+            {
+                var ctx = await listener.GetContextAsync();
+                var bytes = Encoding.UTF8.GetBytes(ConsolePage);
+                ctx.Response.ContentType = "text/html; charset=utf-8";
+                ctx.Response.ContentLength64 = bytes.Length;
+                await ctx.Response.OutputStream.WriteAsync(bytes);
+                ctx.Response.Close();
+            }
+        });
+
+        var dataDir = Directory.CreateTempSubdirectory("sofia-browser").FullName;
+        var options = new SofiaOptions { DataDir = dataDir };
+        var url = $"http://127.0.0.1:{port}/";
+        using (var db = new SofiaDb(options))
+        {
+            await using var service = new BrowserService(db, options, new EventBus(), NullLogger<BrowserService>.Instance);
+            var tool = new BrowserTool(service, (bytes, mime, name) => SaveShot(bytes, mime, name, dataDir));
+
+            var opened = await RunAsync(tool, "ses_console", new { action = "navigate", url });
+            if (NoBrowser(opened))
+            {
+                listener.Stop();
+                TryDelete(dataDir);
+                return;
+            }
+            Assert.False(opened.IsError, opened.Output);
+
+            // The page logs while it parses; read it again until the errors show up in the automatic summary.
+            var output = opened.Output;
+            for (var attempt = 0; attempt < 50 && !output.Contains("console-error-marker", StringComparison.Ordinal); attempt++)
+            {
+                await Task.Delay(100);
+                output = await OkAsync(tool, "ses_console", new { action = "evaluate", script = "() => 1" });
+            }
+            Assert.Contains("console-error-marker", output);
+            Assert.Contains("new error", output);
+
+            // Both kinds of failure are retained, and the level filter separates console.log from the errors.
+            var errors = await OkAsync(tool, "ses_console", new { action = "console", level = "error" });
+            Assert.Contains("console-error-marker", errors);
+            Assert.Contains("pageerror:", errors);
+            Assert.Contains("uncaught-marker", errors);
+            Assert.DoesNotContain("log-marker", errors);
+
+            var all = await OkAsync(tool, "ses_console", new { action = "console" });
+            Assert.Contains("log-marker", all);
+
+            // A message is reported once: the following results do not repeat it.
+            var after = await OkAsync(tool, "ses_console", new { action = "snapshot" });
+            Assert.DoesNotContain("new error", after);
+            Assert.DoesNotContain("console-error-marker", after);
+            Assert.Contains("# Console", after);
+
+            await OkAsync(tool, "ses_console", new { action = "close" });
+        }
+        listener.Stop();
         TryDelete(dataDir);
     }
 

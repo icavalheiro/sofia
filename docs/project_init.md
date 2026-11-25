@@ -318,7 +318,8 @@ that Sofia starts itself and drives over CDP, or the installed Firefox driven ov
 WebDriver BiDi. There is no live view: nothing is streamed to the UI, the user
 simply uses the window (right-click menu, DevTools, native `<select>`/file pickers,
 their own keyboard layout and IME) while the agent reads the page through
-snapshots and screenshots. A remote client only sees the chat screenshots.
+snapshots and screenshots, and its console, uncaught errors included, is recorded
+for the agent. A remote client only sees the chat screenshots.
 
 - **Detection:** `BrowserCatalog` finds the installed engines (`chrome`, `edge`,
   `brave`, `vivaldi`, `opera`, `chromium`, `firefox`) from the platform install
@@ -358,8 +359,20 @@ snapshots and screenshots. A remote client only sees the chat screenshots.
   The user may navigate between calls, so refs can be stale — the tool answers with
   "take a new snapshot". Other actions: launch, navigate, wait, back/forward/reload
   (history is walked through the page so a back/forward-cache restore does not wait
-  for a navigation event that never fires), evaluate, tabs/new_tab/switch_tab/
+  for a navigation event that never fires), evaluate, console, tabs/new_tab/switch_tab/
   close_tab, focus, close.
+- **Console:** `BrowserSession.Attach` subscribes `page.Console`, `page.PageError` and
+  `page.Crash` into a `BrowserConsole` buffer per conversation (300 entries, text
+  collapsed to one line and capped at 600 chars, location — or the page URL when
+  Playwright reports none — kept). When the buffer is full the oldest **non-error**
+  entry is evicted first, so log spam never hides an error. Every acting tool result
+  auto-reports the errors and uncaught exceptions logged since the previous call (up
+  to 5 lines, then a "run console" hint) and counts new warnings; a sequence cursor
+  keeps a message from being reported twice. The `console` action returns the retained
+  log, oldest first, as a minimum-severity filter (`level`: `error`, `warning`, `info`,
+  `all` — the default) capped to the most recent `limit` entries (default 50, max 200).
+  Nothing is streamed to the UI. Messages logged before Sofia attached (a re-attached
+  window) and network events are not captured.
 - **Viewports:** the `viewport` action emulates a layout viewport (Chrome DevTools
   device mode) without touching the OS window: `width`/`height` (200–4096 px) plus
   optional `mobile` and `device_scale_factor` (0.1–4). Chromium applies it with CDP
